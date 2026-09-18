@@ -18,6 +18,18 @@ Entry format:
 
 ---
 
+## 2026-09-17 · repo — two-product scaffolding
+
+- Root `CLAUDE.md`: repo layout, the changelog-before-commit rule, env and
+  conventions notes, build/run pointers.
+- Root `README.md` rewritten as the two-product overview; `docs/README.md` and
+  `deepthought-server/README.md` placeholders added.
+- Removed session scratch from the repo: `NOTES.md`, `.write_test`.
+- Files: `CLAUDE.md`, `README.md`, `docs/README.md`,
+  `deepthought-server/README.md`, `NOTES.md` (−), `.write_test` (−).
+- Verified: tree grep shows no former-name references outside changelog
+  history; CLI still builds/tests green (unchanged in this commit).
+
 ## 2026-09-17 · deepthought-cli — rename annorax → deepthought-cli
 
 - Module `annorax` → `deepthought-cli`; all internal imports rewritten;
