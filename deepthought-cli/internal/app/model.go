@@ -63,23 +63,25 @@ type Deps struct {
 // delegates to the active sub-model. Sub-models return their own concrete type
 // from Update, so the root stores the result directly with no type assertion.
 type RootModel struct {
-	deps      Deps
-	screen    tui.Screen
-	status    tui.StatusInfo // feeds the top bar
-	clock     time.Time      // live clock; updated by TickMsg
-	lastCtrlC time.Time
-	width     int
-	height    int
-	sessionID string
-	healthOK  bool // last model-health ping (drives the Status dashboard)
-	healthMsg string
-	splash    tui.SplashModel
-	chat      tui.ChatModel
-	continue_ tui.ContinueModel
-	settings  tui.SettingsModel
-	grid      tui.GridModel
-	statusScr tui.StatusModel
-	statsScr  tui.StatsModel
+	deps        Deps
+	screen      tui.Screen
+	status      tui.StatusInfo // feeds the top bar
+	clock       time.Time      // live clock; updated by TickMsg
+	lastCtrlC   time.Time
+	width       int
+	height      int
+	sessionID   string
+	healthOK    bool // last model-health ping (drives the Status dashboard)
+	healthMsg   string
+	lastCluster slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
+	splash      tui.SplashModel
+	chat        tui.ChatModel
+	continue_   tui.ContinueModel
+	settings    tui.SettingsModel
+	grid        tui.GridModel
+	statusScr   tui.StatusModel
+	statsScr    tui.StatsModel
+	clusterScr  tui.ClusterModel
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -109,19 +111,20 @@ func NewRootModel(d Deps) RootModel {
 		sid = newSessionID()
 	}
 	return RootModel{
-		deps:      d,
-		screen:    d.StartScreen,
-		status:    d.Status,
-		clock:     time.Now(),
-		sessionID: sid,
-		splash:    tui.NewSplashModel(splashBoot(d.Live), sid),
-		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource),
-		continue_: tui.NewContinueModel(d.ChatSource),
-		settings:  tui.NewSettingsModel(d.Live, d.Settings),
-		grid:      tui.NewGridModel(),
-		statusScr: tui.NewStatusModel(statusInputs(d)),
-		statsScr:  tui.NewStatsModel(usageFunc(d.ChatSource)),
-		bindings:  d.Bindings,
+		deps:       d,
+		screen:     d.StartScreen,
+		status:     d.Status,
+		clock:      time.Now(),
+		sessionID:  sid,
+		splash:     tui.NewSplashModel(splashBoot(d.Live), sid),
+		chat:       tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource),
+		continue_:  tui.NewContinueModel(d.ChatSource),
+		settings:   tui.NewSettingsModel(d.Live, d.Settings),
+		grid:       tui.NewGridModel(),
+		statusScr:  tui.NewStatusModel(statusInputs(d)),
+		statsScr:   tui.NewStatsModel(usageFunc(d.ChatSource)),
+		clusterScr: tui.NewClusterModel(),
+		bindings:   d.Bindings,
 	}
 }
 
@@ -248,9 +251,13 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusScr = m.statusScr.SetHealth(msg.ok, msg.reason)
 		return m, nil
 	case clusterSnapshotMsg:
-		// Background Slurm snapshot arrived: cache it on the Status page and
+		// Background Slurm snapshot arrived: cache it on the Status page, the
+		// Cluster screen, and the chat (for the model's cluster blurb), then
 		// re-arm the next poll in 5 min.
+		m.lastCluster = msg.snap
 		m.statusScr = m.statusScr.SetCluster(msg.snap)
+		m.clusterScr = m.clusterScr.SetCluster(msg.snap)
+		m.chat = m.chat.SetCluster(msg.snap)
 		return m, tea.Tick(clusterPollInterval, func(time.Time) tea.Msg { return pollCluster() })
 	case tui.RefreshClusterMsg:
 		// `r` on the Status page: re-poll now.
@@ -265,6 +272,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings = m.settings.Resize(msg.Width, msg.Height)
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).SetHealth(m.healthOK, m.healthMsg)
+		m.clusterScr = m.clusterScr.Resize(msg.Width, msg.Height)
 		m.statsScr = m.statsScr.Resize(msg.Width, msg.Height).
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext).
 			SetActivity(m.sessionCycles, m.sessionMsgs).
@@ -280,6 +288,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screenStack = nil
 		if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
 			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
+				SetCluster(m.lastCluster).
 				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 			m.screen = tui.ScreenChat
 			return m, m.chat.Init()
@@ -312,7 +321,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screenStack = nil
-		m.chat = cm.Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
+		m.chat = cm.SetCluster(m.lastCluster).Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 		m.screen = tui.ScreenChat
 		return m, m.activeInit()
 	case tui.ShowOverlayMsg:
@@ -396,6 +405,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusScr, cmd = m.statusScr.Update(msg)
 	case tui.ScreenStats:
 		m.statsScr, cmd = m.statsScr.Update(msg)
+	case tui.ScreenCluster:
+		m.clusterScr, cmd = m.clusterScr.Update(msg)
 	}
 	return m, cmd
 }
@@ -410,10 +421,15 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
 	case keybindings.Diagnostics:
-		// F12 — the unified Status page.
+		// F12 — the unified Status page (app/system).
 		m.statusScr = m.statusScr.SetHealth(m.healthOK, m.healthMsg).SetClock(m.clock)
 		m.pushScreen(tui.ScreenStatus)
 		return m, m.statusScr.Init()
+	case keybindings.Cluster:
+		// F10 — the dedicated cluster/scheduler screen (cached snapshot).
+		m.clusterScr = m.clusterScr.Resize(m.width, m.height)
+		m.pushScreen(tui.ScreenCluster)
+		return m, m.clusterScr.Init()
 	case keybindings.Usage:
 		// F8 — dedicated Stats page.
 		m.statsScr = m.statsScr.
@@ -427,6 +443,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
 		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
+			SetCluster(m.lastCluster).
 			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 		m.screen = tui.ScreenChat
 		return m, m.chat.Init()
@@ -439,7 +456,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F4 — the effort picker overlay.
 		return m, func() tea.Msg { return tui.OpenEffortMsg{} }
 	case keybindings.Help:
-		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F8 stats · F9 mode · F12 status · esc back · /quit to exit")
+		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F8 stats · F9 mode · F10 cluster · F11 software · F12 status · esc back · /quit to exit")
 	case keybindings.ContextView:
 		// F7 — push the context grid.
 		m.pushScreen(tui.ScreenGrid)
@@ -558,6 +575,8 @@ func (m RootModel) View() tea.View {
 		s = m.statusScr.View()
 	case tui.ScreenStats:
 		s = m.statsScr.View()
+	case tui.ScreenCluster:
+		s = m.clusterScr.View()
 	}
 	// A centered overlay floats on top of whatever screen is active.
 	if m.overlay != nil {
@@ -589,6 +608,8 @@ func (m RootModel) activeInit() tea.Cmd {
 		return m.statusScr.Init()
 	case tui.ScreenStats:
 		return m.statsScr.Init()
+	case tui.ScreenCluster:
+		return m.clusterScr.Init()
 	}
 	return nil
 }

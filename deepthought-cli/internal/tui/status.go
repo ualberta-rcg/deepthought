@@ -263,6 +263,9 @@ func (m StatusModel) envRows() []string {
 	}
 }
 
+// clusterRows renders a compact one-line cluster summary; the full
+// vulcan-status-styled view now lives on the dedicated F10 Cluster screen, so
+// this stays glanceable and points there instead of duplicating it.
 func (m StatusModel) clusterRows() []string {
 	if !m.env.Slurm {
 		return []string{styleSettingsTitle.Render("Cluster"), styleSettingsFoot.Render("(Slurm not detected)")}
@@ -271,80 +274,33 @@ func (m StatusModel) clusterRows() []string {
 		return []string{styleSettingsTitle.Render("Cluster"), styleSettingsFoot.Render("gathering…")}
 	}
 	c := m.cluster
-	if c.Err != nil {
+	if c.Err != nil && c.NodesTotal == 0 {
 		return []string{styleSettingsTitle.Render("Cluster"), styleError.Render("✗ " + c.Err.Error())}
 	}
-	nodesUp := c.NodesUp
-	if nodesUp == 0 && c.NodesTotal > 0 {
-		nodesUp = c.NodesTotal // fallback when %t parse yielded nothing
-	}
-	nodeFrac := 0.0
-	if c.NodesTotal > 0 {
-		nodeFrac = float64(nodesUp) / float64(c.NodesTotal)
-	}
-	cpuBar := bar(cpuFrac(c), 16)
-	memFrac := 0.0
-	if c.MemTotalGB > 0 {
-		memFrac = float64(c.MemAllocGB) / float64(c.MemTotalGB)
-		if memFrac > 1 {
-			memFrac = 1
-		}
-	}
-	memBar := bar(memFrac, 16)
-	gpuFrac := 0.0
-	if c.GPUs > 0 {
-		gpuFrac = float64(c.GPUsUsed) / float64(c.GPUs)
-		if gpuFrac > 1 {
-			gpuFrac = 1
-		}
-	}
-	gpuBar := bar(gpuFrac, 16)
-
-	rows := []string{
-		styleSettingsTitle.Render("Cluster"),
-		fmt.Sprintf("  nodes  %s  %d/%d up", bar(nodeFrac, 16), nodesUp, c.NodesTotal),
-		fmt.Sprintf("  cpus   %s  %d/%d  (%d%%)", cpuBar, c.CPUAlloc, c.CPUTotal, pct(cpuFrac(c))),
-	}
-	if c.MemTotalGB > 0 {
-		rows = append(rows, fmt.Sprintf("  mem    %s  %d/%d GB  (%d%%)", memBar, c.MemAllocGB, c.MemTotalGB, pct(memFrac)))
+	var parts []string
+	if c.CPUTotal > 0 {
+		parts = append(parts, fmt.Sprintf("%d%% cpu", pct(cpuFrac(c))))
 	}
 	if c.GPUs > 0 {
-		gpuLabel := fmt.Sprintf("%d/%d", c.GPUsUsed, c.GPUs)
-		if c.GPUType != "" {
-			gpuLabel += " (" + c.GPUType + ")"
+		g := fmt.Sprintf("%d%% gpu", pct(frac01(float64(c.GPUsUsed), float64(c.GPUs))))
+		if c.GPUUsable > 0 {
+			g += fmt.Sprintf(" (%d usable)", c.GPUUsable)
 		}
-		rows = append(rows, fmt.Sprintf("  gpus   %s  %s  (%d%%)", gpuBar, gpuLabel, pct(gpuFrac)))
+		parts = append(parts, g)
 	}
-	rows = append(rows, fmt.Sprintf("  queue  running %d · pending %d", c.JobsRunning, c.JobsPending))
-	if c.DefaultAccount != "" {
-		fs := "—"
-		if c.Fairshare > 0 {
-			fs = fmt.Sprintf("%.3f", c.Fairshare)
-		}
-		rows = append(rows, fmt.Sprintf("  fairshare %s  %s", styleSettingsVal.Render(fs),
-			styleSettingsFoot.Render("("+c.DefaultAccount+")")))
+	if c.Fairshare > 0 {
+		label, _ := slurm.FairshareTier(c.Fairshare)
+		parts = append(parts, "fairshare "+label)
 	}
-	// Storage quotas (raw diskusage_report rows, already aligned).
-	if len(c.Storage) > 0 {
-		rows = append(rows, styleSettingsFoot.Render("  storage:"))
-		for _, line := range c.Storage {
-			rows = append(rows, "    "+line)
-		}
+	if len(c.YourJobs) > 0 {
+		parts = append(parts, fmt.Sprintf("%d of your jobs", len(c.YourJobs)))
 	}
-	// Your jobs (compact).
-	switch {
-	case len(c.YourJobs) == 0:
-		rows = append(rows, "  your jobs "+styleSettingsFoot.Render("(none)"))
-	default:
-		rows = append(rows, styleSettingsFoot.Render("  your jobs (id state time name):"))
-		for _, j := range c.YourJobs {
-			rows = append(rows, fmt.Sprintf("    %s %s %s %s", truncatePad(j.ID, 12), truncatePad(j.State, 10), truncatePad(j.Elapsed, 8), j.Name))
-		}
+	line := ""
+	if len(parts) > 0 {
+		line = "  " + styleSettingsFoot.Render(strings.Join(parts, " · "))
 	}
-	if !c.FetchedAt.IsZero() {
-		rows = append(rows, styleSettingsFoot.Render("  updated "+c.FetchedAt.Format("15:04:05")))
-	}
-	return rows
+	line += "  " + styleSettingsVal.Render("F10 → Cluster") + styleSettingsFoot.Render(" for detail")
+	return []string{styleSettingsTitle.Render("Cluster"), line}
 }
 
 func pct(f float64) int {

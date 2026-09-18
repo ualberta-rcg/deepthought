@@ -16,6 +16,7 @@ import (
 	commandpkg "deepthought-cli/internal/commands"
 	"deepthought-cli/internal/history"
 	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/slurm"
 	"deepthought-cli/internal/tools"
 	"deepthought-cli/internal/unimatrix"
 )
@@ -156,7 +157,8 @@ type ChatModel struct {
 	gate      *queen.Gate
 	coll      *history.Collective
 	store     history.Store
-	replayed  bool // prior turns rendered into the transcript (resume)
+	cluster   slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
+	replayed  bool                  // prior turns rendered into the transcript (resume)
 	busy      bool
 	streaming bool
 	acc       string
@@ -769,11 +771,71 @@ func (m ChatModel) newRequest(model unimatrix.Model) babel.ChatRequest {
 	}
 }
 
+// SetCluster fills the cached Slurm snapshot from the background poller, so the
+// next request can carry a live cluster blurb to the model.
+func (m ChatModel) SetCluster(s slurm.ClusterSnapshot) ChatModel {
+	m.cluster = s
+	return m
+}
+
 // requestMessages returns the message slice to send by flattening the rich
 // collective. It uses MessagesByState so each probe renders at its own residency
 // (Full today; a demoted probe renders shorter once a Queen thread demotes it).
+// A transient cluster-status note is appended when we have a fresh snapshot —
+// it is sent to the model but NOT persisted to the collective.
 func (m ChatModel) requestMessages() []babel.Message {
-	return m.coll.MessagesByState()
+	msgs := m.coll.MessagesByState()
+	if blurb := m.clusterBlurb(); blurb != "" {
+		msgs = append(msgs, babel.Message{Role: "system", Content: blurb})
+	}
+	return msgs
+}
+
+// clusterBlurb is a compact, clearly-labelled snapshot of cluster state so the
+// model can reason about scheduling ("is the cluster busy?") without running
+// squeue itself. Returns "" when nothing has been gathered yet. Kept to a few
+// lines; it says the sample may be stale and to verify before acting.
+func (m ChatModel) clusterBlurb() string {
+	c := m.cluster
+	if c.NodesTotal == 0 && c.CPUTotal == 0 && c.GPUs == 0 {
+		return ""
+	}
+	var b strings.Builder
+	stamp := "unknown time"
+	if !c.FetchedAt.IsZero() {
+		stamp = c.FetchedAt.Format("15:04")
+	}
+	b.WriteString("\n[Cluster status, sampled " + stamp +
+		" — may be a few minutes stale; verify with the slurm tools before acting on it.]\n")
+	var facts []string
+	if c.NodesTotal > 0 {
+		facts = append(facts, fmt.Sprintf("nodes %d/%d up", c.NodesUp, c.NodesTotal))
+	}
+	if c.CPUTotal > 0 {
+		facts = append(facts, fmt.Sprintf("CPUs %d%% used", int(frac01(float64(c.CPUAlloc), float64(c.CPUTotal))*100+0.5)))
+	}
+	if c.GPUs > 0 {
+		g := fmt.Sprintf("GPUs %d/%d in use", c.GPUsUsed, c.GPUs)
+		if c.GPUUsable > 0 {
+			g += fmt.Sprintf(", %d usable now", c.GPUUsable)
+		}
+		facts = append(facts, g)
+	}
+	facts = append(facts, fmt.Sprintf("cluster queue %d running / %d pending", c.JobsRunning, c.JobsPending))
+	if len(c.YourJobs) > 0 {
+		facts = append(facts, fmt.Sprintf("you have %d job(s)", len(c.YourJobs)))
+	}
+	if c.Fairshare > 0 {
+		label, _ := slurm.FairshareTier(c.Fairshare)
+		facts = append(facts, fmt.Sprintf("your fairshare %.2f (%s)", c.Fairshare, label))
+	}
+	for _, r := range c.StorageRows {
+		if r.Label == "scratch" {
+			facts = append(facts, fmt.Sprintf("scratch %d%% used", r.Pct))
+		}
+	}
+	b.WriteString(strings.Join(facts, "; ") + ".\n")
+	return b.String()
 }
 
 // handleStreamItem renders one streamed delta (or finalizes on the last item).

@@ -18,6 +18,35 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — F10 Cluster screen, slim F12, AI cluster blurb
+
+- **F10 = dedicated Cluster screen** (`internal/tui/cluster.go`, reviving the
+  old empty file + unbound `keybindings.Cluster` action; `ScreenCluster` in
+  `nav.go`). Renders the live snapshot in the `vulcan-status` idiom via new
+  `internal/tui/bars.go` helpers: `▓░` bars where fill-length is primary on a
+  colorblind-safe palette (`healthBar` teal→orange→bold-red, `diskBar`,
+  `tierColor`), `»` section headers (`sectionHead`), a dim "what this means"
+  line under each block (`dimNote`), and dim `→ run: X` hints (`hintNote`).
+  Blocks: Cluster (nodes/queue/CPUs/mem/GPUs incl. avail·usable), Your jobs
+  (with hold reason), Fairshare (per-account bar + tier + LevelFS), Storage
+  (per-mount bars). Graceful: no Slurm → a single hint line; `r` re-polls.
+  Wired through the root (field/init/Update/View/activeInit/handleAction,
+  snapshot fan-out, resize).
+- **F12 Status slimmed** — its detailed cluster section is now a one-line
+  summary + "F10 → Cluster for detail" (kills the duplication / bad label).
+- **AI cluster blurb** — the chat appends a transient, clearly-labelled
+  `[Cluster status … may be stale]` system message to each request
+  (`chat.go` `clusterBlurb`, injected in `requestMessages`, not persisted) so
+  the model knows GPU/fairshare/queue/scratch state without running `squeue`.
+  The root caches the latest snapshot and seeds freshly-built/resumed chats.
+- F1 help notice now lists F10 cluster · F11 software.
+- Files: `internal/tui/{cluster,cluster_test,bars,status,nav}.go`,
+  `internal/app/model.go`, `internal/tui/chat.go`,
+  `internal/keybindings/keybindings.go`.
+- Verified: `gofmt -l` clean, `go build`/`vet`/full `go test` green; new tests
+  `TestClusterScreenRendersBlocks`, `TestClusterScreenNoSlurm`,
+  `TestClusterBlurb` pass.
+
 ## 2026-09-18 · deepthought-cli — enrich `slurm.ClusterSnapshot` to MOTD richness
 
 The background snapshot (polled every 5 min) now captures the details the

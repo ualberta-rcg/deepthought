@@ -21,6 +21,7 @@ const (
 	Resume      Action = "app:resume"
 	ContextView Action = "app:context"
 	Cluster     Action = "app:cluster"
+	Software    Action = "app:software"
 	QueenMode   Action = "app:queen-mode"
 	Usage       Action = "app:usage"
 	Diagnostics Action = "app:diagnostics"
@@ -31,7 +32,8 @@ var reserved = map[string]bool{"ctrl+c": true, "ctrl+d": true}
 var defaults = map[string]Action{
 	"f1": Help, "f2": Settings, "f3": Model, "f4": Effort,
 	"f5": NewChat, "f6": Resume, "f7": ContextView,
-	"f8": Usage, "f9": QueenMode, "f12": Diagnostics,
+	"f8": Usage, "f9": QueenMode, "f10": Cluster,
+	"f12": Diagnostics,
 }
 
 type File map[Context]map[string]Action
