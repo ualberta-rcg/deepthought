@@ -18,6 +18,28 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — enrich `slurm.ClusterSnapshot` to MOTD richness
+
+The background snapshot (polled every 5 min) now captures the details the
+cluster screen needs, matching `/usr/local/bin/vulcan-status`:
+- **`FairshareRows []FairshareRow`** — every account the user belongs to with
+  its factor + LevelFS (`gatherFairshareRows`, `sshare -ahP -o
+  Account,User,Fairshare,LevelFS`). Plus `FairshareTier(f)` (boosted/ahead/
+  nominal/behind/throttled at 0.80/0.60/0.40/0.20) and `LevelFSTier(v)`
+  (good/nominal/bad at 1.25/0.75) helpers.
+- **`GPUUsable int`** — host-feasible GPU count: per node,
+  min(free gpus, free CPU/cpus-per-gpu, free mem/mem-per-gpu), summed from
+  `scontrol show nodes` TRES (`gatherGPUUsable`; ported from the MOTD's awk).
+  A free GPU on a CPU/RAM-starved node counts as 0.
+- **`StorageRows []StorageRow`** — home/scratch/projects usage parsed from
+  `df -h -P` for bars (`gatherStorageRows` → pure `parseStorageRows`, split out
+  for testability). The raw `diskusage_report` rows stay for the hint line.
+- New `gresGPU`/`cpuFromTRES` TRES parsers.
+- Files: `internal/slurm/client.go`, new `internal/slurm/cluster_test.go`.
+- Verified: `go build`/`vet` clean; new table tests pass (tier boundaries +
+  clamp, LevelFS bands, TRES parsing, GPU-usable 2+0+4 fixture, fairshare user
+  filter, storage positional parse).
+
 ## 2026-09-18 · deepthought-cli — F-key legend row in the top bar (toggleable)
 
 - Added a dedicated 2nd top-bar row listing all 12 F-keys

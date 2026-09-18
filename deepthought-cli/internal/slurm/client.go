@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"time"
@@ -210,12 +211,15 @@ type ClusterSnapshot struct {
 	JobsPending    int
 	GPUs           int     // total GPUs across nodes
 	GPUsUsed       int     // allocated/used GPUs
+	GPUUsable      int     // GPUs schedulable RIGHT NOW (host feasibility: free CPU+mem too)
 	GPUType        string  // e.g. "l40s"
 	MemTotalGB     int     // total cluster memory (sum of per-node MB → GB)
 	MemAllocGB     int     // allocated memory GB
 	Fairshare      float64 // user's fairshare on their default account (0–1)
 	DefaultAccount string
-	Storage        []string // raw diskusage_report rows (already column-aligned)
+	FairshareRows  []FairshareRow // per-account fairshare + LevelFS (all the user's accounts)
+	Storage        []string       // raw diskusage_report rows (already column-aligned)
+	StorageRows    []StorageRow   // parsed home/scratch/project usage for bars
 	Partitions     []PartitionRow
 	YourJobs       []Job
 	Err            error
@@ -225,6 +229,23 @@ type ClusterSnapshot struct {
 type PartitionRow struct {
 	Name, Avail, State string
 	Nodes              int
+}
+
+// FairshareRow is one account's fairshare standing, as reported by sshare.
+// Fairshare is 0–1 (1 = highest priority); LevelFS is the account's
+// share-to-usage ratio ("inf" or a float).
+type FairshareRow struct {
+	Account   string
+	Fairshare float64
+	LevelFS   string
+}
+
+// StorageRow is one mount's usage, parsed from df, for a bar.
+type StorageRow struct {
+	Label string // home, scratch, or the project account name
+	Used  string // human-readable, e.g. "2.9T"
+	Size  string // human-readable, e.g. "5.0T"
+	Pct   int    // 0–100 capacity
 }
 
 // Snapshot queries sinfo + squeue and returns a structured cluster status. It is
@@ -334,12 +355,17 @@ func Snapshot(ctx context.Context) ClusterSnapshot {
 	// "gpu:l40s:1(IDX:1)" there); fall back to %G|%m|%e / %G|%m.
 	s.gatherGPUsAndMem(ctx, runner)
 
-	// Fairshare on the user's default account.
+	// GPU "usable" (host feasibility): a free GPU only counts if its node also
+	// has the CPU and memory to back it. Computed per node from scontrol.
+	s.GPUUsable = gatherGPUUsable(ctx, runner)
+
+	// Fairshare on the user's default account, plus per-account rows.
 	if user := os.Getenv("USER"); user != "" {
 		if acct := defaultAccount(ctx, runner, user); acct != "" {
 			s.DefaultAccount = acct
 			s.Fairshare = fairshare(ctx, runner, acct)
 		}
+		s.FairshareRows = gatherFairshareRows(ctx, runner, user)
 	}
 
 	// Storage quotas (Alliance diskusage_report). Keep the raw rows — the tool
@@ -357,6 +383,9 @@ func Snapshot(ctx context.Context) ClusterSnapshot {
 			}
 		}
 	}
+
+	// Parsed storage usage (home/scratch/projects) for bars, from df.
+	s.StorageRows = gatherStorageRows(ctx, runner)
 
 	if s.NodesTotal == 0 && s.CPUTotal == 0 && len(s.Partitions) == 0 {
 		s.Err = fmt.Errorf("slurm: no status gathered (sinfo/squeue returned nothing)")
@@ -572,6 +601,231 @@ func fairshare(ctx context.Context, runner Runner, acct string) float64 {
 		}
 	}
 	return last
+}
+
+// Fairshare tier thresholds (factor → label), mirroring the cluster MOTD. A
+// high factor means the scheduler ranks your jobs high.
+const (
+	FSBoosted = 0.80
+	FSAhead   = 0.60
+	FSNominal = 0.40
+	FSBehind  = 0.20
+	LFSHigh   = 1.25 // LevelFS above this (or inf) = good
+	LFSLow    = 0.75 // LevelFS below this = bad
+)
+
+// FairshareTier maps a fairshare factor (0–1, 1 = highest priority) to a tier
+// label plus a bar percent. Label is the colorblind-friendly word; the screen
+// picks the color from it.
+func FairshareTier(f float64) (label string, pct int) {
+	if f < 0 {
+		f = 0
+	}
+	if f > 1 {
+		f = 1
+	}
+	pct = int(f*100 + 0.5)
+	switch {
+	case f >= FSBoosted:
+		label = "boosted"
+	case f >= FSAhead:
+		label = "ahead"
+	case f >= FSNominal:
+		label = "nominal"
+	case f >= FSBehind:
+		label = "behind"
+	default:
+		label = "throttled"
+	}
+	return label, pct
+}
+
+// LevelFSTier classifies a LevelFS value ("inf" or a float string): high/inf =
+// good (the account is under its share — priority headroom), low = bad.
+func LevelFSTier(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	if v == "inf" {
+		return "good"
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return ""
+	}
+	switch {
+	case f > LFSHigh:
+		return "good"
+	case f < LFSLow:
+		return "bad"
+	default:
+		return "nominal"
+	}
+}
+
+// gatherFairshareRows reads every account the user belongs to, with its
+// fairshare factor and LevelFS, via sshare. Returns nil on any failure (the
+// screen hides the block).
+func gatherFairshareRows(ctx context.Context, runner Runner, user string) []FairshareRow {
+	raw, err := runner.Run(ctx, "sshare", "-ahP", "--noheader", "-u", user, "-o", "Account,User,Fairshare,LevelFS")
+	if err != nil {
+		return nil
+	}
+	var rows []FairshareRow
+	for _, line := range strings.Split(string(raw), "\n") {
+		// Pipe-delimited: |account|user|fairshare|levelfs| (account may carry
+		// leading spaces for hierarchy).
+		f := strings.Split(line, "|")
+		if len(f) < 5 {
+			continue
+		}
+		if strings.TrimSpace(f[2]) != user {
+			continue
+		}
+		acct := strings.TrimSpace(f[1])
+		if acct == "" {
+			continue
+		}
+		fs, _ := strconv.ParseFloat(strings.TrimSpace(f[3]), 64)
+		rows = append(rows, FairshareRow{Account: acct, Fairshare: fs, LevelFS: strings.TrimSpace(f[4])})
+	}
+	return rows
+}
+
+// gatherGPUUsable computes how many GPUs could actually be scheduled right now:
+// per node, min(free gpus, free CPU / cpus-per-gpu, free mem / mem-per-gpu),
+// summed. A GPU on a node that is out of CPU or RAM is idle but not schedulable.
+// Ported from the cluster MOTD's per-node TRES arithmetic. Returns 0 on failure.
+func gatherGPUUsable(ctx context.Context, runner Runner) int {
+	raw, err := runner.Run(ctx, "scontrol", "show", "nodes")
+	if err != nil {
+		return 0
+	}
+	usable := 0
+	for _, line := range strings.Split(string(raw), "\n") {
+		nrm, nam, cc, ac, cg, ag := 0, 0, 0, 0, 0, 0
+		for _, tok := range strings.Fields(line) {
+			switch {
+			case strings.HasPrefix(tok, "RealMemory="):
+				nrm = atoi(strings.TrimPrefix(tok, "RealMemory="))
+			case strings.HasPrefix(tok, "AllocMem="):
+				nam = atoi(strings.TrimPrefix(tok, "AllocMem="))
+			case strings.HasPrefix(tok, "CfgTRES="):
+				tres := strings.TrimPrefix(tok, "CfgTRES=")
+				cg = gresGPU(tres)
+				cc = cpuFromTRES(tres)
+			case strings.HasPrefix(tok, "AllocTRES="):
+				tres := strings.TrimPrefix(tok, "AllocTRES=")
+				ag = gresGPU(tres)
+				ac = cpuFromTRES(tres)
+			}
+		}
+		if cg <= 0 {
+			continue
+		}
+		u := cg - ag
+		if cc > 0 {
+			if v := (cc - ac) * cg / cc; v < u { // free CPU, in GPU-equivalents
+				u = v
+			}
+		}
+		if nrm > 0 {
+			if w := (nrm - nam) * cg / nrm; w < u { // free memory, in GPU-equivalents
+				u = w
+			}
+		}
+		if u > 0 {
+			usable += u
+		}
+	}
+	return usable
+}
+
+// gresGPU extracts the GPU count from a TRES value like "gres/gpu=4,cpu=64".
+func gresGPU(tres string) int {
+	for _, part := range strings.Split(tres, ",") {
+		if v, ok := strings.CutPrefix(part, "gres/gpu="); ok {
+			return atoi(v)
+		}
+	}
+	return 0
+}
+
+// cpuFromTRES extracts the CPU count from a TRES value like "gres/gpu=4,cpu=64".
+func cpuFromTRES(tres string) int {
+	for _, part := range strings.Split(tres, ",") {
+		if v, ok := strings.CutPrefix(part, "cpu="); ok {
+			return atoi(v)
+		}
+	}
+	return 0
+}
+
+// gatherStorageRows reads df for home, scratch, and each project symlink under
+// ~/projects, returning one row per mount for a bar. Returns nil on failure.
+// (df -P forces one line per filesystem so long mount names can't wrap.)
+func gatherStorageRows(ctx context.Context, runner Runner) []StorageRow {
+	var labels, paths []string
+	add := func(label, p string) {
+		if fi, err := os.Stat(p); err == nil && fi.IsDir() {
+			labels = append(labels, label)
+			paths = append(paths, p)
+		}
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		add("home", home)
+		if entries, err := os.ReadDir(filepath.Join(home, "projects")); err == nil {
+			for _, e := range entries {
+				if e.Type()&os.ModeSymlink == 0 {
+					continue
+				}
+				add(e.Name(), filepath.Join(home, "projects", e.Name()))
+				if len(labels) >= 7 { // home + scratch + up to 5 projects
+					break
+				}
+			}
+		}
+	}
+	if user := os.Getenv("USER"); user != "" {
+		add("scratch", filepath.Join("/scratch", user))
+	}
+	if len(paths) == 0 {
+		return nil
+	}
+	dfArgs := append([]string{"-h", "-P"}, paths...)
+	raw, err := runner.Run(ctx, "df", dfArgs...)
+	if err != nil {
+		return nil
+	}
+	return parseStorageRows(raw, labels)
+}
+
+// parseStorageRows parses `df -h -P` output positionally against the labels
+// gathered for each queried path (df prints one line per path, in order). Pure,
+// so it's unit-testable without touching the filesystem.
+func parseStorageRows(raw []byte, labels []string) []StorageRow {
+	var out []StorageRow
+	for i, line := range strings.Split(strings.TrimRight(string(raw), "\n"), "\n") {
+		if i == 0 { // header: Filesystem Size Used Avail Capacity Mounted_on
+			continue
+		}
+		f := strings.Fields(line)
+		if len(f) < 6 {
+			continue
+		}
+		label := "?"
+		if idx := i - 1; idx >= 0 && idx < len(labels) {
+			label = labels[idx]
+		}
+		out = append(out, StorageRow{
+			Label: label,
+			Used:  f[2],
+			Size:  f[1],
+			Pct:   atoi(strings.TrimSuffix(f[4], "%")),
+		})
+	}
+	return out
 }
 
 // atoi is a forgiving Atoi (0 on error) for sinfo/squeue numeric fields.
