@@ -18,6 +18,27 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — fix F11 Software search (couldn't type)
+
+The Software screen's search box silently dropped every keystroke — "you can't
+type, the search doesn't work."
+- **Root cause:** bubbletea v2 `textinput.Update` returns early when `!m.focus`, and
+  `textinput.New()` defaults to `focus:false` with `Focus()` as a *pointer* receiver.
+  `NewSoftwareModel` never called `Focus()`, and `SoftwareModel.Init()`'s
+  `m.input.Focus()` ran on a discarded value copy (no-op). Chat works because
+  `NewChatModel` calls `ti.Focus()` at construction *before* storing the input — the
+  software screen simply missed that. Fix: `ti.Focus()` in `NewSoftwareModel`.
+- **Layout:** the search field was wrapped in a 3-row bordered box that overflowed
+  the frame by rows and, more subtly, rendered 7 cols wider than the frame's content
+  area (it wrapped). Replaced with a single-line field sized to the content width,
+  and corrected the frame to the sibling `AppScreen` width (`w-4`) with content
+  `w-8`. The frame now renders exactly `h` rows, no wrap.
+- Files: `internal/tui/software.go`, `internal/app/model.go` (cursor comment),
+  `internal/tui/software_test.go`.
+- Verified: new `TestSoftwareInputFocused` (regression) + a frame-fits check (exact
+  row count, `w-4` width, no search wrap) pass; full `go build`/`vet`/`go test` green.
+  (Typing + the visible caret still need a real pty to eyeball.)
+
 ## 2026-09-18 · deepthought-cli — wire the skills loader into the running app
 
 Skills were loaded-and-tested but never surfaced. Now they are, with the same

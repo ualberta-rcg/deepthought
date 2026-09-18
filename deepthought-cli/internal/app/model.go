@@ -599,7 +599,9 @@ func (m RootModel) View() tea.View {
 	}
 	v := tea.NewView(s)
 	v.AltScreen = true // declarative in v2 — no tea.WithAltScreen()
-	// Place the input's real cursor when the chat is active and uncovered.
+	// Place the input's real cursor when the chat is active and uncovered. (The
+	// textinputs use a virtual cursor rendered in their own View, so this is a
+	// no-op in practice — kept for parity with the reference.)
 	if m.screen == tui.ScreenChat && m.overlay == nil {
 		v.Cursor = m.chat.Cursor()
 	}

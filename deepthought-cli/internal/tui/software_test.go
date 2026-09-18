@@ -74,6 +74,16 @@ func TestSoftwareScreenDetail(t *testing.T) {
 	}
 }
 
+// Regression: the search box must be focused on construction, or textinput
+// drops every keystroke (its Update returns early when !Focused). This was the
+// "can't type" bug.
+func TestSoftwareInputFocused(t *testing.T) {
+	m := NewSoftwareModel().Resize(100, 40)
+	if !m.input.Focused() {
+		t.Error("search input should be focused on construction (else it drops keystrokes)")
+	}
+}
+
 func TestSoftwareScreenNotFound(t *testing.T) {
 	m := softwareModel(true)
 	m.phase = phaseSearch

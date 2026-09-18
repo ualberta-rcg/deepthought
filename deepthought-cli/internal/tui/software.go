@@ -51,6 +51,9 @@ func NewSoftwareModel() SoftwareModel {
 	ti.Prompt = "⌕ "
 	ti.Placeholder = "search modules… (e.g. cuda, python, openmpi)"
 	ti.CharLimit = 200
+	ti.Focus() // Focus() is a pointer receiver — set it on the stored input, else it
+	// is a no-op and the box drops every keypress (textinput ignores keys when
+	// !Focused). Mirrors NewChatModel.
 	return SoftwareModel{
 		input:    ti,
 		client:   cvmfs.NewClient(nil),
@@ -64,16 +67,18 @@ func (m SoftwareModel) Init() tea.Cmd { return m.input.Focus() }
 
 func (m SoftwareModel) Resize(w, h int) SoftwareModel {
 	m.width, m.height = w, h
-	inner := w - 4 // border + pad
-	if inner < 10 {
-		inner = 10
+	frameW := w - 4        // total frame width (matches the other AppScreen frames)
+	contentW := frameW - 4 // inside the frame's border + padding
+	if contentW < 10 {
+		contentW = 10
 	}
-	m.input.SetWidth(inner - 4) // styleInputBox adds border + padding
-	bodyH := h - 2 - 3          // inside border, minus title + search row + keybar
+	m.input.SetWidth(contentW - 4) // single-line search field (input renders ~3 cols wider)
+	// Frame border (2) + title (1) + search row (1) + keybar (1).
+	bodyH := h - 2 - 3
 	if bodyH < 1 {
 		bodyH = 1
 	}
-	m.vp.SetWidth(inner)
+	m.vp.SetWidth(contentW)
 	m.vp.SetHeight(bodyH)
 	return m
 }
@@ -198,24 +203,25 @@ func (m SoftwareModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	inner := m.width - 4
-	if inner < 10 {
+	frameW := m.width - 4
+	contentW := frameW - 4
+	if contentW < 10 {
 		return ""
 	}
-	bodyH := m.height - 2 - 3
+	bodyH := m.height - 2 - 3 // title(1) + search row(1) + keybar(1), inside the border
 	if bodyH < 1 {
 		bodyH = 1
 	}
 	m.vp.SetContent(strings.Join(m.body(), "\n"))
-	title := padLines(styleSettingsTitle.Render("DeepThought › Software"), inner)
-	searchRow := padLines(styleInputBox.Render(m.input.View()), inner)
-	block := padBlock(m.vp.View(), inner, bodyH)
-	out := title + "\n" + searchRow + "\n" + block + "\n" + padLines(m.keybar(), inner)
+	title := padLines(styleSettingsTitle.Render("DeepThought › Software"), contentW)
+	searchRow := padLines(m.input.View(), contentW)
+	block := padBlock(m.vp.View(), contentW, bodyH)
+	out := title + "\n" + searchRow + "\n" + block + "\n" + padLines(m.keybar(), contentW)
 	box := lipgloss.NewStyle().
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colPrimary).
 		Padding(0, 1).
-		Width(inner)
+		Width(frameW)
 	return box.Render(out)
 }
 
