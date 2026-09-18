@@ -1,0 +1,82 @@
+{
+  "providers": [
+    {
+      "name": "vulcan",
+      "base_url": "https://inference.kubeflow.vulcan.alliancecan.ca/serving/api/v1",
+      "api_key": "$TYK_KEY",
+      "wire": "openai",
+      "jurisdiction": "CA",
+      "clearance": "internal",
+      "tags": ["cad", "external"]
+    },
+    {
+      "name": "home",
+      "base_url": "http://localhost:11434/v1",
+      "api_key": "$OLLAMA_API_KEY",
+      "wire": "openai",
+      "jurisdiction": "local",
+      "clearance": "secret",
+      "tags": ["local"]
+    }
+  ],
+  "models": [
+    {
+      "id": "qwen35-122b",
+      "label": "Qwen 3.5 122B",
+      "provider": "vulcan",
+      "params": "122B (10B active)",
+      "context": 131072,
+      "capabilities": ["chat", "tools", "reasoning"]
+    },
+    {
+      "id": "gpt-oss-20b",
+      "label": "GPT-OSS 20B",
+      "provider": "vulcan",
+      "params": "21B MoE (3.6B active)",
+      "context": 131072,
+      "capabilities": ["chat", "tools", "reasoning"],
+      "tags": ["fast"]
+    },
+    {
+      "id": "llama4-scout",
+      "label": "Llama 4 Scout",
+      "provider": "home",
+      "capabilities": ["chat"],
+      "tags": ["coding", "local"]
+    }
+  ],
+  "roles": {
+    "chat": "qwen35-122b",
+    "agentic": "qwen35-122b",
+    "planning": "qwen35-122b",
+    "summary": "gpt-oss-20b",
+    "tombstone": "gpt-oss-20b"
+  },
+  "thinking": true,
+  "effort": "medium",
+  "max_tokens": 8192,
+  "temperature": 0.7,
+  "permission_mode": "safe",
+  "permissions": {
+    "mode": "safe",
+    "allow": [],
+    "ask": [],
+    "deny": []
+  },
+  "status_line": {
+    "enabled": true,
+    "segments": ["cwd", "model", "mode", "tokens"],
+    "command": ""
+  },
+  "routes": {
+    "code": {
+      "capability": "generate",
+      "needs_tools": true,
+      "prefer": ["vulcan", "home"]
+    },
+    "embed": {
+      "capability": "embed",
+      "prefer": ["vulcan"]
+    }
+  }
+}

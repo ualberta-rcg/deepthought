@@ -1,0 +1,149 @@
+package tui
+
+import (
+	"strings"
+	"time"
+	"unicode/utf8"
+
+	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
+	"annorax/internal/babel"
+)
+
+// TopBarHeight is the number of terminal rows the root reserves for the top bar.
+// Exported because both the root model (package app) and the SSH PTY seed must
+// subtract it from the chat region.
+const TopBarHeight = 1
+
+// BottomBarHeight is the number of terminal rows the root reserves for the
+// bottom chrome band (status line). Sibling of TopBarHeight.
+const BottomBarHeight = 1
+
+// ChatChromeHeight is the number of rows the root subtracts from the terminal
+// height before handing the remainder to ChatModel (top bar + bottom bar).
+func ChatChromeHeight() int { return TopBarHeight + BottomBarHeight }
+
+// TickMsg carries the wall-clock time produced by TickClock. The receiver re-arms
+// it on every tick (tea.Every fires once).
+type TickMsg time.Time
+
+// TickClock arms the next 1 Hz wall-clock tick. tea.Every is aligned to the system
+// clock, so HH:MM:SS rolls over crisply. Return TickClock() again from the TickMsg
+// handler to keep it ticking.
+func TickClock() tea.Cmd {
+	return tea.Every(time.Second, func(t time.Time) tea.Msg {
+		return TickMsg(t)
+	})
+}
+
+// RenderTopBar paints the 1-row dark-grey top bar: rainbow Annorax · model [F3]
+// · mode · effort [F4] on the left, a responsive clock on the right. The band
+// background is applied to every cell so the bar is solid dark grey, not black.
+func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
+	if w < 1 {
+		return ""
+	}
+	drift := clock.Second() % len(markBands)
+	left := lipgloss.JoinHorizontal(lipgloss.Left,
+		rainbowWord("Annorax", drift),
+		styleStatusSep.Render(" │ "),
+		styleStatusModel.Render(st.Model),
+		styleStatusHint.Render(" [F3]"),
+		styleStatusSep.Render(" │ "),
+		styleStatusMode.Render(orDefault(st.Mode, "—")),
+	)
+	// Effort is the reasoning dial (off = no thinking); show it as its own chip
+	// with the HHGTTG label so it's glance-worthy, plus its F-key hint.
+	if st.Effort != "" {
+		left = lipgloss.JoinHorizontal(lipgloss.Left,
+			left,
+			styleStatusSep.Render(" │ "),
+			styleStatusComp.Render(EffortLabel(babel.Effort(st.Effort))),
+			styleStatusHint.Render(" [F4]"),
+		)
+	}
+	clockStr := styleClock.Render(formatBarClock(clock, w, lipgloss.Width(left)))
+	return padBar(w, left, clockStr)
+}
+
+// RenderBottomBar paints the 1-row dark-grey bottom chrome band. content is
+// optional (empty → blank band); when set it is left-aligned on the band with
+// bar foreground so it doesn't sit as unstyled black-on-black text.
+func RenderBottomBar(w int, content string) string {
+	if w < 1 {
+		return ""
+	}
+	left := content
+	if strings.TrimSpace(left) == "" {
+		left = styleBarPad.Render("")
+	} else {
+		left = styleBarText.Render(left)
+	}
+	return padBar(w, left, "")
+}
+
+// padBar joins left + right on a solid dark-grey band of width w, right-aligning
+// the right piece when present. Truncates the left if the pair won't fit.
+//
+// Every cell (left, gap, right) carries Background(colBarBg) already — we do
+// NOT wrap the joined string in styleTopBar.Width(w), which fights nested ANSI
+// and can wash the band back to the terminal default.
+func padBar(w int, left, right string) string {
+	lw := lipgloss.Width(left)
+	rw := lipgloss.Width(right)
+	gap := w - lw - rw
+	if gap < 0 {
+		// Too narrow: drop the right piece, then truncate left if needed.
+		if rw > 0 && w >= lw {
+			right, rw = "", 0
+			gap = w - lw
+		} else {
+			// Hard truncate to w cells while keeping the band background.
+			return styleBarPad.Width(w).MaxWidth(w).Render(left)
+		}
+	}
+	pad := styleBarPad.Render(strings.Repeat(" ", gap))
+	return left + pad + right
+}
+
+// rainbowWord colors each rune of s with the splash spectrum, drifted by drift
+// bands so the hue walks across the word on every clock second.
+func rainbowWord(s string, drift int) string {
+	n := utf8.RuneCountInString(s)
+	if n == 0 {
+		return ""
+	}
+	var b strings.Builder
+	i := 0
+	for _, r := range s {
+		c := lipgloss.Color(bandForRow(i, drift, n))
+		b.WriteString(lipgloss.NewStyle().
+			Foreground(c).
+			Background(colBarBg).
+			Bold(true).
+			Render(string(r)))
+		i++
+	}
+	return b.String()
+}
+
+// formatBarClock picks a clock format that fits the remaining width:
+//   - wide  (≥ 28 free cells): "Mon Jul 27 2026 · 20:18:42 MDT"
+//   - medium (≥ 12): "20:18:42"
+//   - narrow: "20:18"
+func formatBarClock(t time.Time, w, leftW int) string {
+	if t.IsZero() {
+		t = time.Now()
+	}
+	free := w - leftW - 1 // ≥1-space gap
+	full := t.Format("Mon Jan 2 2006 · 15:04:05 MST")
+	if free >= lipgloss.Width(full) {
+		return full
+	}
+	med := t.Format("15:04:05")
+	if free >= lipgloss.Width(med) {
+		return med
+	}
+	return t.Format("15:04")
+}

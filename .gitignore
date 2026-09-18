@@ -1,0 +1,22 @@
+# Built binaries (the CLI's `make build` emits the binary in the deploy dir;
+# guard against a stray one landing in-tree).
+deepthought-cli/deepthought-cli
+deepthought-cli/annorax
+**/bin/
+
+# Local scratch (smoke harnesses, throwaway runs) — never commit
+**/.tmp/
+
+# Real settings (key-bearing) — only the example is committed
+deepthought-cli/configs/config.json
+
+# Local state
+*.db
+
+# SSH keys (auto-generated, live under $SCRATCH)
+*_ed25519
+host_ed25519*
+
+# IDE / OS noise
+.DS_Store
+*.swp
