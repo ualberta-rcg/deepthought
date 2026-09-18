@@ -10,7 +10,7 @@ import (
 	"sort"
 	"strings"
 
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // ImportCandidate is a provider plus the models and optional secret discovered
@@ -53,7 +53,7 @@ func DiscoverClaudeProviders(home string) ([]ImportCandidate, error) {
 			continue
 		}
 		name := providerName(base)
-		secretID := "ANNORAX_" + safeEnvName.ReplaceAllString(strings.ToUpper(name), "_") + "_API_KEY"
+		secretID := "DEEPTHOUGHT_CLI_" + safeEnvName.ReplaceAllString(strings.ToUpper(name), "_") + "_API_KEY"
 		keyRef := "$" + secretID
 		secret := settings.Env["ANTHROPIC_AUTH_TOKEN"]
 		if strings.Contains(base, "vulcan.alliancecan.ca") {

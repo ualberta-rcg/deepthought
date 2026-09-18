@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"annorax/internal/tools"
+	"deepthought-cli/internal/tools"
 )
 
 func TestReadOnlyAsksInSafe(t *testing.T) {

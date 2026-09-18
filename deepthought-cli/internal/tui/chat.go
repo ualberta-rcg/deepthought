@@ -12,12 +12,12 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/babel"
-	commandpkg "annorax/internal/commands"
-	"annorax/internal/history"
-	"annorax/internal/queen"
-	"annorax/internal/tools"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	commandpkg "deepthought-cli/internal/commands"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/tools"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // StatusInfo feeds the top bar's status cluster. Owned by the root model; populated
@@ -44,11 +44,11 @@ type sugItem struct {
 // filterCommands is the fuzzy drop-in seam — swap its body, keep the signature.
 var commandRegistry = commandpkg.Builtins()
 
-// chatSystemPrompt is prepended to every request. It tells Annorax what it is
-// (NOT Claude — it's Annorax, an agentic terminal assistant), where its settings
+// chatSystemPrompt is prepended to every request. It tells DeepThought what it is
+// (NOT Claude — it's DeepThought, an agentic terminal assistant), where its settings
 // live, and what it can do. Kept short: the model doesn't need a novel.
 func chatSystemPrompt(cfgPath string) string {
-	return "You are Annorax, an agentic terminal assistant (not Claude — you are Annorax). " +
+	return "You are DeepThought, an agentic terminal assistant (not Claude — you are DeepThought). " +
 		"You run over SSH on a terminal; you are not a web assistant. " +
 		"You can write and run code, operate HPC clusters (Slurm, Lmod modules, schedulers, " +
 		"parallel jobs), manage Proxmox virtualization, and help with scientific work. " +
@@ -232,7 +232,7 @@ func ResumeChatModel(src InferenceSource, reg *tools.Registry, gate *queen.Gate,
 // buildChat is the shared constructor for new + resumed chats.
 func buildChat(src InferenceSource, reg *tools.Registry, gate *queen.Gate, makeStore func() (history.Store, *history.Collective)) ChatModel {
 	ti := textinput.New()
-	ti.Placeholder = "Ask Annorax…"
+	ti.Placeholder = "Ask DeepThought…"
 	ti.Prompt = "" // the box is the prompt; no leading glyph
 	ti.Focus()
 	sp := spinner.New(spinner.WithSpinner(splashSpinner), spinner.WithStyle(styleSystem))
@@ -664,7 +664,7 @@ func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
 		return m, nil
 	}
 	if m.busy {
-		m.systemLine("(Annorax is still working)")
+		m.systemLine("(DeepThought is still working)")
 		return m, nil
 	}
 	inc.Status = history.IncursionStreaming

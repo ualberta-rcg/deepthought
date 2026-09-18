@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 func TestSQLiteStoreRoundTripAndIdempotency(t *testing.T) {

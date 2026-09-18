@@ -1,4 +1,4 @@
-// Package commands defines Annorax's slash-command registry.
+// Package commands defines DeepThought's slash-command registry.
 package commands
 
 import (
@@ -55,7 +55,7 @@ func Builtins() *Registry {
 		{"expand", "recover a summarized interaction", Local},
 		{"pin", "pin an interaction in context", Local},
 		{"annotate", "annotate an interaction", Local},
-		{"quit", "exit Annorax", Local},
+		{"quit", "exit DeepThought", Local},
 	}
 	out := make([]Command, 0, len(names))
 	for _, item := range names {

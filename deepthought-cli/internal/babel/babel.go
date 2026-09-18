@@ -1,4 +1,4 @@
-// Package babel is Annorax's backend abstraction (per docs/ARCHITECTURE.md): it owns
+// Package babel is DeepThought's backend abstraction (per docs/ARCHITECTURE.md): it owns
 // the wire format and transport for talking to an inference gateway. Today that's a
 // single OpenAI-compatible surface — the Vulcan KServe gateway — so this is a plain
 // OpenAI chat-completions client. When an Anthropic-format backend lands, the

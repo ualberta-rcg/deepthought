@@ -6,7 +6,7 @@ import (
 	"sort"
 	"time"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // Messages flattens the collective into Babel wire messages at the chosen

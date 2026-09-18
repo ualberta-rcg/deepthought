@@ -92,9 +92,9 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 	roots := []struct {
 		path, layer string
 	}{
-		{filepath.Join(l.UserHome, ".annorax", "skills"), "user"},
+		{filepath.Join(l.UserHome, ".deepthought-cli", "skills"), "user"},
 		{filepath.Join(l.UserHome, ".claude", "skills"), "user-claude"},
-		{filepath.Join(projectRoot, ".annorax", "skills"), "project"},
+		{filepath.Join(projectRoot, ".deepthought-cli", "skills"), "project"},
 	}
 	for _, root := range l.SiteRoots {
 		roots = append(roots, struct{ path, layer string }{root, "site"})
@@ -141,10 +141,10 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 
 func locateProject(cwd string) string {
 	for dir := cwd; ; dir = filepath.Dir(dir) {
-		if _, err := os.Stat(filepath.Join(dir, "ANNORAX.md")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, "DEEPTHOUGHT_CLI.md")); err == nil {
 			return dir
 		}
-		if _, err := os.Stat(filepath.Join(dir, ".annorax")); err == nil {
+		if _, err := os.Stat(filepath.Join(dir, ".deepthought-cli")); err == nil {
 			return dir
 		}
 		parent := filepath.Dir(dir)

@@ -2,13 +2,13 @@
 
 GO ?= go
 SCRATCH ?= /scratch/$(USER)
-DEPLOY_DIR ?= $(SCRATCH)/annorax
-SNAPSHOT_DIR ?= $(HOME)/annorax-snapshots
-BIN := $(DEPLOY_DIR)/annorax
+DEPLOY_DIR ?= $(SCRATCH)/deepthought-cli
+SNAPSHOT_DIR ?= $(HOME)/deepthought-cli-snapshots
+BIN := $(DEPLOY_DIR)/deepthought-cli
 
 build:
 	mkdir -p "$(DEPLOY_DIR)"
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o "$(BIN).new" ./cmd/annorax
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o "$(BIN).new" ./cmd/deepthought-cli
 
 deploy: build
 	mkdir -p "$(DEPLOY_DIR)"

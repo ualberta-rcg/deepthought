@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"time"
 
-	"annorax/internal/history"
+	"deepthought-cli/internal/history"
 )
 
 type Decision struct {

@@ -130,9 +130,9 @@ func (m *Manager) Handle(request Request) Response {
 func SocketPath() string {
 	root := os.Getenv("XDG_RUNTIME_DIR")
 	if root == "" {
-		root = filepath.Join(os.TempDir(), fmt.Sprintf("annorax-%d", os.Getuid()))
+		root = filepath.Join(os.TempDir(), fmt.Sprintf("deepthought-cli-%d", os.Getuid()))
 	}
-	return filepath.Join(root, "annorax.sock")
+	return filepath.Join(root, "deepthought-cli.sock")
 }
 
 func (m *Manager) Serve(ctx context.Context, socket string) error {

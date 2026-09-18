@@ -1,4 +1,4 @@
-// Package tools holds Annorax's native tool implementations and the registry that
+// Package tools holds DeepThought's native tool implementations and the registry that
 // advertises them to the model. A Tool is a capability the agent can invoke: bash
 // (run a command), read (read a file), and later edit/glob/grep/etc. Each tool owns
 // its JSON-schema (sent in the request `tools` array) and its Run; the TUI loop and
@@ -13,7 +13,7 @@ import (
 	"context"
 	"sort"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // Result is what a Tool.Run returns. Content feeds the model; Summary feeds the TUI.

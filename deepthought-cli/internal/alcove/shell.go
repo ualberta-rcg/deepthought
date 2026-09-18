@@ -1,4 +1,4 @@
-// Package alcove owns the long-lived shell used by an Annorax session.
+// Package alcove owns the long-lived shell used by an DeepThought session.
 //
 // Commands execute in the same bash process, so cd, export, module load, conda
 // activate, and virtual environments persist across tool calls.
@@ -112,14 +112,14 @@ func (s *Shell) Run(ctx context.Context, command string) (Result, error) {
 	if _, err := rand.Read(nonce); err != nil {
 		return Result{}, fmt.Errorf("alcove: nonce: %w", err)
 	}
-	marker := "__ANNORAX_" + hex.EncodeToString(nonce) + "__"
+	marker := "__DEEPTHOUGHT_CLI_" + hex.EncodeToString(nonce) + "__"
 	// A top-level exit would terminate the persistent shell before it can emit
 	// the sentinel. Preserve the requested status in a subshell instead.
 	fields := strings.Fields(command)
 	if len(fields) >= 1 && len(fields) <= 2 && fields[0] == "exit" {
 		command = "( " + command + " )"
 	}
-	script := fmt.Sprintf("{ %s\n}; __annorax_rc=$?; printf '\\n%s%%d\\n' \"$__annorax_rc\"\n", command, marker)
+	script := fmt.Sprintf("{ %s\n}; __deepthought_cli_rc=$?; printf '\\n%s%%d\\n' \"$__deepthought_cli_rc\"\n", command, marker)
 	if _, err := io.WriteString(s.stdin, script); err != nil {
 		return Result{}, fmt.Errorf("alcove: write command: %w", err)
 	}

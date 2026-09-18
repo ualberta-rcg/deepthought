@@ -20,10 +20,10 @@ func TestShellPersistsDirectoryAndEnvironment(t *testing.T) {
 		return got
 	}
 
-	if got := run("mkdir work && cd work && export ANNORAX_TEST=present"); got.ExitCode != 0 {
+	if got := run("mkdir work && cd work && export DEEPTHOUGHT_CLI_TEST=present"); got.ExitCode != 0 {
 		t.Fatalf("setup exit = %d: %s", got.ExitCode, got.Output)
 	}
-	got := run(`printf '%s|%s' "$PWD" "$ANNORAX_TEST"`)
+	got := run(`printf '%s|%s' "$PWD" "$DEEPTHOUGHT_CLI_TEST"`)
 	if !strings.HasSuffix(got.Output, "/work|present") {
 		t.Fatalf("state did not persist: %q", got.Output)
 	}

@@ -7,10 +7,10 @@ import (
 	"strings"
 	"sync"
 
-	"annorax/internal/babel"
-	"annorax/internal/history"
-	"annorax/internal/queen"
-	"annorax/internal/tools"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/tools"
 )
 
 type ClientResolver interface {

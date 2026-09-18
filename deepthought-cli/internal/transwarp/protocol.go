@@ -1,5 +1,5 @@
 // Package transwarp defines the fixed control vocabulary used by resident
-// Annorax processes. Request deliberately has no command or argv field.
+// DeepThought processes. Request deliberately has no command or argv field.
 package transwarp
 
 import (

@@ -6,7 +6,7 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // ModelChosenMsg carries the model id selected in the chooser. The root applies

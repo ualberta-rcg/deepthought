@@ -7,7 +7,7 @@ import (
 	"charm.land/wish/v2/bubbletea"
 	"github.com/charmbracelet/ssh"
 
-	"annorax/internal/tui"
+	"deepthought-cli/internal/tui"
 )
 
 // SSHHandler returns the wish/bubbletea handler for the given listen address. d

@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"annorax/internal/babel"
-	"annorax/internal/queen"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/queen"
 )
 
 func TestCollectiveMessagesShape(t *testing.T) {
-	coll := NewCollective(SpawnCollectiveRequest{SystemPrompt: "You are Annorax."})
+	coll := NewCollective(SpawnCollectiveRequest{SystemPrompt: "You are DeepThought."})
 	inc := coll.StartIncursion("list files")
 
 	tx, err := inc.AddTransmission("I'll list the files.", []babel.ToolCall{

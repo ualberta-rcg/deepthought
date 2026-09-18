@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // Default condensing limits. These are intentionally conservative; they produce

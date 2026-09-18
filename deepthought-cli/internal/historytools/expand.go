@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	"annorax/internal/history"
-	"annorax/internal/tools"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/tools"
 )
 
 type DroneReader interface {

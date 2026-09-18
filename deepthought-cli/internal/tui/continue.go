@@ -7,7 +7,7 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/history"
+	"deepthought-cli/internal/history"
 )
 
 // ContinueModel lists saved chats (from the ChatStore) and resumes the selected

@@ -8,7 +8,7 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // TopBarHeight is the number of terminal rows the root reserves for the top bar.
@@ -37,7 +37,7 @@ func TickClock() tea.Cmd {
 	})
 }
 
-// RenderTopBar paints the 1-row dark-grey top bar: rainbow Annorax · model [F3]
+// RenderTopBar paints the 1-row dark-grey top bar: rainbow DeepThought · model [F3]
 // · mode · effort [F4] on the left, a responsive clock on the right. The band
 // background is applied to every cell so the bar is solid dark grey, not black.
 func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
@@ -46,7 +46,7 @@ func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
 	}
 	drift := clock.Second() % len(markBands)
 	left := lipgloss.JoinHorizontal(lipgloss.Left,
-		rainbowWord("Annorax", drift),
+		rainbowWord("DeepThought", drift),
 		styleStatusSep.Render(" │ "),
 		styleStatusModel.Render(st.Model),
 		styleStatusHint.Render(" [F3]"),

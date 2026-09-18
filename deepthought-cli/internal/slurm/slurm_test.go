@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"annorax/internal/history"
+	"deepthought-cli/internal/history"
 )
 
 type fakeRunner struct {

@@ -8,11 +8,11 @@ import (
 	"sync"
 	"time"
 
-	"annorax/internal/babel"
-	"annorax/internal/config"
-	"annorax/internal/history"
-	"annorax/internal/tui"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/tui"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // Settings is the live, shared configuration handle. The TUI reads snapshots

@@ -1,4 +1,4 @@
-// Package queen is Annorax's permission gate (per docs/ARCHITECTURE.md): every tool
+// Package queen is DeepThought's permission gate (per docs/ARCHITECTURE.md): every tool
 // call passes through it before running. Named for the Borg Queen — the personification
 // of the Collective's will, whose approval every action needs; some she refuses
 // outright, no matter how the collective asks.
@@ -19,7 +19,7 @@ import (
 	"strings"
 	"sync"
 
-	"annorax/internal/tools"
+	"deepthought-cli/internal/tools"
 )
 
 // Mode is the legacy permission preset. Kept for back-compat; new code should

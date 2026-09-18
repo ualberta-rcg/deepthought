@@ -4,7 +4,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // toolContent extracts the tool-result message body from a flattened slice.

@@ -3,7 +3,7 @@ package tui
 import (
 	"charm.land/bubbletea/v2"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // effortLevels maps the Effort ladder to the HHGTTG-flavored labels shown in the

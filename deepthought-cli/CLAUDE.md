@@ -1,4 +1,4 @@
-# Annorax
+# deepthought-cli
 
 An agentic system written in **Go**, served as a TUI **over SSH** — JARVIS-style, not
 just a coding assistant. Users `ssh` in and land on a title screen; from there they
@@ -6,22 +6,25 @@ drive an LLM agent that can write and run code, operate HPC clusters (Slurm, mod
 schedulers), manage Proxmox virtualization, and help with scientific work — planning,
 running tools, and executing shell commands under a permission gate.
 
-> Formerly "Cowabunga". Named for the Annorax-class world-shaper from *Star Trek:
-> Voyager* — a device that rewrites history. All naming is Star Trek: component
-> packages use Borg terminology (`queen` — the permission gate; `unimatrix` — the
-> model catalog + inference core), and the conversation object model inside
-> `internal/history` is fully Borg (Collective, Incursion, Transmission, Probe,
-> Pattern, Synapse, Vinculum). CLI flavor is Hitchhiker's Guide. Keep those
-> conventions when you add code.
+> Named for **Deep Thought**, the supercomputer from *The Hitchhiker's Guide to the
+> Galaxy* — it computed the Answer to the Ultimate Question (42) in 7.5 million
+> years; the CLI keeps hunting the Question.
+> All naming is Star Trek: component packages use Borg terminology (`queen` — the
+> permission gate; `unimatrix` — the model catalog + inference core), and the
+> conversation object model inside `internal/history` is fully Borg (Collective,
+> Incursion, Transmission, Probe, Pattern, Synapse, Vinculum). CLI flavor is
+> Hitchhiker's Guide. Keep those conventions when you add code.
 
 ## Status
 
-- **Repository:** local-only (`/home/rahimk/annorax`), not under git. This dir
-  *is* the working tree. When the repo lands, move this tree over wholesale.
-- **Language:** Go. Module path **`annorax`** (`go.mod` exists). `go 1.25.9` in
-  `go.mod`; the on-path system Go is `go1.22.2` and `GOTOOLCHAIN=auto` transparently
-  fetches 1.25.x on build.
-- **Phase:** Annorax v1 core is implemented. `cmd/annorax/` +
+- **Repository:** `ualberta-rcg/deepthought` (GitHub), this product lives in
+  `deepthought-cli/` — the repo also holds a `deepthought-server/` scaffold and a
+  root `CLAUDE.md` + `CHANGELOG.md` (the root CLAUDE.md carries repo-wide rules,
+  incl. the changelog-before-commit rule — read it before committing).
+- **Language:** Go. Module path **`deepthought-cli`** (`go.mod` exists).
+  `go 1.25.9` in `go.mod`; the on-path system Go is `go1.22.2` and
+  `GOTOOLCHAIN=auto` transparently fetches 1.25.x on build.
+- **Phase:** v1 core is implemented. `cmd/deepthought-cli/` +
  `internal/{alcove,app,assimilation,babel,commands,config,history,historytools,keybindings,queen,residency,science,skills,slurm,tools,transwarp,tui,unimatrix}/`
  exist; the binary runs
   locally and serves over SSH (`--sub-etha :2323`). The shell is **chat-home with a
@@ -47,15 +50,15 @@ running tools, and executing shell commands under a permission gate.
   over the active screen and nest: the **Effort** picker (`/effort`, F4 — HHGTTG labels
   Autopilot→Infinite Improbability) and the **Model chooser** (F3 — switch the *running*
   model; press `e` to branch into Effort, which returns to the chooser). Splash shows the
-  **Annorax** mark + drifting rainbow, **"Don't Panic."**, a rotating HHGTTG subtitle,
+  **DeepThought** mark + drifting rainbow, **"Don't Panic."**, a rotating HHGTTG subtitle,
   and a model·provider status line. F-keys: `F2` settings · `F3` model chooser · `F4`
   effort · `F5` new chat · `F6` resume · `F7` context grid · `F8` stats · `F9` permission
   mode · `F12` status (F10/F11 free). **Effort is the sole reasoning control** (F4 /
   `/effort`): off (Autopilot) = no thinking; any other level = thinking on at that
-  level. Top bar (dark-grey band): rainbow `Annorax · model [F3] · mode · effort [F4]`
+  level. Top bar (dark-grey band): rainbow `DeepThought · model [F3] · mode · effort [F4]`
   + responsive clock. Chat chrome: activity line above input + bottom status-line band.
 
-  **Config v2** (`~/.config/annorax/config.json`; see `configs/config.example.json`):
+  **Config v2** (`~/.config/deepthought-cli/config.json`; see `configs/config.example.json`):
   `providers` (unlimited backends — name, base URL, API key or `$ENV_VAR`, wire
   `openai`|`anthropic`, free-form tags like local/external/usa/cad/china), `models`
   (each attached to a provider, with capabilities `chat`/`tools`/`reasoning`/`vision`
@@ -99,7 +102,7 @@ running tools, and executing shell commands under a permission gate.
   (cloned) so task grants never leak. `esc` interrupts an in-flight turn (the
   stream's context is cancelled, the tool loop breaks, the turn is marked
   interrupted); a second `esc` once idle is a no-op at chat. `ctrl+c` twice within
-  2s quits. The system prompt tells the model it's **Annorax (not Claude)**, where
+  2s quits. The system prompt tells the model it's **DeepThought (not Claude)**, where
   its settings file is, and its SSH/HPC environment.
 
   **Slash commands** (chat popover): `/help`, `/model` (open the **Model chooser**
@@ -129,17 +132,15 @@ running tools, and executing shell commands under a permission gate.
   **Demotion is a callable seam, not automatic:** `history.DemoteProbe(store, collID,
   probeID, to)` fills the deterministic summary, sets the State monotonically, and
   persists; a future Queen AI thread (using `internal/residency` + `internal/assimilation`
-  + `SummaryEngine`) decides what to demote. See `docs/PERSISTENCE.md` and
-  `docs/Reference_app+1.md` for the design quarry.
+  + `SummaryEngine`) decides what to demote.
 
  V1 also includes `unimatrix.Session` (headless loop), Assimilation budgeting
  with manifest Drones and `expand`, deterministic Queen residency, a persistent
  Alcove shell, capability/sensitivity routes, generic ToolServer catalogs,
  structured Slurm tools and reconciliation, layered Claude-compatible skills,
  Directive/Objective/Attempt/Artifact provenance, and user-space resident mode.
- `annorax --towel`, `ls`, `attach`, and `stop` speak the closed Transwarp Unix
- socket protocol; it has no shell field. See `docs/SPEC.md`,
- `docs/OPERATIONS.md`, and `docs/SKILLS.md`.
+ `deepthought-cli --towel` plus `ls`, `attach`, and `stop` speak the closed
+ Transwarp Unix socket protocol; it has no shell field.
 
 ## Running environment (Vulcan login node)
 
@@ -148,28 +149,24 @@ This box is a shared HPC login node, **not** a laptop. The org policy
 job or `salloc`." **For this project the user has explicitly chosen to build on the
 login node** for the dev loop; keep the footprint small: **module/build caches on
 `$SCRATCH`, not `$HOME`** (`go env -w GOCACHE/GOMODCACHE` already set), and keep
-compiles to the annorax tree. An interactive `salloc` shell is the compliant
+compiles to this tree. An interactive `salloc` shell is the compliant
 alternative if the node ever feels it.
 
-- Editing source, writing docs, and `go mod`/`go get`/`go mod tidy` are always fine.
-- Caches: `GOCACHE=$SCRATCH/annorax/gocache`, `GOMODCACHE=$SCRATCH/annorax/gomodcache`
-  (set persistently via `go env -w`).
+- Editing source and `go mod`/`go get`/`go mod tidy` are always fine.
+- Caches: `GOCACHE=$SCRATCH/deepthought-cli/gocache`,
+  `GOMODCACHE=$SCRATCH/deepthought-cli/gomodcache` (set persistently via `go env -w`).
 - Job I/O on `$SCRATCH`, not `$HOME` (50 GB home quota fills fast). SSH host key at
-  `$SCRATCH/annorax/host_ed25519` — never commit it.
+  `$SCRATCH/deepthought-cli/host_ed25519` — never commit it.
 - Don't guess module versions or GPU types; don't scan the filesystem from root.
-
-See [`docs/BUILD.md`](docs/BUILD.md).
 
 ## Where to look
 
-Everything the build needs is under [`docs/`](docs/):
-
-- [`docs/STACK.md`](docs/STACK.md) — pinned libraries + the import-path gotchas that will bite you.
-- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — package glossary (Borg names) + the agent loop.
-- [`docs/BUILD.md`](docs/BUILD.md) — how to actually compile/test this on Vulcan via Slurm.
-- [`docs/CLI.md`](docs/CLI.md) — the Hitchhiker's Guide CLI surface (flags + slash commands).
-- [`docs/ANTIGRAVITY.md`](docs/ANTIGRAVITY.md) — reference notes on antigravity-cli (the UX we're stealing from). **Caveat at top of that file.**
-- [`docs/Reference_app+1.md`](docs/Reference_app+1.md) — deep-dive of the Claude Code source in `reference/src/`: generalized patterns for Annorax across context, tools, CLI/slash, skills, and memory. The design quarry for the build.
+- Repo root [`CLAUDE.md`](../CLAUDE.md) — repo-wide rules: two-product layout,
+  build/run pointers, and the changelog-before-commit rule.
+- Repo root [`CHANGELOG.md`](../CHANGELOG.md) — running change record.
+- Repo root [`docs/`](../docs/) — cross-cutting docs; app-specific docs belong in
+  this directory (the old tree's `docs/` was intentionally not carried into the
+  repo — add new docs here as they earn their keep).
 
 ## North stars
 
@@ -198,7 +195,9 @@ Everything the build needs is under [`docs/`](docs/):
 
 ## Working agreement
 
-- This file is the source of truth while there's no repo README. Update it (and the
-  `docs/` files) as decisions land — module path, package layout, config format.
+- This file is the CLI's source of truth for its own layout and conventions.
+  Update it as decisions land — module path, package layout, config format.
+- **Before every commit, add a dated entry to the root `CHANGELOG.md`** (repo
+  rule, enforced by the root `CLAUDE.md`).
 - Don't silently change direction recorded here; if a north star shifts, edit the
   file to match and say so.

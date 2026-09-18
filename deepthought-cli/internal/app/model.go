@@ -1,4 +1,4 @@
-// Package app holds Annorax's root model — the only type in the binary that
+// Package app holds DeepThought's root model — the only type in the binary that
 // satisfies tea.Model — and the Wish SSH handler that builds one per session.
 package app
 
@@ -14,15 +14,15 @@ import (
 
 	"charm.land/bubbletea/v2"
 
-	"annorax/internal/babel"
-	"annorax/internal/config"
-	"annorax/internal/history"
-	"annorax/internal/keybindings"
-	"annorax/internal/queen"
-	"annorax/internal/slurm"
-	"annorax/internal/tools"
-	"annorax/internal/tui"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/keybindings"
+	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tools"
+	"deepthought-cli/internal/tui"
+	"deepthought-cli/internal/unimatrix"
 )
 
 type modelHealthMsg struct {

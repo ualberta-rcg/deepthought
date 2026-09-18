@@ -9,9 +9,9 @@ import (
 )
 
 const (
-	splashName    = "Annorax"      // rendered as tall ASCII art beside the rainbow mark
+	splashName    = "DeepThought"      // rendered as tall ASCII art beside the rainbow mark
 	splashTagline = "Don't Panic." // permanent anchor on the splash
-	splashVersion = "Annorax v0.0.1"
+	splashVersion = "DeepThought v0.0.1"
 	splashHint    = "press any key to continue"
 )
 
@@ -105,11 +105,11 @@ func (m SplashModel) Resize(w, h int) SplashModel {
 	return m
 }
 
-// View composes the header — two pictures side by side: the 12-row rainbow
-// mark and the 8-row "Annorax" wordmark — then the permanent "Don't Panic."
-// tagline, a rotating HHGTTG subtitle accent, a status line (model · provider),
-// version + spinner, and the hint. The whole block is centered as one unit;
-// the rainbow drifts slowly upward.
+// View composes the header — the rainbow mark and the colossal "DeepThought"
+// wordmark (splashHeader picks the biggest layout that fits) — then the
+// permanent "Don't Panic." tagline, a rotating HHGTTG subtitle accent, a
+// status line (model · provider), version + spinner, and the hint. The whole
+// block is centered as one unit; the rainbow drifts slowly upward.
 func (m SplashModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
@@ -141,8 +141,8 @@ func (m SplashModel) statusLine() string {
 	return m.boot.Model + " · " + m.boot.Provider
 }
 
-// wordmark renders the name as 8-row colossal ASCII art, sized to sit 2 rows
-// inside the 12-row mark.
+// wordmark renders the name as colossal ASCII art (bigText); splashHeader
+// centers it against the mark at whatever height the font gives it.
 func wordmark() []string {
 	return bigText(splashName)
 }
@@ -151,11 +151,9 @@ func wordmark() []string {
 // (height is what remains above the footer):
 //
 //  1. side by side — the mark and the wordmark as two pictures, vertically
-//     centered against each other: the 16-row word sits 2 rows inside the
-//     20-row mark at top and bottom, so the header is 20 rows tall. The pair
-//     is centered as one unit.
+//     centered against each other; the pair is centered as one unit.
 //  2. stacked — the full-size mark over the wordmark, each centered.
-//  3. compact — the 12-row mark alone; the name rides the version line.
+//  3. compact — the shrunken mark alone; the name rides the version line.
 //
 // drift is the rainbow's upward drift in rows.
 func splashHeader(width, height, drift int, word []string) string {

@@ -1,10 +1,10 @@
-// Package config loads Annorax's settings file: the provider list (unlimited
+// Package config loads DeepThought's settings file: the provider list (unlimited
 // inference backends, each with its own URL + key + wire family + tags), the
 // model list (each model attached to a provider, with capabilities and
 // free-form tags), and the role assignments (which model does which job).
 //
-// Path resolution: --config flag → ANNORAX_CONFIG env → $XDG_CONFIG_HOME/annorax/
-// config.json → $HOME/.config/annorax/config.json. A missing file is not an error:
+// Path resolution: --config flag → DEEPTHOUGHT_CLI_CONFIG env → $XDG_CONFIG_HOME/deepthought-cli/
+// config.json → $HOME/.config/deepthought-cli/config.json. A missing file is not an error:
 // built-in defaults (the KServe gateway + the seed catalog) let the TUI boot with
 // nothing on disk. A v1 file (single provider + catalog model IDs) migrates
 // transparently to the v2 shape in memory; it is rewritten on the next Save.
@@ -17,7 +17,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // DefaultBaseURL is the Vulcan KServe inference gateway, with the /serving/api/v1
@@ -188,38 +188,38 @@ func (c *Config) SamplingTemperature() float64 {
 }
 
 // DefaultPath reports where the settings file lives when no --config flag is given.
-// Precedence: $ANNORAX_CONFIG → $XDG_CONFIG_HOME/annorax/config.json →
-// $HOME/.config/annorax/config.json.
+// Precedence: $DEEPTHOUGHT_CLI_CONFIG → $XDG_CONFIG_HOME/deepthought-cli/config.json →
+// $HOME/.config/deepthought-cli/config.json.
 func DefaultPath() (string, error) {
-	if p := os.Getenv("ANNORAX_CONFIG"); p != "" {
+	if p := os.Getenv("DEEPTHOUGHT_CLI_CONFIG"); p != "" {
 		return p, nil
 	}
 	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "annorax", "config.json"), nil
+		return filepath.Join(xdg, "deepthought-cli", "config.json"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve config path: %w", err)
 	}
-	return filepath.Join(home, ".config", "annorax", "config.json"), nil
+	return filepath.Join(home, ".config", "deepthought-cli", "config.json"), nil
 }
 
-// DataDir reports where Annorax stores runtime data (chat transcripts). These
+// DataDir reports where DeepThought stores runtime data (chat transcripts). These
 // are small files in the nightly-backed-up $HOME, so chats survive restarts.
-// Precedence: $ANNORAX_DATA → $XDG_DATA_HOME/annorax →
-// $HOME/.local/share/annorax.
+// Precedence: $DEEPTHOUGHT_CLI_DATA → $XDG_DATA_HOME/deepthought-cli →
+// $HOME/.local/share/deepthought-cli.
 func DataDir() (string, error) {
-	if p := os.Getenv("ANNORAX_DATA"); p != "" {
+	if p := os.Getenv("DEEPTHOUGHT_CLI_DATA"); p != "" {
 		return p, nil
 	}
 	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "annorax"), nil
+		return filepath.Join(xdg, "deepthought-cli"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("resolve data dir: %w", err)
 	}
-	return filepath.Join(home, ".local", "share", "annorax"), nil
+	return filepath.Join(home, ".local", "share", "deepthought-cli"), nil
 }
 
 // ChatDir reports the chats subdirectory under DataDir.

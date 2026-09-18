@@ -1,4 +1,4 @@
-module annorax
+module deepthought-cli
 
 go 1.25.9
 

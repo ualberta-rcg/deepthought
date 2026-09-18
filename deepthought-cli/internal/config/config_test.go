@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/unimatrix"
 )
 
 func writeFile(t *testing.T, body string) string {
@@ -191,8 +191,8 @@ func TestSaveRoundTrip(t *testing.T) {
 
 func TestExpandedKey(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
-	t.Setenv("ANNORAX_TEST_KEY", "s3cret")
-	p := Provider{APIKey: "$ANNORAX_TEST_KEY"}
+	t.Setenv("DEEPTHOUGHT_CLI_TEST_KEY", "s3cret")
+	p := Provider{APIKey: "$DEEPTHOUGHT_CLI_TEST_KEY"}
 	if got := p.ExpandedKey(); got != "s3cret" {
 		t.Errorf("ExpandedKey = %q, want s3cret", got)
 	}
@@ -204,7 +204,7 @@ func TestExpandedKey(t *testing.T) {
 
 func TestDefaultPathEnv(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
-	t.Setenv("ANNORAX_CONFIG", "/custom/path.json")
+	t.Setenv("DEEPTHOUGHT_CLI_CONFIG", "/custom/path.json")
 	got, err := DefaultPath()
 	if err != nil {
 		t.Fatal(err)

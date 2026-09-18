@@ -5,9 +5,9 @@ import (
 	"strings"
 	"testing"
 
-	"annorax/internal/babel"
-	"annorax/internal/config"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // fakeStore is an in-memory ConfigStore for editor tests.

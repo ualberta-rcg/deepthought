@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"annorax/internal/config"
+	"deepthought-cli/internal/config"
 )
 
 func TestFictionalToolServerNeedsNoCodeChanges(t *testing.T) {

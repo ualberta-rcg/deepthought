@@ -7,8 +7,8 @@ import (
 	"os"
 	"time"
 
-	"annorax/internal/history"
-	"annorax/internal/tools"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/tools"
 )
 
 type Artifact struct {

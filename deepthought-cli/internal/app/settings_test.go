@@ -4,9 +4,9 @@ import (
 	"errors"
 	"testing"
 
-	"annorax/internal/config"
-	"annorax/internal/history"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/unimatrix"
 )
 
 func TestRouteNeverRelaxesSensitivity(t *testing.T) {

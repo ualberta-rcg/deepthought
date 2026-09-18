@@ -11,8 +11,8 @@ import (
 	"strings"
 	"time"
 
-	"annorax/internal/config"
-	"annorax/internal/tools"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/tools"
 )
 
 var toolNameChars = regexp.MustCompile(`[^a-zA-Z0-9_-]+`)

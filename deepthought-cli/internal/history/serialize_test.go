@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // TestMessagesByStateIdenticalToFullWhenFull asserts the state-aware flatten is

@@ -5,8 +5,8 @@ import (
 
 	"charm.land/bubbletea/v2"
 
-	"annorax/internal/babel"
-	"annorax/internal/tui"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/tui"
 )
 
 // stubOverlay is a no-op Overlay for stack-mechanics tests.

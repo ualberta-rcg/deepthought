@@ -118,10 +118,13 @@ func TestSplashHeaderLadder(t *testing.T) {
 	}
 }
 
-// The wordmark is the 8-row colossal art.
+// The wordmark is the colossal art for "DeepThought" — 11 rows once blank
+// edge rows are trimmed (the tall T and h reach past the baseline the
+// shorter old name sat on). Pinning it keeps a font change from silently
+// reshaping the splash; the layout itself (splashHeader) is height-generic.
 func TestWordmarkHeight(t *testing.T) {
-	if word := wordmark(); len(word) != 8 {
-		t.Fatalf("wordmark: %d rows, want 8", len(word))
+	if word := wordmark(); len(word) != 11 {
+		t.Fatalf("wordmark: %d rows, want 11", len(word))
 	}
 }
 

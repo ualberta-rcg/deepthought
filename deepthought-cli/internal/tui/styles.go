@@ -1,4 +1,4 @@
-// Package tui holds Annorax's Bubble Tea v2 screen models and the shared
+// Package tui holds DeepThought's Bubble Tea v2 screen models and the shared
 // styles/logo they render with. The root model (package app) is the only type
 // that satisfies tea.Model; the structs here are plain sub-models that return
 // their own concrete type from Update, so the root never type-asserts.
@@ -34,7 +34,7 @@ var (
 	styleTagline = lipgloss.NewStyle().Foreground(colDim).Italic(true)
 	styleVersion = lipgloss.NewStyle().Foreground(colDim)
 	styleVerb    = lipgloss.NewStyle().Foreground(colPrimary)
-	styleName    = lipgloss.NewStyle().Foreground(colPrimary).Bold(true) // "// Annorax" beside the logo
+	styleName    = lipgloss.NewStyle().Foreground(colPrimary).Bold(true) // "// DeepThought" beside the logo
 )
 
 // Menu styles.

@@ -7,11 +7,11 @@ import (
 )
 
 // bigTextFont is the figlet font used for the splash wordmark. "colossal"
-// renders "Annorax" at an effective 8 rows once blank edge rows are trimmed;
-// doubleRows grows that to the 16-row picture the splash pairs with the
-// 20-row mark. Pulled in via go-figure, which embeds its fonts (bindata) so
-// the binary stays self-contained. TODO: vendor just this one .flf to drop
-// the unused 148 fonts if binary size ever matters.
+// renders "DeepThought" at an effective 11 rows once blank edge rows are
+// trimmed (taller than the old 7-letter name — the layout tolerates it).
+// Pulled in via go-figure, which embeds its fonts (bindata) so the binary
+// stays self-contained. TODO: vendor just this one .flf to drop the unused
+// 148 fonts if binary size ever matters.
 const bigTextFont = "colossal"
 
 // bigText renders s as ASCII-art lines, trimmed for layout: trailing spaces

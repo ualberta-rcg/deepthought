@@ -85,13 +85,13 @@ func TestBashPersistsState(t *testing.T) {
 	b := NewBash()
 	dir := t.TempDir()
 	first := b.Run(context.Background(), map[string]any{
-		"command": "cd " + dir + " && export ANNORAX_PERSIST=yes",
+		"command": "cd " + dir + " && export DEEPTHOUGHT_CLI_PERSIST=yes",
 	})
 	if first.IsError {
 		t.Fatal(first.Content)
 	}
 	second := b.Run(context.Background(), map[string]any{
-		"command": `printf '%s|%s' "$PWD" "$ANNORAX_PERSIST"`,
+		"command": `printf '%s|%s' "$PWD" "$DEEPTHOUGHT_CLI_PERSIST"`,
 	})
 	if second.IsError || second.Content != dir+"|yes" {
 		t.Fatalf("persistent state = %+v", second)

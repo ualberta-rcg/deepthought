@@ -11,9 +11,9 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/babel"
-	"annorax/internal/config"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // ConfigStore is the settings editor's seam to the live configuration handle

@@ -9,11 +9,11 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/babel"
-	"annorax/internal/config"
-	"annorax/internal/history"
-	"annorax/internal/slurm"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // ProviderRow is one provider's cached status for the Status page. State is
@@ -155,7 +155,7 @@ func (m StatusModel) View() string {
 		{Key: "r", Label: "refresh"},
 		{Key: "esc", Label: "back"},
 	})
-	return AppScreenScroll(m.width, m.height, "Annorax › Status", m.vp.View(), m.vp.Height(), keybar)
+	return AppScreenScroll(m.width, m.height, "DeepThought › Status", m.vp.View(), m.vp.Height(), keybar)
 }
 
 // --- section renderers ------------------------------------------------------

@@ -1,4 +1,4 @@
-// Command annorax is the Annorax entrypoint. By default it runs the TUI on the
+// Command deepthought-cli is the DeepThought entrypoint. By default it runs the TUI on the
 // caller's terminal; pass --sub-etha <addr> (e.g. :2323) to serve the same TUI
 // over SSH via Wish. Both paths drive the same RootModel.
 package main
@@ -18,16 +18,16 @@ import (
 	btmw "charm.land/wish/v2/bubbletea"
 	"charm.land/wish/v2/logging"
 
-	"annorax/internal/app"
-	"annorax/internal/config"
-	"annorax/internal/history"
-	"annorax/internal/historytools"
-	"annorax/internal/keybindings"
-	"annorax/internal/queen"
-	"annorax/internal/slurm"
-	"annorax/internal/tools"
-	"annorax/internal/tui"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/app"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/historytools"
+	"deepthought-cli/internal/keybindings"
+	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tools"
+	"deepthought-cli/internal/tui"
+	"deepthought-cli/internal/unimatrix"
 )
 
 func init() {
@@ -44,20 +44,20 @@ func main() {
 		os.Args = []string{os.Args[0], "--no-splash"}
 	}
 	subEtha := flag.String("sub-etha", "", "SSH listen address (e.g. :2323). Empty = run on the local TTY.")
-	configPath := flag.String("config", "", "path to settings file (default: $ANNORAX_CONFIG or ~/.config/annorax/config.json)")
+	configPath := flag.String("config", "", "path to settings file (default: $DEEPTHOUGHT_CLI_CONFIG or ~/.config/deepthought-cli/config.json)")
 	noSplash := flag.Bool("no-splash", false, "skip the splash screen and start at the menu")
 	towel := flag.Bool("towel", false, "start or attach the user-space resident daemon")
 	flag.Parse()
 	if *towel {
 		if err := startResident(); err != nil {
-			fmt.Fprintln(os.Stderr, "annorax:", err)
+			fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 			os.Exit(1)
 		}
 	}
 
 	cfg, cfgPath, err := loadConfig(*configPath)
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "annorax:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 		os.Exit(1)
 	}
 
@@ -67,12 +67,12 @@ func main() {
 	live := app.NewSettings(cfg, cfgPath)
 	dataDir, err := config.DataDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "annorax:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 		os.Exit(1)
 	}
 	droneStore, err := history.NewSQLiteStore(filepath.Join(dataDir, "history.db"), filepath.Join(dataDir, "bodies"))
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "annorax: open history:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli: open history:", err)
 		os.Exit(1)
 	}
 	defer droneStore.Close()
@@ -83,11 +83,11 @@ func main() {
 
 	chatDir, err := config.ChatDir()
 	if err != nil {
-		fmt.Fprintln(os.Stderr, "annorax:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 		os.Exit(1)
 	}
 	if err := droneStore.MigrateLegacyChats(chatDir); err != nil {
-		fmt.Fprintln(os.Stderr, "annorax: migrate legacy chats:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli: migrate legacy chats:", err)
 		os.Exit(1)
 	}
 
@@ -130,12 +130,12 @@ func main() {
 		return
 	}
 	if err := runSSH(*subEtha, deps); err != nil {
-		fmt.Fprintln(os.Stderr, "annorax:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 		os.Exit(1)
 	}
 }
 
-// loadConfig resolves the settings path (--config flag → ANNORAX_CONFIG → XDG/HOME)
+// loadConfig resolves the settings path (--config flag → DEEPTHOUGHT_CLI_CONFIG → XDG/HOME)
 // and loads it, returning the resolved path for the settings screen. A missing
 // file yields built-in defaults; a present-but-invalid file is fatal. A missing
 // API key is non-fatal but warned: the chat loop needs it.
@@ -156,7 +156,7 @@ func loadConfig(path string) (*config.Config, string, error) {
 	}
 	for _, p := range cfg.Providers {
 		if p.ExpandedKey() == "" {
-			fmt.Fprintf(os.Stderr, "annorax: warning: provider %q has an empty api_key — its models will fail until it's set\n", p.Name)
+			fmt.Fprintf(os.Stderr, "deepthought-cli: warning: provider %q has an empty api_key — its models will fail until it's set\n", p.Name)
 		}
 	}
 	return cfg, path, nil
@@ -226,7 +226,7 @@ func runLocal(deps app.Deps) {
 	opts := app.ProgramColorOpts(os.Environ())
 	p := tea.NewProgram(m, opts...)
 	if _, err := p.Run(); err != nil {
-		fmt.Fprintln(os.Stderr, "annorax:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 		os.Exit(1)
 	}
 }
@@ -234,7 +234,7 @@ func runLocal(deps app.Deps) {
 // runSSH serves the root model over SSH. The host key lives under $SCRATCH
 // (never committed); Wish auto-generates an ed25519 key on first run.
 func runSSH(addr string, deps app.Deps) error {
-	hostKey := filepath.Join(os.Getenv("SCRATCH"), "annorax", "host_ed25519")
+	hostKey := filepath.Join(os.Getenv("SCRATCH"), "deepthought-cli", "host_ed25519")
 
 	srv, err := wish.NewServer(
 		wish.WithAddress(addr),

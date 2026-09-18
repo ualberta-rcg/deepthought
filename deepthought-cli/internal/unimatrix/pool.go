@@ -4,7 +4,7 @@ import (
 	"sync"
 	"time"
 
-	"annorax/internal/babel"
+	"deepthought-cli/internal/babel"
 )
 
 // Pool hands out one shared *babel.Client per provider. The chat loop, the

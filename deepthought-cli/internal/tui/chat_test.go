@@ -3,11 +3,11 @@ package tui
 import (
 	"testing"
 
-	"annorax/internal/babel"
-	"annorax/internal/history"
-	"annorax/internal/queen"
-	"annorax/internal/tools"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/tools"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // fakeSource is a test InferenceSource that never reaches the network.

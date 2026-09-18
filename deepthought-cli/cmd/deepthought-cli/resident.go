@@ -10,10 +10,10 @@ import (
 	"syscall"
 	"time"
 
-	"annorax/internal/alcove"
-	"annorax/internal/config"
-	"annorax/internal/history"
-	"annorax/internal/transwarp"
+	"deepthought-cli/internal/alcove"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/transwarp"
 )
 
 func handleResidentVerb(args []string) (attachID string, handled bool) {
@@ -27,7 +27,7 @@ func handleResidentVerb(args []string) (attachID string, handled bool) {
 	case "ls", "status":
 		response, err := sendControl(transwarp.Request{Operation: transwarp.ReportStatus})
 		if err != nil {
-			fmt.Fprintln(os.Stderr, "annorax:", err)
+			fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 			return "", true
 		}
 		if len(response.Sessions) == 0 {
@@ -43,18 +43,18 @@ func handleResidentVerb(args []string) (attachID string, handled bool) {
 			request.SessionID = args[1]
 		}
 		if _, err := sendControl(request); err != nil {
-			fmt.Fprintln(os.Stderr, "annorax:", err)
+			fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 		}
 		return "", true
 	case "attach":
 		if len(args) < 2 {
-			fmt.Fprintln(os.Stderr, "usage: annorax attach <session-id>")
+			fmt.Fprintln(os.Stderr, "usage: deepthought-cli attach <session-id>")
 			return "", true
 		}
 		if _, err := sendControl(transwarp.Request{
 			Operation: transwarp.DisplayMessage, SessionID: args[1], Message: "TUI attached",
 		}); err != nil {
-			fmt.Fprintln(os.Stderr, "annorax:", err)
+			fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 			return "", true
 		}
 		return args[1], false
@@ -116,7 +116,7 @@ func runResidentDaemon() {
 	ctx, cancel := signalContext()
 	defer cancel()
 	if err := manager.Serve(ctx, transwarp.SocketPath()); err != nil {
-		fmt.Fprintln(os.Stderr, "annorax daemon:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli daemon:", err)
 	}
 }
 

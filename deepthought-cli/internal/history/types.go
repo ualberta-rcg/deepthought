@@ -1,4 +1,4 @@
-// Package history owns Annorax's conversation object model: Collectives,
+// Package history owns DeepThought's conversation object model: Collectives,
 // Incursions, Transmissions, Probes, Patterns, and Synapses. It sits between
 // the TUI and the Babel wire adapter: the TUI builds rich objects, and Babel
 // receives only the flattened []Message produced by Collective.Messages.
@@ -15,8 +15,8 @@ import (
 	"fmt"
 	"time"
 
-	"annorax/internal/babel"
-	"annorax/internal/queen"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/queen"
 )
 
 // SummaryLevel selects how much of an object's content to put into context.

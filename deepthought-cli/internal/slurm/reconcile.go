@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	"annorax/internal/history"
+	"deepthought-cli/internal/history"
 )
 
 type ScientificFailure string

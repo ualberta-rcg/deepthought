@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"annorax/internal/history"
+	"deepthought-cli/internal/history"
 )
 
 func TestQueenNeverDemotesPinsOrAnnotations(t *testing.T) {

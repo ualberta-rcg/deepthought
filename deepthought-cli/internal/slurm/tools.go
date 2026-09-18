@@ -9,7 +9,7 @@ import (
 	"strconv"
 	"strings"
 
-	"annorax/internal/tools"
+	"deepthought-cli/internal/tools"
 )
 
 type ToolSet struct{ Client *Client }
@@ -25,7 +25,7 @@ type submitTool struct{ client *Client }
 
 func (*submitTool) Name() string { return "slurm_submit" }
 func (*submitTool) Description() string {
-	return "Submit a self-contained script with sbatch. Jobs run scripts, never Annorax agents or model loops."
+	return "Submit a self-contained script with sbatch. Jobs run scripts, never DeepThought agents or model loops."
 }
 func (*submitTool) ReadOnly() bool { return false }
 func (*submitTool) Parameters() map[string]any {

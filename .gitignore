@@ -1,7 +1,6 @@
 # Built binaries (the CLI's `make build` emits the binary in the deploy dir;
 # guard against a stray one landing in-tree).
 deepthought-cli/deepthought-cli
-deepthought-cli/annorax
 **/bin/
 
 # Local scratch (smoke harnesses, throwaway runs) — never commit

@@ -1,4 +1,4 @@
-// Package unimatrix is Annorax's inference core (per docs/ARCHITECTURE.md). It
+// Package unimatrix is DeepThought's inference core (per docs/ARCHITECTURE.md). It
 // owns the model metadata shape (capabilities, roles, tags), the curated seed
 // catalog, and the client Pool that hands out one Babel client per provider.
 // The user's live model list lives in the config file; the seed catalog only
@@ -123,7 +123,7 @@ func (m Model) Caps() []string {
 	return out
 }
 
-// builtin is the curated seed catalog — the models Annorax knows out of the
+// builtin is the curated seed catalog — the models DeepThought knows out of the
 // box on the Vulcan KServe gateway. It fills a fresh config file; once the
 // user edits, the file is the truth and this list is inert. Curated from the
 // Vulcan KServe registry (see memory: vulcan-inference-endpoint); every entry

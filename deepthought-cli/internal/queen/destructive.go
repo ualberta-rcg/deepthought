@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"annorax/internal/tools"
+	"deepthought-cli/internal/tools"
 )
 
 // destructiveCmds matches shell commands that are unconditionally denied under Rule 1

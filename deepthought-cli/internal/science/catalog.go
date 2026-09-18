@@ -9,8 +9,8 @@ import (
 	"os"
 	"strings"
 
-	"annorax/internal/config"
-	"annorax/internal/unimatrix"
+	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/unimatrix"
 )
 
 type CatalogSource string

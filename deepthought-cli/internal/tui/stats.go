@@ -8,7 +8,7 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
-	"annorax/internal/history"
+	"deepthought-cli/internal/history"
 )
 
 // Rough $/MTok rates used only for a glance estimate on the Stats page
@@ -132,7 +132,7 @@ func (m StatsModel) View() string {
 		{Key: "↑/↓", Label: "scroll"},
 		{Key: "esc", Label: "back"},
 	})
-	return AppScreenScroll(m.width, m.height, "Annorax › Stats", m.vp.View(), m.vp.Height(), keybar)
+	return AppScreenScroll(m.width, m.height, "DeepThought › Stats", m.vp.View(), m.vp.Height(), keybar)
 }
 
 func estSessionCost(in, out int) string {

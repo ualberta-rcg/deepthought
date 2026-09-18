@@ -6,7 +6,7 @@ import (
 	"strings"
 	"time"
 
-	"annorax/internal/alcove"
+	"deepthought-cli/internal/alcove"
 )
 
 // bashDefaultTimeout caps a synchronous bash run when the model doesn't ask for

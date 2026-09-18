@@ -19,7 +19,7 @@ type BashExt struct {
 }
 
 // ExtensionFactory creates a new empty value for a known probe type. The
-// registry is populated at startup by tool packages (or cmd/annorax/main.go) so
+// registry is populated at startup by tool packages (or cmd/deepthought-cli/main.go) so
 // that history stays decoupled from specific tools.
 type ExtensionFactory func() any
 

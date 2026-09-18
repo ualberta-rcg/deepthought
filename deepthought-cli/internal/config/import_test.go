@@ -31,7 +31,7 @@ func TestDiscoverAndMergeClaudeProviders(t *testing.T) {
 			zai = &candidates[i]
 		}
 	}
-	if zai == nil || zai.Provider.APIKey != "$ANNORAX_Z_AI_API_KEY" {
+	if zai == nil || zai.Provider.APIKey != "$DEEPTHOUGHT_CLI_Z_AI_API_KEY" {
 		t.Fatalf("candidates = %+v", candidates)
 	}
 	candidates = []ImportCandidate{*zai}
@@ -41,8 +41,8 @@ func TestDiscoverAndMergeClaudeProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if added != 1 || os.Getenv("ANNORAX_Z_AI_API_KEY") != "secret" {
-		t.Fatalf("added=%d env=%q", added, os.Getenv("ANNORAX_Z_AI_API_KEY"))
+	if added != 1 || os.Getenv("DEEPTHOUGHT_CLI_Z_AI_API_KEY") != "secret" {
+		t.Fatalf("added=%d env=%q", added, os.Getenv("DEEPTHOUGHT_CLI_Z_AI_API_KEY"))
 	}
 	info, err := os.Stat(filepath.Join(filepath.Dir(configPath), "secrets.env"))
 	if err != nil {

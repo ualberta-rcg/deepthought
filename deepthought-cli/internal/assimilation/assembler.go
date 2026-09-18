@@ -9,8 +9,8 @@ import (
 	"sort"
 	"strings"
 
-	"annorax/internal/babel"
-	"annorax/internal/history"
+	"deepthought-cli/internal/babel"
+	"deepthought-cli/internal/history"
 )
 
 type ManifestEntry struct {
