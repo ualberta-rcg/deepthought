@@ -83,8 +83,8 @@ func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
 // stays in sync with the actual bindings.
 var fKeyLegend = []struct{ key, label string }{
 	{"F1", "help"}, {"F2", "settings"}, {"F3", "model"}, {"F4", "effort"},
-	{"F5", "new"}, {"F6", "resume"}, {"F7", "grid"}, {"F8", "stats"},
-	{"F9", "mode"}, {"F10", "cluster"}, {"F11", "software"}, {"F12", "status"},
+	{"F5", "new"}, {"F6", "resume"}, {"F7", "grid"},
+	{"F9", "mode"}, {"F11", "software"}, {"F12", "status"},
 }
 
 // RenderKeyLegendRow paints the 1-row F-key legend on the same solid band as the

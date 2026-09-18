@@ -36,7 +36,8 @@ func TestChatChromeHeightLegendToggle(t *testing.T) {
 func TestRenderKeyLegendRow(t *testing.T) {
 	wide := RenderKeyLegendRow(200)
 	// Wide: full labels present, on the solid band, every F-key accounted for.
-	for _, want := range []string{"48;5;238", "F10", "cluster", "F11", "software", "F12", "status"} {
+	// (F8 stats and F10 cluster are gone — merged into F12 status.)
+	for _, want := range []string{"48;5;238", "F9", "mode", "F11", "software", "F12", "status"} {
 		if !strings.Contains(wide, want) {
 			t.Fatalf("wide legend missing %q: %q", want, truncate(wide, 200))
 		}
@@ -45,14 +46,14 @@ func TestRenderKeyLegendRow(t *testing.T) {
 		t.Errorf("wide legend width = %d, want exactly 200", lipgloss.Width(wide))
 	}
 
-	// Narrow: drops labels (no "cluster" word) but keeps the F-key tokens, and
+	// Narrow: drops labels (no "software" word) but keeps the F-key tokens, and
 	// never overflows.
 	narrow := RenderKeyLegendRow(44)
-	if strings.Contains(narrow, "cluster") {
+	if strings.Contains(narrow, "software") {
 		t.Errorf("narrow legend should drop labels: %q", truncate(narrow, 120))
 	}
-	if !strings.Contains(narrow, "F10") {
-		t.Errorf("narrow legend lost F10 token: %q", truncate(narrow, 120))
+	if !strings.Contains(narrow, "F9") {
+		t.Errorf("narrow legend lost F9 token: %q", truncate(narrow, 120))
 	}
 	if lipgloss.Width(narrow) > 44 {
 		t.Errorf("narrow legend overflowed: width %d > 44", lipgloss.Width(narrow))

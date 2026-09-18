@@ -5,8 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"charm.land/bubbles/v2/viewport"
-
 	"deepthought-cli/internal/slurm"
 )
 
@@ -34,24 +32,26 @@ func testSnapshot() slurm.ClusterSnapshot {
 	}
 }
 
-func TestClusterScreenRendersBlocks(t *testing.T) {
-	m := NewClusterModel().Resize(100, 30).SetCluster(testSnapshot())
-	v := m.View()
-	for _, want := range []string{
-		"Cluster", "Your jobs", "Fairshare", "Storage",
-		"l40s", "avail", "usable", "held: Priority", "→ squeue --me",
-	} {
-		if !strings.Contains(v, want) {
-			t.Errorf("cluster view missing %q", want)
-		}
+// The Cluster section renderers (shown by the Status page) emit the full
+// vulcan-status blocks when the snapshot has data.
+func TestClusterSectionRenderers(t *testing.T) {
+	s := testSnapshot()
+	cases := map[string][]string{
+		"cluster":   renderClusterBlock(s),
+		"jobs":      renderJobsBlock(s),
+		"fairshare": renderFairshareBlock(s),
+		"dirs":      renderStorageBlock(s),
 	}
-}
-
-func TestClusterScreenNoSlurm(t *testing.T) {
-	// Force detected=false regardless of the host (slurm is present on dev).
-	m := ClusterModel{detected: false, vp: viewport.New()}.Resize(100, 30)
-	if v := m.View(); !strings.Contains(v, "Slurm not detected") {
-		t.Errorf("expected 'Slurm not detected': %q", v)
+	want := map[string]string{
+		"cluster":   "l40s",
+		"jobs":      "held: Priority",
+		"fairshare": "ahead",
+		"dirs":      "scratch",
+	}
+	for name, rows := range cases {
+		if !strings.Contains(strings.Join(rows, "\n"), want[name]) {
+			t.Errorf("%s block missing %q:\n%s", name, want[name], strings.Join(rows, "\n"))
+		}
 	}
 }
 

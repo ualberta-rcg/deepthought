@@ -18,6 +18,40 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — adaptive F12 Status: merge F8 (Stats) + F10 (Cluster) into it; free those keys
+
+One status screen instead of three, and it **adapts to the host**. The page is
+now an ordered **section registry** — each block shows only when a predicate says
+its data is detected, so adding a section is one entry in a slice (no new screen).
+- **Always-on sections:** Session (model·effort·mode·health·clock), **Login node**
+  (new: host·user·shell·os/arch·tz + a `cvmfs ✓ · module ✓ · slurm ✓` detection
+  line), Providers, Models + per-model tokens, **Usage** (ex-F8: this-session
+  in/out/total/context/rounds/est.-cost + lifetime per-model), Tools.
+- **Detection-gated sections:** Cluster (nodes/CPUs/mem/GPUs/queue), Your jobs,
+  Fairshare (per-account bars + LevelFS) all show **only when Slurm is detected and
+  the snapshot has gathered**; the **Your dirs** (home/scratch/projects) disk bars
+  show when storage rows exist. `vulcan-status` was the reference for *what data to
+  show and how to make it legible* (bars, plain-language notes) — not a screen to
+  clone; those renderers were extracted as free functions Status calls.
+- **Keys freed:** F8 (Stats) and F10 (Cluster) are gone; F12 Status is the single
+  status screen. The `stats.go` `StatsModel` and the `cluster.go` `ClusterModel`
+  screen are deleted (only their data renderers survive, in `cluster.go`).
+- Files: `internal/tui/status.go` (section registry + new Login-node/Usage
+  sections + `SetSession`), `internal/tui/cluster.go` (screen → free block
+  renderers), `internal/tui/cluster_test.go`, `internal/tui/status_test.go`
+  (new: adaptive-section gating), `internal/tui/stats.go` (deleted),
+  `internal/tui/nav.go` (drop `ScreenStats`/`ScreenCluster`),
+  `internal/tui/topbar.go` + `topbar_test.go` (legend drops F8/F10),
+  `internal/keybindings/keybindings.go` (drop `Usage`/`Cluster` + f8/f10 defaults),
+  `internal/app/model.go` (drop `statsScr`/`clusterScr`, redirect session feeding
+  to `statusScr`, remove the two screen cases + key actions + F1 help line).
+- Verified: new `TestStatusAdaptiveSections` (no-Slurm shows only always-on;
+  Slurm + full snapshot shows all; Slurm with no fairshare/storage rows drops just
+  those two) + repointed `TestClusterSectionRenderers` pass; full `go
+  build`/`vet`/`test` green; grep gate confirms no `clusterScr`/`statsScr`/
+  `ScreenCluster`/`ScreenStats` refs and no `"f8"`/`"f10"` bindings remain.
+  (Live Slurm vs. non-Slurm rendering needs a real pty on a login node.)
+
 ## 2026-09-18 · deepthought-cli — fix F11 Software search (couldn't type)
 
 The Software screen's search box silently dropped every keystroke — "you can't

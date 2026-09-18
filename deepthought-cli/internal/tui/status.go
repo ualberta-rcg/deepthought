@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -44,10 +45,11 @@ type StatusInputs struct {
 	Env       EnvInfo
 }
 
-// StatusModel is the unified F12 Status page: session (model/effort/thinking/
-// mode/health/clock), providers (cached), models + token use, tools, environment,
-// and cluster metrics (Slurm). All data is gathered in the background — opening
-// the page never blocks. Plain struct, not a tea.Model.
+// StatusModel is the unified F12 Status page — an adaptive, detection-gated set
+// of sections: session, login node, providers, models, usage, tools always;
+// cluster / your jobs / fairshare when Slurm is detected; your dirs when disk
+// usage is available. All data is gathered in the background — opening the page
+// never blocks. Plain struct, not a tea.Model.
 type StatusModel struct {
 	store     ConfigStore
 	status    StatusInfo
@@ -60,9 +62,11 @@ type StatusModel struct {
 	clock     time.Time
 	cluster   slurm.ClusterSnapshot
 	gathered  bool // first Slurm snapshot has arrived
-	vp        viewport.Model
-	width     int
-	height    int
+	// This-session usage totals (fed from the chat) for the Usage section.
+	sessionIn, sessionOut, lastContext, cycles, messages int
+	vp                                                   viewport.Model
+	width                                                int
+	height                                               int
 }
 
 // NewStatusModel builds the page from in. The Slurm snapshot starts empty and is
@@ -109,6 +113,13 @@ func (m StatusModel) SetCluster(s slurm.ClusterSnapshot) StatusModel {
 	return m
 }
 
+// SetSession refreshes this-session usage totals (for the Usage section).
+func (m StatusModel) SetSession(in, out, lastContext, cycles, messages int) StatusModel {
+	m.sessionIn, m.sessionOut, m.lastContext = in, out, lastContext
+	m.cycles, m.messages = cycles, messages
+	return m
+}
+
 func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 	if kp, ok := msg.(tea.KeyPressMsg); ok {
 		switch kp.String() {
@@ -131,22 +142,47 @@ func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
 // RefreshClusterMsg asks the root to re-poll Slurm now (the `r` key).
 type RefreshClusterMsg struct{}
 
+// statusSection is one detection-gated block on the Status page. The page is the
+// ordered set of these — add a new section by appending one entry to
+// statusSections; the page grows, no new screen. Each rows func renders its own
+// header + body.
+type statusSection struct {
+	show func(StatusModel) bool
+	rows func(StatusModel) []string
+}
+
+func always(m StatusModel) bool  { return true }
+func slurmUp(m StatusModel) bool { return m.env.Slurm && m.gathered }
+
+func statusSections() []statusSection {
+	return []statusSection{
+		{always, StatusModel.sessionRows},
+		{always, StatusModel.nodeRows},
+		{always, StatusModel.providersRows},
+		{always, StatusModel.modelsRows},
+		{always, StatusModel.usageRows},
+		{always, StatusModel.toolsRows},
+		{slurmUp, StatusModel.slurmClusterRows},
+		{slurmUp, StatusModel.slurmJobsRows},
+		{func(m StatusModel) bool { return slurmUp(m) && len(m.cluster.FairshareRows) > 0 }, StatusModel.slurmFairshareRows},
+		{func(m StatusModel) bool { return len(m.cluster.StorageRows) > 0 }, StatusModel.slurmDiskRows},
+	}
+}
+
 func (m StatusModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	rows := append([]string{}, m.sessionRows()...)
-	rows = append(rows, "")
-	rows = append(rows, m.providersRows()...)
-	rows = append(rows, "")
-	rows = append(rows, m.modelsRows()...)
-	rows = append(rows, "")
-	rows = append(rows, m.toolsRows()...)
-	rows = append(rows, "")
-	rows = append(rows, m.envRows()...)
-	rows = append(rows, "")
-	rows = append(rows, m.clusterRows()...)
-
+	var rows []string
+	for _, sec := range statusSections() {
+		if !sec.show(m) {
+			continue
+		}
+		if len(rows) > 0 {
+			rows = append(rows, "")
+		}
+		rows = append(rows, trimTrailingBlanks(sec.rows(m))...)
+	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
 	m.vp.SetContent(body)
 	keybar := KeyBar([]KeyHint{
@@ -184,6 +220,27 @@ func (m StatusModel) sessionRows() []string {
 		kv("mode", orDefault(m.status.Mode, "—")),
 		kv("health", health),
 		kv("now", clockStr),
+	}
+}
+
+// nodeRows: the login node you're connected to, plus what it detected.
+func (m StatusModel) nodeRows() []string {
+	e := m.env
+	yesno := func(b bool) string {
+		if b {
+			return styleToolResult.Render("✓")
+		}
+		return styleError.Render("✗")
+	}
+	return []string{
+		styleSettingsTitle.Render("Login node"),
+		kv("host", orDefault(e.Host, "?")),
+		kv("user", orDefault(e.User, "?")),
+		kv("shell", orDefault(e.Shell, "?")),
+		kv("os", runtime.GOOS+"/"+runtime.GOARCH),
+		kv("tz", orDefault(e.TZ, "?")),
+		styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",
+			yesno(e.CVMFS), yesno(e.Module), yesno(e.Slurm))),
 	}
 }
 
@@ -239,6 +296,35 @@ func (m StatusModel) modelsRows() []string {
 	return rows
 }
 
+// usageRows: this-session token use + per-model lifetime totals (ex-F8 Stats).
+func (m StatusModel) usageRows() []string {
+	rows := []string{
+		styleSettingsTitle.Render("Usage"),
+		kv("input", fmt.Sprintf("%s tokens", formatTokens(m.sessionIn))),
+		kv("output", fmt.Sprintf("%s tokens", formatTokens(m.sessionOut))),
+		kv("total", fmt.Sprintf("%s tokens", formatTokens(m.sessionIn+m.sessionOut))),
+		kv("context", fmt.Sprintf("%s (last turn)", formatTokens(m.lastContext))),
+		kv("rounds", fmt.Sprintf("%d LLM · %d msgs", m.cycles, m.messages)),
+		kv("est. cost", estSessionCost(m.sessionIn, m.sessionOut)),
+	}
+	var usage map[string]history.Cost
+	if m.usage != nil {
+		usage = m.usage()
+	}
+	if len(usage) == 0 {
+		rows = append(rows, styleSettingsFoot.Render("  lifetime: (no recorded usage yet)"))
+	} else {
+		rows = append(rows, styleSettingsFoot.Render("  lifetime (all chats):"))
+		for id, c := range usage {
+			rows = append(rows, fmt.Sprintf("    %s  %s",
+				truncatePad(id, 26),
+				styleSettingsFoot.Render(fmt.Sprintf("in %s · out %s",
+					formatTokens(c.InputTokens), formatTokens(c.OutputTokens)))))
+		}
+	}
+	return rows
+}
+
 func (m StatusModel) toolsRows() []string {
 	rows := []string{styleSettingsTitle.Render("Tools")}
 	if len(m.tools) == 0 {
@@ -247,73 +333,42 @@ func (m StatusModel) toolsRows() []string {
 	return append(rows, "  "+styleSettingsVal.Render(strings.Join(m.tools, " · ")))
 }
 
-func (m StatusModel) envRows() []string {
-	e := m.env
-	yesno := func(b bool) string {
-		if b {
-			return styleToolResult.Render("✓")
-		}
-		return styleError.Render("✗")
-	}
-	return []string{
-		styleSettingsTitle.Render("Environment"),
-		fmt.Sprintf("  cvmfs %s  module %s  slurm %s", yesno(e.CVMFS), yesno(e.Module), yesno(e.Slurm)),
-		fmt.Sprintf("  %s", styleSettingsFoot.Render(fmt.Sprintf("host %s · user %s · shell %s · tz %s",
-			orDefault(e.Host, "?"), orDefault(e.User, "?"), orDefault(e.Shell, "?"), orDefault(e.TZ, "?")))),
-	}
-}
-
-// clusterRows renders a compact one-line cluster summary; the full
-// vulcan-status-styled view now lives on the dedicated F10 Cluster screen, so
-// this stays glanceable and points there instead of duplicating it.
-func (m StatusModel) clusterRows() []string {
-	if !m.env.Slurm {
-		return []string{styleSettingsTitle.Render("Cluster"), styleSettingsFoot.Render("(Slurm not detected)")}
-	}
-	if !m.gathered {
-		return []string{styleSettingsTitle.Render("Cluster"), styleSettingsFoot.Render("gathering…")}
-	}
-	c := m.cluster
-	if c.Err != nil && c.NodesTotal == 0 {
-		return []string{styleSettingsTitle.Render("Cluster"), styleError.Render("✗ " + c.Err.Error())}
-	}
-	var parts []string
-	if c.CPUTotal > 0 {
-		parts = append(parts, fmt.Sprintf("%d%% cpu", pct(cpuFrac(c))))
-	}
-	if c.GPUs > 0 {
-		g := fmt.Sprintf("%d%% gpu", pct(frac01(float64(c.GPUsUsed), float64(c.GPUs))))
-		if c.GPUUsable > 0 {
-			g += fmt.Sprintf(" (%d usable)", c.GPUUsable)
-		}
-		parts = append(parts, g)
-	}
-	if c.Fairshare > 0 {
-		label, _ := slurm.FairshareTier(c.Fairshare)
-		parts = append(parts, "fairshare "+label)
-	}
-	if len(c.YourJobs) > 0 {
-		parts = append(parts, fmt.Sprintf("%d of your jobs", len(c.YourJobs)))
-	}
-	line := ""
-	if len(parts) > 0 {
-		line = "  " + styleSettingsFoot.Render(strings.Join(parts, " · "))
-	}
-	line += "  " + styleSettingsVal.Render("F10 → Cluster") + styleSettingsFoot.Render(" for detail")
-	return []string{styleSettingsTitle.Render("Cluster"), line}
-}
-
-func pct(f float64) int {
-	if f < 0 {
-		return 0
-	}
-	if f > 1 {
-		return 100
-	}
-	return int(f*100 + 0.5)
-}
+// The Slurm sections (ex-F10 Cluster screen) — shown only when Slurm is detected
+// and the snapshot has gathered. They reuse the vulcan-status-style block
+// renderers in cluster.go.
+func (m StatusModel) slurmClusterRows() []string   { return renderClusterBlock(m.cluster) }
+func (m StatusModel) slurmJobsRows() []string      { return renderJobsBlock(m.cluster) }
+func (m StatusModel) slurmFairshareRows() []string { return renderFairshareBlock(m.cluster) }
+func (m StatusModel) slurmDiskRows() []string      { return renderStorageBlock(m.cluster) }
 
 // --- helpers ----------------------------------------------------------------
+
+// estCost rates are rough $/MTok for a glance estimate on the Status page (not
+// billing), tuned for a mid-tier open-weight gateway.
+const (
+	estCostPerMIn  = 0.15
+	estCostPerMOut = 0.60
+)
+
+func estSessionCost(in, out int) string {
+	if in+out == 0 {
+		return "—"
+	}
+	usd := (float64(in)/1e6)*estCostPerMIn + (float64(out)/1e6)*estCostPerMOut
+	if usd < 0.01 {
+		return fmt.Sprintf("~$%.4f", usd)
+	}
+	return fmt.Sprintf("~$%.2f", usd)
+}
+
+// trimTrailingBlanks removes trailing empty rows (block renderers add one for
+// their own spacing; the page adds its own separator between sections).
+func trimTrailingBlanks(rows []string) []string {
+	for len(rows) > 0 && rows[len(rows)-1] == "" {
+		rows = rows[:len(rows)-1]
+	}
+	return rows
+}
 
 // activeModel resolves the running (agentic, falling back to chat) model from a
 // config snapshot.
@@ -344,20 +399,6 @@ func renderState(s string) string {
 	default:
 		return styleSettingsFoot.Render("idle")
 	}
-}
-
-func cpuFrac(c slurm.ClusterSnapshot) float64 {
-	if c.CPUTotal <= 0 {
-		return 0
-	}
-	f := float64(c.CPUAlloc) / float64(c.CPUTotal)
-	if f < 0 {
-		f = 0
-	}
-	if f > 1 {
-		f = 1
-	}
-	return f
 }
 
 // tokenUsage renders the recorded token total for one model, or "—" when none.

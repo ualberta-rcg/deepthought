@@ -17,8 +17,6 @@ const (
 	ScreenContinue
 	ScreenGrid
 	ScreenStatus
-	ScreenStats
-	ScreenCluster
 	ScreenSoftware
 )
 

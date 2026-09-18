@@ -2,124 +2,21 @@ package tui
 
 import (
 	"fmt"
-	"os"
-	"strings"
 
-	"charm.land/bubbles/v2/viewport"
-	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
 	"deepthought-cli/internal/slurm"
 )
 
-// clusterBarW is the bar width for the Cluster screen (tuned for a ≥80-col
-// terminal; the screen scrolls rather than truncating horizontally).
+// clusterBarW is the bar width for the Cluster sections (tuned for a ≥80-col
+// terminal). These are the vulcan-status-style block renderers the Status page
+// shows as sections (Cluster / Your jobs / Fairshare / Your dirs), gated on
+// Slurm being detected. They read the cached snapshot, so nothing blocks.
 const clusterBarW = 18
 
-// ClusterModel is the dedicated F10 Cluster screen: a vulcan-status-styled view
-// of the live scheduler — nodes/queue, CPUs, memory, GPUs (incl. avail·usable),
-// your jobs, per-account fairshare, and storage. Data is the root's background
-// slurm poller (cached via SetCluster), so opening the page never blocks. Plain
-// struct, not a tea.Model.
-type ClusterModel struct {
-	cluster    slurm.ClusterSnapshot
-	gathered   bool
-	detected   bool
-	host, user string
-	vp         viewport.Model
-	width      int
-	height     int
-}
-
-// NewClusterModel builds the screen. The snapshot starts empty and is filled by
-// the root's poller. host/user are captured once for the header line.
-func NewClusterModel() ClusterModel {
-	host, _ := os.Hostname()
-	if i := strings.IndexByte(host, '.'); i > 0 {
-		host = host[:i]
-	}
-	return ClusterModel{detected: slurm.Detected(), host: host, user: os.Getenv("USER"), vp: viewport.New()}
-}
-
-func (m ClusterModel) Init() tea.Cmd { return nil }
-
-func (m ClusterModel) Resize(w, h int) ClusterModel {
-	m.width, m.height = w, h
-	m.vp.SetWidth(w - 4) // inside the AppScreen border + pad
-	bodyH := h - 2 - 2   // inside border, minus title row + keybar row
-	if bodyH < 1 {
-		bodyH = 1
-	}
-	m.vp.SetHeight(bodyH)
-	return m
-}
-
-// SetCluster fills the cached snapshot from the background poller.
-func (m ClusterModel) SetCluster(s slurm.ClusterSnapshot) ClusterModel {
-	m.cluster, m.gathered = s, true
-	return m
-}
-
-func (m ClusterModel) Update(msg tea.Msg) (ClusterModel, tea.Cmd) {
-	if kp, ok := msg.(tea.KeyPressMsg); ok {
-		switch kp.String() {
-		case "r", "R":
-			return m, func() tea.Msg { return RefreshClusterMsg{} }
-		case "esc", "left", "h", "q":
-			return m, Back()
-		case "up", "k", "pgup", "down", "j", "pgdown", "home", "end", "g", "G":
-			var cmd tea.Cmd
-			m.vp, cmd = m.vp.Update(msg)
-			return m, cmd
-		}
-	}
-	// Mouse wheel / drag scroll.
-	var cmd tea.Cmd
-	m.vp, cmd = m.vp.Update(msg)
-	return m, cmd
-}
-
-func (m ClusterModel) View() string {
-	if m.width == 0 || m.height == 0 {
-		return ""
-	}
-	rows := m.header()
-	switch {
-	case !m.detected:
-		rows = append(rows, dimNote("  Slurm not detected on this host — no cluster to report."))
-	case !m.gathered:
-		rows = append(rows, dimNote("  gathering…"))
-	default:
-		rows = append(rows, m.clusterBlock()...)
-		rows = append(rows, m.jobsBlock()...)
-		rows = append(rows, m.fairshareBlock()...)
-		rows = append(rows, m.storageBlock()...)
-	}
-	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	m.vp.SetContent(body)
-	keybar := KeyBar([]KeyHint{
-		{Key: "↑/↓", Label: "scroll"},
-		{Key: "r", Label: "refresh"},
-		{Key: "esc", Label: "back"},
-	})
-	return AppScreenScroll(m.width, m.height, "DeepThought › Cluster", m.vp.View(), m.vp.Height(), keybar)
-}
-
-func (m ClusterModel) header() []string {
-	stamp := "—"
-	if !m.cluster.FetchedAt.IsZero() {
-		stamp = m.cluster.FetchedAt.Format("2006-01-02 15:04 MST")
-	}
-	return []string{
-		dimNote(fmt.Sprintf("  node %s · %s · %s", orDefault(m.host, "?"), orDefault(m.user, "?"), stamp)),
-		"",
-	}
-}
-
-// --- blocks -------------------------------------------------------------
-
-func (m ClusterModel) clusterBlock() []string {
-	c := m.cluster
+// renderClusterBlock: overall cluster load — nodes/queue, CPUs, memory, GPUs
+// (incl. avail·usable).
+func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 	if c.Err != nil && c.NodesTotal == 0 {
 		return []string{sectionHead("Cluster"), styleError.Render("  ✗ " + c.Err.Error()), ""}
 	}
@@ -171,8 +68,8 @@ func (m ClusterModel) clusterBlock() []string {
 	return rows
 }
 
-func (m ClusterModel) jobsBlock() []string {
-	c := m.cluster
+// renderJobsBlock: the user's own running/pending jobs, with hold reasons.
+func renderJobsBlock(c slurm.ClusterSnapshot) []string {
 	nr, np := 0, 0
 	for _, j := range c.YourJobs {
 		switch j.State {
@@ -206,8 +103,8 @@ func (m ClusterModel) jobsBlock() []string {
 	return rows
 }
 
-func (m ClusterModel) fairshareBlock() []string {
-	c := m.cluster
+// renderFairshareBlock: per-account fairshare standing + LevelFS.
+func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 	rows := []string{sectionHead("Fairshare")}
 	if len(c.FairshareRows) == 0 {
 		rows = append(rows, dimNote("  (no fairshare data)"))
@@ -233,9 +130,9 @@ func (m ClusterModel) fairshareBlock() []string {
 	return rows
 }
 
-func (m ClusterModel) storageBlock() []string {
-	c := m.cluster
-	rows := []string{sectionHead("Storage")}
+// renderStorageBlock: how full the user's directories are (home/scratch/projects).
+func renderStorageBlock(c slurm.ClusterSnapshot) []string {
+	rows := []string{sectionHead("Your dirs")}
 	if len(c.StorageRows) == 0 {
 		rows = append(rows, dimNote("  (no storage data)"))
 		return rows
