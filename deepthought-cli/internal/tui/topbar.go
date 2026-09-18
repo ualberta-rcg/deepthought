@@ -20,9 +20,20 @@ const TopBarHeight = 1
 // bottom chrome band (status line). Sibling of TopBarHeight.
 const BottomBarHeight = 1
 
+// LegendRowHeight is the number of rows the optional F-key legend band under the
+// top bar occupies (1 when shown, 0 when the Appearance toggle hides it).
+const LegendRowHeight = 1
+
 // ChatChromeHeight is the number of rows the root subtracts from the terminal
-// height before handing the remainder to ChatModel (top bar + bottom bar).
-func ChatChromeHeight() int { return TopBarHeight + BottomBarHeight }
+// height before handing the remainder to ChatModel: top bar + (optional legend
+// row) + bottom bar. Pass the live legend setting so hiding it reclaims a row.
+func ChatChromeHeight(legend bool) int {
+	rows := TopBarHeight + BottomBarHeight
+	if legend {
+		rows += LegendRowHeight
+	}
+	return rows
+}
 
 // TickMsg carries the wall-clock time produced by TickClock. The receiver re-arms
 // it on every tick (tea.Every fires once).
@@ -65,6 +76,46 @@ func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
 	}
 	clockStr := styleClock.Render(formatBarClock(clock, w, lipgloss.Width(left)))
 	return padBar(w, left, clockStr)
+}
+
+// fKeyLegend is the (key, label) set shown in the top-bar legend row, in F-key
+// order. Single source of truth so the row (and any future legend surface)
+// stays in sync with the actual bindings.
+var fKeyLegend = []struct{ key, label string }{
+	{"F1", "help"}, {"F2", "settings"}, {"F3", "model"}, {"F4", "effort"},
+	{"F5", "new"}, {"F6", "resume"}, {"F7", "grid"}, {"F8", "stats"},
+	{"F9", "mode"}, {"F10", "cluster"}, {"F11", "software"}, {"F12", "status"},
+}
+
+// RenderKeyLegendRow paints the 1-row F-key legend on the same solid band as the
+// top bar: " F1 help   F2 settings   …  F12 status ". It degrades gracefully as
+// the terminal narrows — first dropping the labels (keys only), then truncating —
+// so it never wraps or overflows the row.
+func RenderKeyLegendRow(w int) string {
+	if w < 1 {
+		return ""
+	}
+	if full := legendCells(true); lipgloss.Width(full) <= w {
+		return padBar(w, full, "")
+	}
+	if keys := legendCells(false); lipgloss.Width(keys) <= w {
+		return padBar(w, keys, "")
+	}
+	return styleBarPad.Width(w).MaxWidth(w).Render(legendCells(false))
+}
+
+// legendCells joins the F-key chips; withLabel renders "F1 help", without just
+// "F1" for narrow terminals.
+func legendCells(withLabel bool) string {
+	parts := make([]string, 0, len(fKeyLegend))
+	for _, e := range fKeyLegend {
+		if withLabel {
+			parts = append(parts, styleBarKey.Render(e.key)+styleStatusHint.Render(" "+e.label))
+		} else {
+			parts = append(parts, styleBarKey.Render(e.key))
+		}
+	}
+	return strings.Join(parts, styleStatusHint.Render("   "))
 }
 
 // RenderBottomBar paints the 1-row dark-grey bottom chrome band. content is

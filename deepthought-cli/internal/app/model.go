@@ -260,7 +260,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it is first shown. Chat loses TopBarHeight rows to the top bar.
 		m.width, m.height = msg.Width, msg.Height
 		m.splash = m.splash.Resize(msg.Width, msg.Height)
-		m.chat = m.chat.Resize(msg.Width, msg.Height-tui.ChatChromeHeight())
+		m.chat = m.chat.Resize(msg.Width, msg.Height-tui.ChatChromeHeight(m.legendOn()))
 		m.continue_ = m.continue_.Resize(msg.Width, msg.Height)
 		m.settings = m.settings.Resize(msg.Width, msg.Height)
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
@@ -280,7 +280,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screenStack = nil
 		if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
 			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
-				Resize(m.width, m.height-tui.ChatChromeHeight())
+				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 			m.screen = tui.ScreenChat
 			return m, m.chat.Init()
 		}
@@ -312,7 +312,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screenStack = nil
-		m.chat = cm.Resize(m.width, m.height-tui.ChatChromeHeight())
+		m.chat = cm.Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 		m.screen = tui.ScreenChat
 		return m, m.activeInit()
 	case tui.ShowOverlayMsg:
@@ -427,7 +427,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
 		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
-			Resize(m.width, m.height-tui.ChatChromeHeight())
+			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 		m.screen = tui.ScreenChat
 		return m, m.chat.Init()
 	case keybindings.Resume:
@@ -531,6 +531,11 @@ func checkModelCmd(live *Settings) tea.Cmd {
 	}
 }
 
+// legendOn reports whether the F-key legend row is currently shown. Reads the
+// live (cheap) setting so a change in Settings › Appearance takes effect on the
+// next frame without a restart.
+func (m RootModel) legendOn() bool { return m.deps.Live != nil && m.deps.Live.TopBarLegend() }
+
 func (m RootModel) View() tea.View {
 	var s string
 	switch m.screen {
@@ -538,7 +543,11 @@ func (m RootModel) View() tea.View {
 		s = m.splash.View()
 	case tui.ScreenChat:
 		bottom := tui.RenderBottomBar(m.width, m.statusLine)
-		s = tui.RenderTopBar(m.width, m.clock, m.status) + "\n" + m.chat.View() + "\n" + bottom
+		top := tui.RenderTopBar(m.width, m.clock, m.status)
+		if m.legendOn() {
+			top += "\n" + tui.RenderKeyLegendRow(m.width)
+		}
+		s = top + "\n" + m.chat.View() + "\n" + bottom
 	case tui.ScreenContinue:
 		s = m.continue_.View()
 	case tui.ScreenSettings:

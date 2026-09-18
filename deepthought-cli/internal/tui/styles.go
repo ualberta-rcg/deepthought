@@ -98,6 +98,7 @@ var (
 	styleClock       = lipgloss.NewStyle().Foreground(colBarClock).Background(colBarBg)
 	styleBarPad      = lipgloss.NewStyle().Background(colBarBg) // blank cells that keep the band solid
 	styleBarText     = lipgloss.NewStyle().Foreground(colBarText).Background(colBarBg)
+	styleBarKey      = lipgloss.NewStyle().Foreground(colBarClock).Background(colBarBg) // F-key token in the legend row
 )
 
 // placeCenter centers a rendered block in a w×h area (used by splash & menu).

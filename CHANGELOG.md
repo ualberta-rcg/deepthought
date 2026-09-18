@@ -18,6 +18,27 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — F-key legend row in the top bar (toggleable)
+
+- Added a dedicated 2nd top-bar row listing all 12 F-keys
+  (`F1 help · F2 settings … F10 cluster · F11 software · F12 status`), shown
+  above the chat. Degrades gracefully on narrow terminals (drops labels, then
+  truncates; never wraps). F10/F11 preview the cluster + software screens that
+  land in the following commits.
+- Toggle: new `config.Appearance.TopBarLegend` (`*bool`, nil = on) with
+  `File.TopBarLegendOn()` defaulting to true; a live cheap accessor
+  `Settings.TopBarLegend()`; and an on/off field in Settings › Appearance
+  (new `ensureAppearance`). Hiding it reclaims the row.
+- Row accounting: `ChatChromeHeight(legend bool)` (was no-arg) — the root and
+  the SSH PTY seed now subtract top + optional legend + bottom.
+- Files: `internal/config/config.go`, `internal/app/settings.go`,
+  `internal/app/model.go`, `internal/app/session.go`,
+  `internal/tui/{topbar,topbar_test,styles,settings}.go`,
+  `configs/config.example.json`.
+- Verified: `go build`/`go vet` clean; new tests `TestChatChromeHeightLegendToggle`
+  (3 vs 2 rows) and `TestRenderKeyLegendRow` (full/keys-only/truncate, exact
+  width, zero-width no-crash) pass.
+
 ## 2026-09-18 · deepthought-cli — naming fix-up + unify user state under `~/.deepthought/`
 
 - **One directory per home**: new `config.BaseDir()`

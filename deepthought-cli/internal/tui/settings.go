@@ -450,6 +450,22 @@ func (m SettingsModel) appearanceFieldDefs() []fieldDef {
 				m.dirty.StatusLine.Command = strings.TrimSpace(e.value())
 				return nil
 			}},
+		{"top bar legend", fEnum, false, []string{"on", "off"},
+			func() string {
+				if m.dirty.Appearance != nil && m.dirty.Appearance.TopBarLegend != nil {
+					if *m.dirty.Appearance.TopBarLegend {
+						return "on"
+					}
+					return "off"
+				}
+				return "on" // default when unset
+			}, nil,
+			func(e *fieldEdit) error {
+				m.ensureAppearance()
+				v := e.value() == "on"
+				m.dirty.Appearance.TopBarLegend = &v
+				return nil
+			}},
 	}
 }
 
@@ -459,6 +475,12 @@ func (m *SettingsModel) ensureStatusLine() {
 			Enabled:  true,
 			Segments: []string{"cwd", "model", "mode", "tokens"},
 		}
+	}
+}
+
+func (m *SettingsModel) ensureAppearance() {
+	if m.dirty.Appearance == nil {
+		m.dirty.Appearance = &config.Appearance{}
 	}
 }
 

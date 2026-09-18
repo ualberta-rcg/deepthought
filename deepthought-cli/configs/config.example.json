@@ -68,6 +68,9 @@
     "segments": ["cwd", "model", "mode", "tokens"],
     "command": ""
   },
+  "appearance": {
+    "top_bar_legend": true
+  },
   "routes": {
     "code": {
       "capability": "generate",

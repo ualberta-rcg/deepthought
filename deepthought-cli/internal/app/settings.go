@@ -126,6 +126,15 @@ func (s *Settings) Effort() babel.Effort {
 	return babel.Effort(s.cfg.EffortLevel())
 }
 
+// TopBarLegend reports whether the F-key legend row is on (cheap — no clone),
+// so the root can size the chat region and paint the row without a full
+// Snapshot on every render tick.
+func (s *Settings) TopBarLegend() bool {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.File.TopBarLegendOn()
+}
+
 func (s *Settings) MaxTokens() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

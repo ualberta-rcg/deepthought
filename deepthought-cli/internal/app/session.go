@@ -32,7 +32,8 @@ func SSHHandler(addr string, d Deps) bubbletea.Handler {
 			w, h := pty.Window.Width, pty.Window.Height
 			m.width, m.height = w, h
 			m.splash = m.splash.Resize(w, h)
-			m.chat = m.chat.Resize(w, h-tui.ChatChromeHeight()) // mirror Update's subtraction
+			legend := d.Live != nil && d.Live.TopBarLegend()
+			m.chat = m.chat.Resize(w, h-tui.ChatChromeHeight(legend)) // mirror Update's subtraction
 			m.settings = m.settings.Resize(w, h)
 		}
 		// Force ANSI 256 so PuTTY's default TERM=xterm doesn't crush the

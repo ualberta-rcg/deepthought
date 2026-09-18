@@ -81,6 +81,9 @@ type File struct {
 	// StatusLine configures the bottom chrome band.
 	StatusLine *StatusLine `json:"status_line,omitempty"`
 
+	// Appearance holds visual preferences.
+	Appearance *Appearance `json:"appearance,omitempty"`
+
 	// General / profile (optional, omitempty — no migration; absent fields are
 	// empty). Surfaced in Settings › General.
 	Language     string `json:"language,omitempty"`      // e.g. en, fr
@@ -106,6 +109,22 @@ type StatusLine struct {
 	Enabled  bool     `json:"enabled,omitempty"`
 	Segments []string `json:"segments,omitempty"` // cwd, git, model, mode, tokens, clock
 	Command  string   `json:"command,omitempty"`  // optional shell whose stdout fills the bar
+}
+
+// Appearance is the visual-customization block. Pointers so "absent" is
+// distinguishable from a set value and each field keeps its own default.
+type Appearance struct {
+	// TopBarLegend toggles the F-key legend row under the top bar. nil = on
+	// (the default — the legend is the least-surprising state for a new user).
+	TopBarLegend *bool `json:"top_bar_legend,omitempty"`
+}
+
+// TopBarLegendOn reports the effective legend setting (default on when unset).
+func (f File) TopBarLegendOn() bool {
+	if f.Appearance != nil && f.Appearance.TopBarLegend != nil {
+		return *f.Appearance.TopBarLegend
+	}
+	return true
 }
 
 // Config is the validated, in-memory settings. The File is embedded so callers
