@@ -24,6 +24,7 @@ import (
 	"deepthought-cli/internal/historytools"
 	"deepthought-cli/internal/keybindings"
 	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/skills"
 	"deepthought-cli/internal/slurm"
 	"deepthought-cli/internal/tools"
 	"deepthought-cli/internal/tui"
@@ -78,6 +79,32 @@ func main() {
 	defer droneStore.Close()
 	nativeTools := []tools.Tool{tools.NewGuardedBash(), tools.NewRead(), historytools.NewExpand(droneStore)}
 	nativeTools = append(nativeTools, (slurm.ToolSet{Client: slurm.NewClient(nil)}).Tools()...)
+
+	// Load skills from every install location (user, project codex/claude dirs,
+	// and org-managed system roots) and expose them to the model: a compact index
+	// in the system prompt plus a read-only `skill` tool to load bodies on demand
+	// (progressive disclosure). Best-effort — a load failure just means no skills
+	// surface.
+	workDir, _ := os.Getwd()
+	skillList, _ := skills.NewLoader().Load(workDir)
+	if len(skillList) > 0 {
+		skillByName := make(map[string]*skills.Skill, len(skillList))
+		skillNames := make([]string, 0, len(skillList))
+		for _, s := range skillList {
+			if _, ok := skillByName[s.Name]; !ok {
+				skillNames = append(skillNames, s.Name)
+			}
+			skillByName[s.Name] = s
+		}
+		nativeTools = append(nativeTools, tools.NewSkillTool(skillNames, func(name string) (string, bool, error) {
+			s, ok := skillByName[name]
+			if !ok {
+				return "", false, nil
+			}
+			body, err := s.Body()
+			return body, true, err
+		}))
+	}
 	registry := tools.NewRegistry(nativeTools...)
 	gate := buildGate(cfg, live)
 
@@ -111,6 +138,7 @@ func main() {
 		Live:     live,
 		Registry: registry,
 		Gate:     gate,
+		Skills:   skills.Listing(skillList),
 		// The chat persists through SQLite (history.db) — the authoritative
 		// store. The source returns the shared, stateless SQLiteStore; each new
 		// chat CreateCollective-s a fresh collective routed by its own ID.

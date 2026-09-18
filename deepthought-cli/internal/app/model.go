@@ -52,6 +52,7 @@ type Deps struct {
 	Live        *Settings
 	Registry    *tools.Registry
 	Gate        *queen.Gate
+	Skills      string                  // compact "available skills" index, injected into each chat request
 	ChatSource  history.ChatStoreSource // a ChatStore per chat (FileStore now; SQLite after 3b)
 	StartScreen tui.Screen
 	Bindings    *keybindings.Map
@@ -118,7 +119,7 @@ func NewRootModel(d Deps) RootModel {
 		clock:       time.Now(),
 		sessionID:   sid,
 		splash:      tui.NewSplashModel(splashBoot(d.Live), sid),
-		chat:        tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource),
+		chat:        tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills),
 		continue_:   tui.NewContinueModel(d.ChatSource),
 		settings:    tui.NewSettingsModel(d.Live, d.Settings),
 		grid:        tui.NewGridModel(),
@@ -292,6 +293,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
 			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
 				SetCluster(m.lastCluster).
+				SetSkills(m.deps.Skills).
 				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 			m.screen = tui.ScreenChat
 			return m, m.chat.Init()
@@ -324,7 +326,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screenStack = nil
-		m.chat = cm.SetCluster(m.lastCluster).Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
+		m.chat = cm.SetCluster(m.lastCluster).SetSkills(m.deps.Skills).Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 		m.screen = tui.ScreenChat
 		return m, m.activeInit()
 	case tui.ShowOverlayMsg:
@@ -454,6 +456,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		m.screenStack = nil
 		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
 			SetCluster(m.lastCluster).
+			SetSkills(m.deps.Skills).
 			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 		m.screen = tui.ScreenChat
 		return m, m.chat.Init()

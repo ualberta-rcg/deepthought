@@ -18,6 +18,33 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — wire the skills loader into the running app
+
+Skills were loaded-and-tested but never surfaced. Now they are, with the same
+**progressive disclosure** the loader was designed for: only a compact index goes
+into every request; a skill's full body is fetched on demand.
+- **`skill` tool** (`internal/tools/skill.go`, read-only so Queen auto-allows it):
+  `skill(name)` returns that skill's body; `skill()` (no name) lists the
+  available ones. It is deliberately decoupled from the `skills` package (which
+  imports `config` → … → `tools`, an import cycle) via an injected names list +
+  lookup callback, wired in `main`.
+- **System-prompt index**: `skills.Listing()` renders one line per skill (name,
+  description, collapsed when-to-use). Loaded once at startup from every install
+  location, handed through `Deps.Skills`, stored on `ChatModel` (`SetSkills`), and
+  appended as a transient system message in `requestMessages` (like the cluster
+  blurb — sent to the model, not persisted; works for new + resumed chats).
+- **Symlink fix**: the loader used `entry.IsDir()`, which is false for a symlink
+  to a directory — so skills installed as symlinks (as `~/.codex/skills` does,
+  pointing at the org copies) were silently skipped. Now `os.Stat` (which follows
+  symlinks) decides dir-vs-file, and `EvalSymlinks` dedups a symlink against its
+  target by real path (found once, at the higher-precedence layer).
+- Files: `internal/tools/skill.go`, `internal/skills/listing.go`,
+  `internal/skills/loader.go`, `cmd/deepthought-cli/main.go`,
+  `internal/app/model.go`, `internal/tui/chat.go` (+ tests).
+- Verified: live check on this host loads the 3 alliance packs and renders the
+  index; new tests `TestListing`, `TestSkillTool*`, `TestSymlinkedSkillDiscovered
+  AndDeduped` pass; `gofmt`/`go build`/`vet`/full `go test` green.
+
 ## 2026-09-18 · deepthought-cli — docs: F-key map + new screens in the CLI CLAUDE.md
 
 - `deepthought-cli/CLAUDE.md`: the F-key line now reads `F10 cluster · F11 software ·

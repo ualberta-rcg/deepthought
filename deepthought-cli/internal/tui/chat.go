@@ -158,6 +158,7 @@ type ChatModel struct {
 	coll      *history.Collective
 	store     history.Store
 	cluster   slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
+	skills    string                // compact "available skills" index → a per-request system note
 	replayed  bool                  // prior turns rendered into the transcript (resume)
 	busy      bool
 	streaming bool
@@ -778,13 +779,24 @@ func (m ChatModel) SetCluster(s slurm.ClusterSnapshot) ChatModel {
 	return m
 }
 
+// SetSkills stores the compact "available skills" index so each request can tell
+// the model which skills exist (it loads a body on demand via the `skill` tool).
+func (m ChatModel) SetSkills(s string) ChatModel {
+	m.skills = s
+	return m
+}
+
 // requestMessages returns the message slice to send by flattening the rich
 // collective. It uses MessagesByState so each probe renders at its own residency
 // (Full today; a demoted probe renders shorter once a Queen thread demotes it).
-// A transient cluster-status note is appended when we have a fresh snapshot —
-// it is sent to the model but NOT persisted to the collective.
+// Two transient notes may be appended — the available-skills index and the live
+// cluster-status blurb. Both are sent to the model but NOT persisted to the
+// collective.
 func (m ChatModel) requestMessages() []babel.Message {
 	msgs := m.coll.MessagesByState()
+	if m.skills != "" {
+		msgs = append(msgs, babel.Message{Role: "system", Content: m.skills})
+	}
 	if blurb := m.clusterBlurb(); blurb != "" {
 		msgs = append(msgs, babel.Message{Role: "system", Content: blurb})
 	}

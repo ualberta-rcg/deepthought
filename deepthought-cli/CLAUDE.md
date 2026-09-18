@@ -109,12 +109,20 @@ running tools, and executing shell commands under a permission gate.
   operation modes (`safe` / `safe-auto` / `auto`, F9 cycles; migrated from
   `review`/`always-proceed`): category defaults + hybrid allow/ask/deny rules;
   approval choices are `y` once · `a` this-task · `A` always · `n` deny · `d` never.
-  Destructive ops are still refused unconditionally. Gate is **per SSH session**
+  Destructive ops are still refused unconditionally. A read-only `skill` tool
+  (auto-allowed) loads a skill's full instructions on demand — the available-skill
+  *index* is injected as a per-request system note, bodies fetched only when used
+  (progressive disclosure). Skills load from every install location: user
+  (`~/.deepthought/skills`, `~/.claude/skills`, `~/.codex/skills`), project
+  (`.deepthought-cli/`, `.claude/`, `.codex/`), and org-managed system roots
+  (`/etc/claude-code/.claude/skills`, `/etc/deepthought-cli/skills`); symlinks are
+  followed and deduped by real path. Gate is **per SSH session**
   (cloned) so task grants never leak. `esc` interrupts an in-flight turn (the
   stream's context is cancelled, the tool loop breaks, the turn is marked
   interrupted); a second `esc` once idle is a no-op at chat. `ctrl+c` twice within
   2s quits. The system prompt tells the model it's **DeepThought (not Claude)**, where
-  its settings file is, and its SSH/HPC environment.
+  its settings file is, and its SSH/HPC environment; each request also carries a
+  transient cluster-status blurb and the available-skills index (neither persisted).
 
   **Slash commands** (chat popover): `/help`, `/model` (open the **Model chooser**
   overlay), `/effort` (open the **Effort** overlay), `/settings` (open the settings

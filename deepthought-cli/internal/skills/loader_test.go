@@ -103,3 +103,46 @@ func TestCodexClaudeAndSystemRoots(t *testing.T) {
 		t.Errorf("proj should be project-claude layer: %q", byName["proj"].Layer)
 	}
 }
+
+// A skill installed as a symlink to a directory (as ~/.codex/skills does here)
+// must still be discovered, and deduped against its target by real path so it is
+// found exactly once — attributed to the higher-precedence (symlink) layer.
+func TestSymlinkedSkillDiscoveredAndDeduped(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	sys := filepath.Join(root, "sys")
+
+	writeSkill(t, sys, "alpha", "alpha", "system-alpha")
+	codexDir := filepath.Join(home, ".codex", "skills")
+	if err := os.MkdirAll(codexDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(sys, "alpha"), filepath.Join(codexDir, "alpha")); err != nil {
+		t.Fatal(err)
+	}
+
+	loader := NewLoader()
+	loader.UserHome = home
+	loader.BaseDir = filepath.Join(home, ".deepthought")
+	loader.SystemRoots = []string{sys}
+
+	got, err := loader.Load(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var alpha *Skill
+	for _, s := range got {
+		if s.Name == "alpha" {
+			if alpha != nil {
+				t.Fatalf("alpha found more than once: %+v", got)
+			}
+			alpha = s
+		}
+	}
+	if alpha == nil {
+		t.Fatalf("alpha not found: %+v", got)
+	}
+	if alpha.Layer != "user-codex" {
+		t.Errorf("alpha layer = %q, want user-codex (symlink shadows its system target)", alpha.Layer)
+	}
+}

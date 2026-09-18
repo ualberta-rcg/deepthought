@@ -144,7 +144,14 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 		}
 		for _, entry := range entries {
 			path := filepath.Join(root.path, entry.Name())
-			if entry.IsDir() {
+			// os.Stat follows symlinks (entry.IsDir() does not), so a skill
+			// installed as a symlink to a directory is still discovered. The
+			// EvalSymlinks below then dedups it against its target by real path.
+			info, err := os.Stat(path)
+			if err != nil {
+				continue
+			}
+			if info.IsDir() {
 				path = filepath.Join(path, "SKILL.md")
 			}
 			if filepath.Base(path) != "SKILL.md" {
