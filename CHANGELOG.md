@@ -18,6 +18,19 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — docs: F-key map + new screens in the CLI CLAUDE.md
+
+- `deepthought-cli/CLAUDE.md`: the F-key line now reads `F10 cluster · F11 software ·
+  F12 status` (was "F12 status, F10/F11 free"); the screen list gains the dedicated
+  **Cluster** (F10) and **Software** (F11) pages; the Status (F12) description now
+  says its cluster section is a one-line summary pointing to F10; a sentence covers
+  the transient chat cluster blurb. The internal-package line gains `cvmfs`.
+- Files: `deepthought-cli/CLAUDE.md`.
+- Verified: grep gate — `ScreenCluster`/`ScreenSoftware` each wired exactly once in
+  `app/model.go` (Update/View/activeInit/handleAction) + the `nav.go` enum;
+  `"f10"`/`"f11"`/`"f12"` bound in `keybindings.go`; root `CLAUDE.md` has no stale
+  F-key/cluster text. `make check` green.
+
 ## 2026-09-18 · deepthought-cli — F11 Software screen: searchable CVMFS modules
 
 - **New `internal/cvmfs/` package** (mirrors `internal/slurm/`): `Detected()`

@@ -25,7 +25,7 @@ running tools, and executing shell commands under a permission gate.
   `go 1.25.9` in `go.mod`; the on-path system Go is `go1.22.2` and
   `GOTOOLCHAIN=auto` transparently fetches 1.25.x on build.
 - **Phase:** v1 core is implemented. `cmd/deepthought-cli/` +
- `internal/{alcove,app,assimilation,babel,commands,config,history,historytools,keybindings,queen,residency,science,skills,slurm,tools,transwarp,tui,unimatrix}/`
+ `internal/{alcove,app,assimilation,babel,commands,config,cvmfs,history,historytools,keybindings,queen,residency,science,skills,slurm,tools,transwarp,tui,unimatrix}/`
  exist; the binary runs
   locally and serves over SSH (`--sub-etha :2323`). The shell is **chat-home with a
   navigation history stack**: splash (any key) → **New Chat** if an agentic model is
@@ -36,14 +36,24 @@ running tools, and executing shell commands under a permission gate.
   2nd (idle) is a no-op at chat. **Quitting is only** `/quit` (alias `/exit`, `/fish`)
   or **2× `ctrl+c`** — no q/esc-quit. Screens: **Chat** (home), a **drill-down settings
   editor** (incl. a new **General/Profile** section), **Continue** (the "which chat to
-  rejoin" picker), **Grid** (`/vortex`), and a **Status page**. (The old hub is gone —
-  `hub.go` is a stub.) The Status page (F12, `internal/tui/status.go`) is one unified,
-  **scrollable** screen: Session (model·effort·mode·health·clock/date/tz), Providers
-  (cached reachability from circuit breakers — no network), Models + per-model tokens
-  (now populated for Anthropic-wire models too), Tools, Environment
-  (CVMFS/module/Slurm/shell/host/user), and Cluster (nodes/CPUs/GPUs/mem/fairshare/
-  storage/your jobs from a background `slurm.Snapshot` poller at login + every 5 min,
-  so opening the page never blocks). **Settings/Continue/Status/Grid** use a full-terminal bordered frame
+  rejoin" picker), **Grid** (`/vortex`), a **Cluster** page (F10), a **Software**
+  page (F11), and a **Status** page (F12). (The old hub is gone — `hub.go` is a stub.)
+  The Status page (F12, `internal/tui/status.go`) is one unified, **scrollable**
+  screen: Session (model·effort·mode·health·clock/date/tz), Providers (cached
+  reachability from circuit breakers — no network), Models + per-model tokens (now
+  populated for Anthropic-wire models too), Tools, Environment
+  (CVMFS/module/Slurm/shell/host/user), and a one-line **Cluster** summary that
+  points to F10 for detail. The **Cluster** screen (F10, `internal/tui/cluster.go`)
+  is the full `vulcan-status`-styled view — nodes/CPUs/memory/GPUs (incl.
+  avail·usable), your jobs (with hold reason), per-account fairshare + LevelFS, and
+  storage — all from a background `slurm.Snapshot` poller at login + every 5 min
+  (colorblind-safe `▓░` bars, a "what this means" line under each block, `→ run:`
+  hints; opening never blocks). The **Software** screen (F11,
+  `internal/tui/software.go`) is a searchable CVMFS/module browser: type a name,
+  `module spider` runs in the background, pick a version for the exact
+  `module load …` line, plus static common-stacks / CVMFS-roots / notes blocks from
+  the alliance-cvmfs skill. The chat also gets a transient, clearly-labelled cluster
+  blurb each turn so the model can reason about scheduling without running `squeue`. **Settings/Continue/Status/Grid** use a full-terminal bordered frame
   with a pinned bottom **keybar**; **Settings** is a **two-pane drill-down**
   (lazygit/k9s-style: left = read-only section/entity tree; right = actionable list →
   inline field editor). **Overlay pickers** (`internal/tui/overlay.go`) float centered
@@ -53,7 +63,8 @@ running tools, and executing shell commands under a permission gate.
   **DeepThought** mark + drifting rainbow, **"Don't Panic."**, a rotating HHGTTG subtitle,
   and a model·provider status line. F-keys: `F2` settings · `F3` model chooser · `F4`
   effort · `F5` new chat · `F6` resume · `F7` context grid · `F8` stats · `F9` permission
-  mode · `F12` status (F10/F11 free). **Effort is the sole reasoning control** (F4 /
+  mode · `F10` cluster · `F11` software · `F12` status. **Effort is the sole reasoning
+  control** (F4 /
   `/effort`): off (Autopilot) = no thinking; any other level = thinking on at that
   level. Top bar (dark-grey band): rainbow `DeepThought · model [F3] · mode · effort [F4]`
   + responsive clock. Chat chrome: activity line above input + bottom status-line band.
