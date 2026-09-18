@@ -18,6 +18,29 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — skills loader scans codex, claude-project, and system roots
+
+The skills `Loader` now discovers packs from the other tools' standard locations
+and the org-managed system dir, so a researcher's existing Claude/Codex skills are
+reused rather than duplicated:
+- **New roots** (all first-wins dedup by name, highest-precedence wins): personal
+  codex `~/.codex/skills`, and project `.claude/skills` / `.codex/skills` alongside
+  the existing project `.deepthought-cli/skills`. Precedence is now
+  user › user-claude › user-codex › project › project-claude › project-codex ›
+  system › site.
+- **`DefaultSystemRoots()`** — org-managed locations scanned at the lowest
+  precedence: `/etc/claude-code/.claude/skills` (where the alliance-* packs live on
+  a managed node) and `/etc/deepthought-cli/skills`. Exposed as a `SystemRoots`
+  field on `Loader` (set by default in `NewLoader`), so callers/tests can override.
+- Nonexistent roots are skipped (no behaviour change for hosts without them).
+- Files: `internal/skills/loader.go`, `internal/skills/loader_test.go`.
+- Verified: new `TestCodexClaudeAndSystemRoots` (codex-beats-system dedup,
+  system-only discovery, project-claude discovery) passes; the two prior loader
+  tests now pin `SystemRoots = nil` to stay hermetic from the host's live org
+  skills; `go build`/`vet`/full `go test` green.
+- Note: the `skills` package is still **not wired into the running app** — this
+  only widens where the loader would look once it is invoked.
+
 ## 2026-09-18 · deepthought-cli — F10 Cluster screen, slim F12, AI cluster blurb
 
 - **F10 = dedicated Cluster screen** (`internal/tui/cluster.go`, reviving the

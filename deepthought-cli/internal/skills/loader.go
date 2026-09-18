@@ -65,11 +65,23 @@ func (s *Skill) Script(relative string) (string, error) {
 }
 
 type Loader struct {
-	SiteRoots []string
-	UserHome  string
-	BaseDir   string
-	mu        sync.Mutex
-	cache     map[string][]*Skill
+	SiteRoots   []string // caller-supplied, lowest precedence
+	SystemRoots []string // org-managed locations, second-lowest
+	UserHome    string
+	BaseDir     string
+	mu          sync.Mutex
+	cache       map[string][]*Skill
+}
+
+// DefaultSystemRoots are the org-managed skill locations scanned at the lowest
+// precedence — anything personal or project can shadow them by name. Nonexistent
+// roots are skipped by Load. This is where cluster-wide skills such as the
+// alliance-* packs live on a managed node.
+func DefaultSystemRoots() []string {
+	return []string{
+		"/etc/claude-code/.claude/skills", // org-managed Claude Code skills
+		"/etc/deepthought-cli/skills",     // org-managed DeepThought skills
+	}
 }
 
 func NewLoader(siteRoots ...string) *Loader {
@@ -78,11 +90,19 @@ func NewLoader(siteRoots ...string) *Loader {
 	if b, err := config.BaseDir(); err == nil {
 		base = b
 	}
-	return &Loader{SiteRoots: siteRoots, UserHome: home, BaseDir: base, cache: map[string][]*Skill{}}
+	return &Loader{
+		SiteRoots:   siteRoots,
+		SystemRoots: DefaultSystemRoots(),
+		UserHome:    home,
+		BaseDir:     base,
+		cache:       map[string][]*Skill{},
+	}
 }
 
-// Load uses user > project > site precedence (the reverse search order of
-// site < project < user) and first-wins name resolution.
+// Load resolves skills across every search root and keeps the first one seen for
+// each name. Precedence (highest wins): user > user-claude > user-codex >
+// project > project-claude > project-codex > system > site. A personal or
+// project skill therefore shadows a same-named org-managed one.
 func (l *Loader) Load(cwd string) ([]*Skill, error) {
 	realCWD, err := filepath.EvalSymlinks(cwd)
 	if err != nil {
@@ -101,7 +121,13 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 	}{
 		{filepath.Join(l.BaseDir, "skills"), "user"},
 		{filepath.Join(l.UserHome, ".claude", "skills"), "user-claude"},
+		{filepath.Join(l.UserHome, ".codex", "skills"), "user-codex"},
 		{filepath.Join(projectRoot, ".deepthought-cli", "skills"), "project"},
+		{filepath.Join(projectRoot, ".claude", "skills"), "project-claude"},
+		{filepath.Join(projectRoot, ".codex", "skills"), "project-codex"},
+	}
+	for _, root := range l.SystemRoots {
+		roots = append(roots, struct{ path, layer string }{root, "system"})
 	}
 	for _, root := range l.SiteRoots {
 		roots = append(roots, struct{ path, layer string }{root, "site"})
