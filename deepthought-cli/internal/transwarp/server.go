@@ -139,6 +139,9 @@ func (m *Manager) Serve(ctx context.Context, socket string) error {
 	if err := os.MkdirAll(filepath.Dir(socket), 0o700); err != nil {
 		return err
 	}
+	// Clear a stale socket from a crashed prior run; failure here is fine
+	// (no socket = nothing to clear), and a real conflict surfaces from
+	// net.Listen below.
 	_ = os.Remove(socket)
 	listener, err := net.Listen("unix", socket)
 	if err != nil {

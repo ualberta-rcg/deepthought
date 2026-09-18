@@ -170,15 +170,15 @@ type ChatModel struct {
 	awaiting  *pendingApproval // non-nil while a y/n permission prompt is on screen
 
 	// Activity / session accounting.
-	turnStarted time.Time // when the current busy turn began
-	activityVerb string   // rotating verb for the activity line
-	sessionIn     int      // session prompt tokens (billing sum)
-	sessionOut    int      // session completion tokens
-	lastContext   int      // most recent prompt_tokens (= window fill)
-	sessionCycles int      // completed LLM rounds this session (tool-loop cycles)
-	sessionMsgs   int      // user + assistant messages echoed this session
-	queue         []string // typed lines waiting while busy
-	liveTokens    int      // rough live estimate while streaming
+	turnStarted   time.Time // when the current busy turn began
+	activityVerb  string    // rotating verb for the activity line
+	sessionIn     int       // session prompt tokens (billing sum)
+	sessionOut    int       // session completion tokens
+	lastContext   int       // most recent prompt_tokens (= window fill)
+	sessionCycles int       // completed LLM rounds this session (tool-loop cycles)
+	sessionMsgs   int       // user + assistant messages echoed this session
+	queue         []string  // typed lines waiting while busy
+	liveTokens    int       // rough live estimate while streaming
 
 	// currentProducer is the model driving the in-flight turn; stamped onto each
 	// Transmission/Incursion as Producer (provenance) at commit time.
@@ -384,8 +384,8 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 
 	if kp, ok := msg.(tea.KeyPressMsg); ok {
 		// ESC / Ctrl-C while busy interrupts the agent: cancel the in-flight
-		// stream and break the tool loop. A second esc once idle backs out to
-		// the hub (so: 1st esc interrupts, 2nd → hub).
+		// stream and break the tool loop. Once idle, esc is a no-op — chat
+		// is the navigation home.
 		if m.busy && (kp.String() == "esc" || kp.String() == "ctrl+c") {
 			return m.interrupt()
 		}

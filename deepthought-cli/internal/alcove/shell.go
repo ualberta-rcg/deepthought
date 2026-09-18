@@ -1,4 +1,4 @@
-// Package alcove owns the long-lived shell used by an DeepThought session.
+// Package alcove owns the long-lived shell used by a DeepThought session.
 //
 // Commands execute in the same bash process, so cd, export, module load, conda
 // activate, and virtual environments persist across tool calls.
@@ -194,6 +194,10 @@ func (s *Shell) Close() error {
 	return nil
 }
 
+// killLocked tears the shell down. This is best-effort by design: it runs on
+// the shutdown path with no error channel to report into, and after a SIGKILL
+// a "kill of an already-dead process" failure carries no information we could
+// act on. Callers holding the lock own the lifetime; nothing here may block.
 func (s *Shell) killLocked() {
 	if s.cmd != nil && s.cmd.Process != nil {
 		_ = syscall.Kill(-s.cmd.Process.Pid, syscall.SIGKILL)

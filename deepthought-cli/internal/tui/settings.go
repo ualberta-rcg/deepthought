@@ -70,7 +70,7 @@ var rootSections = []rootSection{
 	{"storage", "Storage", true},
 	{"keybindings", "Keybindings", true},
 	{"appearance", "Appearance", true}, // status line
-	{"privacy", "Privacy", false},       // telemetry opt-out
+	{"privacy", "Privacy", false},      // telemetry opt-out
 }
 
 // SettingsModel is the drill-down settings editor. It holds a working copy of

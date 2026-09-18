@@ -27,12 +27,13 @@ func TestLayeringAndProgressiveDisclosure(t *testing.T) {
 	site := filepath.Join(root, "site")
 	writeSkill(t, site, "slurm", "slurm", "site")
 	writeSkill(t, filepath.Join(project, ".deepthought-cli", "skills"), "slurm", "slurm", "project")
-	writeSkill(t, filepath.Join(home, ".deepthought-cli", "skills"), "slurm", "slurm", "user")
+	writeSkill(t, filepath.Join(home, ".deepthought", "skills"), "slurm", "slurm", "user")
 	if err := os.MkdirAll(filepath.Join(project, "subdir"), 0o700); err != nil {
 		t.Fatal(err)
 	}
 	loader := NewLoader(site)
 	loader.UserHome = home
+	loader.BaseDir = filepath.Join(home, ".deepthought")
 	skills, err := loader.Load(filepath.Join(project, "subdir"))
 	if err != nil {
 		t.Fatal(err)

@@ -21,8 +21,7 @@ snapshot:
 	@stamp="$$(date -u +%Y%m%d-%H%M%S)"; \
 	dest="$(SNAPSHOT_DIR)/$$stamp"; \
 	mkdir -p "$$dest"; \
-	rsync -a --exclude='.tmp/' --exclude='cowabunga' --exclude='render' \
-		--exclude='smoke' ./ "$$dest/"; \
+	rsync -a --exclude='.tmp/' ./ "$$dest/"; \
 	echo "snapshot $$dest"
 
 test:

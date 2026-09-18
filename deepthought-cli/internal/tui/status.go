@@ -27,7 +27,7 @@ type ProviderRow struct {
 
 // EnvInfo is the static machine/session environment gathered once at startup.
 type EnvInfo struct {
-	CVMFS, Module, Slurm bool
+	CVMFS, Module, Slurm  bool
 	Shell, Host, User, TZ string
 }
 

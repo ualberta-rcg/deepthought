@@ -208,11 +208,11 @@ type ClusterSnapshot struct {
 	CPUTotal       int
 	JobsRunning    int
 	JobsPending    int
-	GPUs           int    // total GPUs across nodes
-	GPUsUsed       int    // allocated/used GPUs
-	GPUType        string // e.g. "l40s"
-	MemTotalGB     int    // total cluster memory (sum of per-node MB → GB)
-	MemAllocGB     int    // allocated memory GB
+	GPUs           int     // total GPUs across nodes
+	GPUsUsed       int     // allocated/used GPUs
+	GPUType        string  // e.g. "l40s"
+	MemTotalGB     int     // total cluster memory (sum of per-node MB → GB)
+	MemAllocGB     int     // allocated memory GB
 	Fairshare      float64 // user's fairshare on their default account (0–1)
 	DefaultAccount string
 	Storage        []string // raw diskusage_report rows (already column-aligned)

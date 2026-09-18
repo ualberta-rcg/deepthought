@@ -58,7 +58,7 @@ running tools, and executing shell commands under a permission gate.
   level. Top bar (dark-grey band): rainbow `DeepThought · model [F3] · mode · effort [F4]`
   + responsive clock. Chat chrome: activity line above input + bottom status-line band.
 
-  **Config v2** (`~/.config/deepthought-cli/config.json`; see `configs/config.example.json`):
+  **Config v2** (`~/.deepthought/config.json`; see `configs/config.example.json`):
   `providers` (unlimited backends — name, base URL, API key or `$ENV_VAR`, wire
   `openai`|`anthropic`, free-form tags like local/external/usa/cad/china), `models`
   (each attached to a provider, with capabilities `chat`/`tools`/`reasoning`/`vision`

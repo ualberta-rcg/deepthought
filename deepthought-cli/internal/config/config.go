@@ -3,11 +3,13 @@
 // model list (each model attached to a provider, with capabilities and
 // free-form tags), and the role assignments (which model does which job).
 //
-// Path resolution: --config flag → DEEPTHOUGHT_CLI_CONFIG env → $XDG_CONFIG_HOME/deepthought-cli/
-// config.json → $HOME/.config/deepthought-cli/config.json. A missing file is not an error:
-// built-in defaults (the KServe gateway + the seed catalog) let the TUI boot with
-// nothing on disk. A v1 file (single provider + catalog model IDs) migrates
-// transparently to the v2 shape in memory; it is rewritten on the next Save.
+// Path resolution: --config flag → BaseDir()/config.json, where BaseDir is the
+// single per-user directory $DEEPTHOUGHT_CLI_HOME → $HOME/.deepthought —
+// config, chats, and all other user state live there together. A missing file
+// is not an error: built-in defaults (the KServe gateway + the seed catalog)
+// let the TUI boot with nothing on disk. A v1 file (single provider + catalog
+// model IDs) migrates transparently to the v2 shape in memory; it is rewritten
+// on the next Save.
 package config
 
 import (
@@ -76,7 +78,7 @@ type File struct {
 	Permissions    *Permissions      `json:"permissions,omitempty"` // v2 op-modes + rule lists
 	Routes         map[string]Route  `json:"routes,omitempty"`
 
-	// StatusLine configures the bottom chrome band (Phase 8a).
+	// StatusLine configures the bottom chrome band.
 	StatusLine *StatusLine `json:"status_line,omitempty"`
 
 	// General / profile (optional, omitempty — no migration; absent fields are
@@ -93,7 +95,7 @@ type File struct {
 // Permissions is the v2 permission block: an operation-mode name plus hybrid
 // allow/ask/deny rule lists (reference-style "Bash(git *)", "Read(~/**)").
 type Permissions struct {
-	Mode  string   `json:"mode,omitempty"`  // safe | safe-auto | auto | custom name
+	Mode  string   `json:"mode,omitempty"` // safe | safe-auto | auto | custom name
 	Allow []string `json:"allow,omitempty"`
 	Ask   []string `json:"ask,omitempty"`
 	Deny  []string `json:"deny,omitempty"`
@@ -187,39 +189,35 @@ func (c *Config) SamplingTemperature() float64 {
 	return 0.7
 }
 
-// DefaultPath reports where the settings file lives when no --config flag is given.
-// Precedence: $DEEPTHOUGHT_CLI_CONFIG → $XDG_CONFIG_HOME/deepthought-cli/config.json →
-// $HOME/.config/deepthought-cli/config.json.
-func DefaultPath() (string, error) {
-	if p := os.Getenv("DEEPTHOUGHT_CLI_CONFIG"); p != "" {
+// BaseDir reports the single per-user DeepThought directory: config, chat
+// transcripts, and all other user state live under it — one directory per
+// home, so there is exactly one place to back up or move. Precedence:
+// $DEEPTHOUGHT_CLI_HOME → $HOME/.deepthought.
+func BaseDir() (string, error) {
+	if p := os.Getenv("DEEPTHOUGHT_CLI_HOME"); p != "" {
 		return p, nil
-	}
-	if xdg := os.Getenv("XDG_CONFIG_HOME"); xdg != "" {
-		return filepath.Join(xdg, "deepthought-cli", "config.json"), nil
 	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve config path: %w", err)
+		return "", fmt.Errorf("resolve base dir: %w", err)
 	}
-	return filepath.Join(home, ".config", "deepthought-cli", "config.json"), nil
+	return filepath.Join(home, ".deepthought"), nil
 }
 
-// DataDir reports where DeepThought stores runtime data (chat transcripts). These
-// are small files in the nightly-backed-up $HOME, so chats survive restarts.
-// Precedence: $DEEPTHOUGHT_CLI_DATA → $XDG_DATA_HOME/deepthought-cli →
-// $HOME/.local/share/deepthought-cli.
-func DataDir() (string, error) {
-	if p := os.Getenv("DEEPTHOUGHT_CLI_DATA"); p != "" {
-		return p, nil
-	}
-	if xdg := os.Getenv("XDG_DATA_HOME"); xdg != "" {
-		return filepath.Join(xdg, "deepthought-cli"), nil
-	}
-	home, err := os.UserHomeDir()
+// DefaultPath reports where the settings file lives when no --config flag is
+// given: BaseDir()/config.json.
+func DefaultPath() (string, error) {
+	d, err := BaseDir()
 	if err != nil {
-		return "", fmt.Errorf("resolve data dir: %w", err)
+		return "", err
 	}
-	return filepath.Join(home, ".local", "share", "deepthought-cli"), nil
+	return filepath.Join(d, "config.json"), nil
+}
+
+// DataDir reports where DeepThought stores runtime data (chat transcripts,
+// history.db). It is BaseDir — one directory per home for all user state.
+func DataDir() (string, error) {
+	return BaseDir()
 }
 
 // ChatDir reports the chats subdirectory under DataDir.

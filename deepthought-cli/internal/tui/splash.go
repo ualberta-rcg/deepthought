@@ -9,7 +9,7 @@ import (
 )
 
 const (
-	splashName    = "DeepThought"      // rendered as tall ASCII art beside the rainbow mark
+	splashName    = "DeepThought"  // rendered as tall ASCII art beside the rainbow mark
 	splashTagline = "Don't Panic." // permanent anchor on the splash
 	splashVersion = "DeepThought v0.0.1"
 	splashHint    = "press any key to continue"

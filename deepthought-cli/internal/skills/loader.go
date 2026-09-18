@@ -10,6 +10,8 @@ import (
 	"sync"
 
 	"gopkg.in/yaml.v3"
+
+	"deepthought-cli/internal/config"
 )
 
 const PackFormatVersion = 1
@@ -65,13 +67,18 @@ func (s *Skill) Script(relative string) (string, error) {
 type Loader struct {
 	SiteRoots []string
 	UserHome  string
+	BaseDir   string
 	mu        sync.Mutex
 	cache     map[string][]*Skill
 }
 
 func NewLoader(siteRoots ...string) *Loader {
 	home, _ := os.UserHomeDir()
-	return &Loader{SiteRoots: siteRoots, UserHome: home, cache: map[string][]*Skill{}}
+	base := home
+	if b, err := config.BaseDir(); err == nil {
+		base = b
+	}
+	return &Loader{SiteRoots: siteRoots, UserHome: home, BaseDir: base, cache: map[string][]*Skill{}}
 }
 
 // Load uses user > project > site precedence (the reverse search order of
@@ -92,7 +99,7 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 	roots := []struct {
 		path, layer string
 	}{
-		{filepath.Join(l.UserHome, ".deepthought-cli", "skills"), "user"},
+		{filepath.Join(l.BaseDir, "skills"), "user"},
 		{filepath.Join(l.UserHome, ".claude", "skills"), "user-claude"},
 		{filepath.Join(projectRoot, ".deepthought-cli", "skills"), "project"},
 	}

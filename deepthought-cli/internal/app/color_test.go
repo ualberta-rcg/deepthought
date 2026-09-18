@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/charmbracelet/colorprofile"
 	"charm.land/bubbletea/v2"
+	"github.com/charmbracelet/colorprofile"
 )
 
 func TestRewriteTerm256(t *testing.T) {

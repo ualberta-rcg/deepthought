@@ -23,7 +23,7 @@ Then `ssh -p 2323 <host>` (the CLI runs its own Wish SSH server via
 `--sub-etha :2323`; no OpenSSH involvement).
 
 The CLI speaks both OpenAI- and Anthropic-compatible wire formats; configure
-providers, models, and roles in `~/.config/deepthought-cli/config.json`
+providers, models, and roles in `~/.deepthought/config.json`
 (example in `deepthought-cli/configs/`).
 
 ## Change log

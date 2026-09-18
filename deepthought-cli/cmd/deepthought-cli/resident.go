@@ -116,7 +116,7 @@ func runResidentDaemon() {
 	ctx, cancel := signalContext()
 	defer cancel()
 	if err := manager.Serve(ctx, transwarp.SocketPath()); err != nil {
-		fmt.Fprintln(os.Stderr, "deepthought-cli daemon:", err)
+		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 	}
 }
 

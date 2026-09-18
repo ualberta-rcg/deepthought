@@ -165,7 +165,12 @@ func MergeImports(file *File, candidates []ImportCandidate, configPath string) (
 
 func writeSecrets(path string, additions map[string]string) error {
 	existing := map[string]string{}
-	_ = loadSecretsInto(path, existing)
+	// A read failure here must abort the merge: writing with an empty
+	// "existing" map would clobber previously imported secrets. (A missing
+	// file is not an error — loadSecretsInto treats NotExist as "none yet".)
+	if err := loadSecretsInto(path, existing); err != nil {
+		return fmt.Errorf("read existing secrets before merging: %w", err)
+	}
 	for key, value := range additions {
 		existing[key] = value
 	}

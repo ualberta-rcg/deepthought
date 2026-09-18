@@ -1,4 +1,4 @@
-// Package unimatrix is DeepThought's inference core (per docs/ARCHITECTURE.md). It
+// Package unimatrix is DeepThought's inference core. It
 // owns the model metadata shape (capabilities, roles, tags), the curated seed
 // catalog, and the client Pool that hands out one Babel client per provider.
 // The user's live model list lives in the config file; the seed catalog only

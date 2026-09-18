@@ -18,6 +18,43 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — naming fix-up + unify user state under `~/.deepthought/`
+
+- **One directory per home**: new `config.BaseDir()`
+  (`$DEEPTHOUGHT_CLI_HOME` → `~/.deepthought`) holds everything —
+  `DefaultPath()` = `BaseDir()/config.json`, `DataDir()` = `BaseDir`. The two
+  XDG derivations and `DEEPTHOUGHT_CLI_CONFIG`/`DEEPTHOUGHT_CLI_DATA` are gone,
+  replaced by the single `DEEPTHOUGHT_CLI_HOME`. User skills now load from
+  `BaseDir()/skills` (`skills.Loader.BaseDir`); project skills stay per-project
+  at `<root>/.deepthought-cli/skills`.
+- **Latent data-loss fix**: `config.writeSecrets` ignored the existing-secrets
+  load error, so a failed read followed by a write would have clobbered
+  previously imported secrets — it now aborts the merge on read failure
+  (missing file still means "none yet").
+- **Naming/comment fix-ups**: "an DeepThought" → "a" (alcove), two stale hub
+  comments (chat, model_chooser), three broken `docs/ARCHITECTURE.md` pointers
+  (babel, queen, unimatrix), stderr prefix `deepthought-cli daemon:` →
+  `deepthought-cli:` (resident), dead Makefile snapshot excludes
+  (`cowabunga`/`render`/`smoke`), stale "Phase N" comments reworded to
+  describe behavior.
+- **Once-over cleanups**: deleted the empty `internal/tui/hub.go` stub;
+  `gofmt`'d the tree (13 files had drifted during the rename); the transwarp
+  stale-socket removal and the alcove teardown now document their intentional
+  error ignores; a failed Queen-mode persist surfaces in the chat notice
+  ("…(not saved: …)") instead of being swallowed.
+- **Tests**: `TestDefaultPathEnv` → `TestBaseDirEnv` + new `TestBaseDirDefault`;
+  skills layering test updated to the `BaseDir`-based user root.
+- Files: `internal/config/{config,config_test,import}.go`,
+  `internal/skills/{loader,loader_test}.go`, `internal/app/model.go`,
+  `internal/alcove/shell.go`, `internal/transwarp/server.go`,
+  `internal/tui/{chat,model_chooser}.go`, `cmd/deepthought-cli/{main,
+  resident}.go`, `Makefile`, `README.md`, `deepthought-cli/CLAUDE.md`;
+  deleted `internal/tui/hub.go`. Comment-only: `internal/{babel,queen,
+  unimatrix,history}/…` and `cmd`/`app`/`config` phase notes. Formatted via
+  `gofmt`: 13 files that had drifted during the rename.
+- Verified: `gofmt -l` empty; `go build ./...`, `go vet ./...`,
+  `go test ./...` all green; grep gates for old paths/env vars/hub refs clean.
+
 ## 2026-09-17 · repo — two-product scaffolding
 
 - Root `CLAUDE.md`: repo layout, the changelog-before-commit rule, env and

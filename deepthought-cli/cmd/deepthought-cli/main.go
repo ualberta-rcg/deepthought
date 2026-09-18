@@ -44,7 +44,7 @@ func main() {
 		os.Args = []string{os.Args[0], "--no-splash"}
 	}
 	subEtha := flag.String("sub-etha", "", "SSH listen address (e.g. :2323). Empty = run on the local TTY.")
-	configPath := flag.String("config", "", "path to settings file (default: $DEEPTHOUGHT_CLI_CONFIG or ~/.config/deepthought-cli/config.json)")
+	configPath := flag.String("config", "", "path to settings file (default: ~/.deepthought/config.json; $DEEPTHOUGHT_CLI_HOME overrides the dir)")
 	noSplash := flag.Bool("no-splash", false, "skip the splash screen and start at the menu")
 	towel := flag.Bool("towel", false, "start or attach the user-space resident daemon")
 	flag.Parse()
@@ -91,8 +91,8 @@ func main() {
 		os.Exit(1)
 	}
 
-	// The top bar mirrors the chat role's model at boot (settings edits update
-	// it live from Phase 3 on).
+	// The top bar mirrors the chat role's model at boot (settings edits
+	// update it live).
 	statusModel := "?"
 	if _, m, err := live.RoleClient(unimatrix.RoleChat); err == nil {
 		statusModel = m.Label
@@ -108,13 +108,13 @@ func main() {
 			ConfigPath: cfgPath,
 			Mode:       permMode,
 		},
-		Live:        live,
-		Registry:    registry,
-		Gate:        gate,
+		Live:     live,
+		Registry: registry,
+		Gate:     gate,
 		// The chat persists through SQLite (history.db) — the authoritative
 		// store. The source returns the shared, stateless SQLiteStore; each new
 		// chat CreateCollective-s a fresh collective routed by its own ID.
-		ChatSource: func() history.ChatStore { return droneStore },
+		ChatSource:  func() history.ChatStore { return droneStore },
 		StartScreen: tui.ScreenSplash,
 		Bindings:    keybindings.Defaults(),
 		SessionID:   attachID,
@@ -135,7 +135,7 @@ func main() {
 	}
 }
 
-// loadConfig resolves the settings path (--config flag → DEEPTHOUGHT_CLI_CONFIG → XDG/HOME)
+// loadConfig resolves the settings path (--config flag → ~/.deepthought/config.json)
 // and loads it, returning the resolved path for the settings screen. A missing
 // file yields built-in defaults; a present-but-invalid file is fatal. A missing
 // API key is non-fatal but warned: the chat loop needs it.

@@ -17,7 +17,7 @@ func toolContent(msgs []babel.Message) string {
 	return ""
 }
 
-// TestDemoteProbeShortensContext is the Phase-4 seam test: demoting a probe to
+// TestDemoteProbeShortensContext covers the demotion seam: demoting a probe to
 // tombstone writes the marker, persists the state, and — after a reload — makes
 // MessagesByState render the tombstone instead of the full body. Nothing demotes
 // automatically in the chat loop; this is the path a future Queen thread drives.

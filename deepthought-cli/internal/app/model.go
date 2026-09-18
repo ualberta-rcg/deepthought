@@ -87,10 +87,10 @@ type RootModel struct {
 	// overlay is the topmost centered picker (effort/model chooser), or nil.
 	// overlayStack holds suspended overlays so pickers can nest
 	// (model chooser → effort → back).
-	overlay      tui.Overlay
-	overlayStack []tui.Overlay
-	bindings     *keybindings.Map
-	statusLine        string // bottom-bar content (Phase 8a custom status line)
+	overlay           tui.Overlay
+	overlayStack      []tui.Overlay
+	bindings          *keybindings.Map
+	statusLine        string // bottom-bar content
 	sessionIn         int
 	sessionOut        int
 	lastContext       int
@@ -448,7 +448,9 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		if m.deps.Gate != nil {
 			name := m.deps.Gate.CycleOpMode()
 			m.status.Mode = name
-			// Persist the chosen mode.
+			// Persist the chosen mode; report a failed save honestly rather
+			// than letting the user believe the mode stuck.
+			note := "permission mode → " + name
 			if m.deps.Live != nil {
 				f := m.deps.Live.Snapshot()
 				if f.Permissions == nil {
@@ -456,9 +458,11 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 				}
 				f.Permissions.Mode = name
 				f.PermissionMode = name
-				_ = m.deps.Live.Save(f)
+				if err := m.deps.Live.Save(f); err != nil {
+					note += " (not saved: " + err.Error() + ")"
+				}
 			}
-			m.chat = m.chat.Notice("permission mode → " + name)
+			m.chat = m.chat.Notice(note)
 		} else {
 			m.chat = m.chat.Notice("permission mode → " + m.status.Mode)
 		}

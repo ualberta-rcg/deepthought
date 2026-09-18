@@ -13,7 +13,7 @@ import (
 // it (SetAgenticModel + status update) in its own Update.
 type ModelChosenMsg struct{ ID string }
 
-// modelChooser is the running-model picker (F3 / hub "Models"). It is distinct
+// modelChooser is the running-model picker (F3). It is distinct
 // from Settings › Models (which edits model definitions): this only switches
 // which model drives the chat. Pressing "e" branches into the effort picker,
 // which nests under the chooser and returns to it on confirm.

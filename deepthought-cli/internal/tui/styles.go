@@ -19,7 +19,7 @@ var (
 	colWarning   = lipgloss.Color("#FCD34D") // amber — toasts, Queen review
 	colDanger    = lipgloss.Color("#FCA5A5") // red
 	colOnAccent  = lipgloss.Color("#000000") // black on cyan (selected row text)
-	colUserBg = lipgloss.Color("236") // ANSI256 near-black — tinted band behind user echo
+	colUserBg    = lipgloss.Color("236")     // ANSI256 near-black — tinted band behind user echo
 	// Bar chrome: dark slate that stays visible under ANSI 256 (forced at
 	// startup for PuTTY). ANSI 236 collapses to black in 16-color mode; 238
 	// (#444444) is still "almost black" but readable as a band.
@@ -87,17 +87,17 @@ var (
 
 	// Status fields (used by the top/bottom chrome bars). Background is set
 	// on the band itself via styleTopBar so every cell paints dark grey.
-	styleTopBar = lipgloss.NewStyle().Background(colBarBg)
-	styleStatusApp = lipgloss.NewStyle().Foreground(colPrimary).Background(colBarBg).Bold(true)
-	styleStatusComp = lipgloss.NewStyle().Foreground(colSecondary).Background(colBarBg)
+	styleTopBar      = lipgloss.NewStyle().Background(colBarBg)
+	styleStatusApp   = lipgloss.NewStyle().Foreground(colPrimary).Background(colBarBg).Bold(true)
+	styleStatusComp  = lipgloss.NewStyle().Foreground(colSecondary).Background(colBarBg)
 	styleStatusModel = lipgloss.NewStyle().Foreground(colSuccess).Background(colBarBg) // active model
-	styleStatusMode = lipgloss.NewStyle().Foreground(colWarning).Background(colBarBg)
-	styleStatusAddr = lipgloss.NewStyle().Foreground(colDim).Background(colBarBg)
-	styleStatusSep = lipgloss.NewStyle().Foreground(colDim).Background(colBarBg)
-	styleStatusHint = lipgloss.NewStyle().Foreground(colBarHint).Background(colBarBg)
-	styleClock = lipgloss.NewStyle().Foreground(colBarClock).Background(colBarBg)
-	styleBarPad = lipgloss.NewStyle().Background(colBarBg) // blank cells that keep the band solid
-	styleBarText = lipgloss.NewStyle().Foreground(colBarText).Background(colBarBg)
+	styleStatusMode  = lipgloss.NewStyle().Foreground(colWarning).Background(colBarBg)
+	styleStatusAddr  = lipgloss.NewStyle().Foreground(colDim).Background(colBarBg)
+	styleStatusSep   = lipgloss.NewStyle().Foreground(colDim).Background(colBarBg)
+	styleStatusHint  = lipgloss.NewStyle().Foreground(colBarHint).Background(colBarBg)
+	styleClock       = lipgloss.NewStyle().Foreground(colBarClock).Background(colBarBg)
+	styleBarPad      = lipgloss.NewStyle().Background(colBarBg) // blank cells that keep the band solid
+	styleBarText     = lipgloss.NewStyle().Foreground(colBarText).Background(colBarBg)
 )
 
 // placeCenter centers a rendered block in a w×h area (used by splash & menu).

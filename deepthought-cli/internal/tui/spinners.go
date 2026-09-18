@@ -99,15 +99,15 @@ func formatElapsed(d time.Duration) string {
 
 // ActivityState is what the activity line renders.
 type ActivityState struct {
-	Busy       bool
-	Streaming  bool
-	Verb       string
-	Tokens     int // live / last-turn token count (0 = omit)
-	Elapsed    time.Duration
-	Queued     string // pending queued input chip
-	Awaiting   bool   // Queen approval on screen
-	SpinFrame  int
-	BashHint   bool // idle: advertise "! for bash"
+	Busy      bool
+	Streaming bool
+	Verb      string
+	Tokens    int // live / last-turn token count (0 = omit)
+	Elapsed   time.Duration
+	Queued    string // pending queued input chip
+	Awaiting  bool   // Queen approval on screen
+	SpinFrame int
+	BashHint  bool // idle: advertise "! for bash"
 }
 
 // RenderActivity paints the 1-row strip above the input. Always returns exactly
@@ -152,4 +152,3 @@ func RenderActivity(w int, st ActivityState) string {
 	}
 	return line
 }
-

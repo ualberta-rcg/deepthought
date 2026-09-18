@@ -202,14 +202,31 @@ func TestExpandedKey(t *testing.T) {
 	}
 }
 
-func TestDefaultPathEnv(t *testing.T) {
+func TestBaseDirEnv(t *testing.T) {
 	// Not parallel: t.Setenv mutates process env.
-	t.Setenv("DEEPTHOUGHT_CLI_CONFIG", "/custom/path.json")
-	got, err := DefaultPath()
+	t.Setenv("DEEPTHOUGHT_CLI_HOME", "/custom/home")
+	if got, err := BaseDir(); err != nil || got != "/custom/home" {
+		t.Errorf("BaseDir = %q, %v; want /custom/home", got, err)
+	}
+	if got, err := DefaultPath(); err != nil || got != "/custom/home/config.json" {
+		t.Errorf("DefaultPath = %q, %v; want /custom/home/config.json", got, err)
+	}
+	if got, err := DataDir(); err != nil || got != "/custom/home" {
+		t.Errorf("DataDir = %q, %v; want /custom/home", got, err)
+	}
+}
+
+func TestBaseDirDefault(t *testing.T) {
+	// Not parallel: relies on the process env being free of the override.
+	if os.Getenv("DEEPTHOUGHT_CLI_HOME") != "" {
+		t.Skip("DEEPTHOUGHT_CLI_HOME set")
+	}
+	home, err := os.UserHomeDir()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got != "/custom/path.json" {
-		t.Errorf("DefaultPath = %q, want /custom/path.json", got)
+	want := filepath.Join(home, ".deepthought")
+	if got, err := BaseDir(); err != nil || got != want {
+		t.Errorf("BaseDir = %q, %v; want %q", got, err, want)
 	}
 }

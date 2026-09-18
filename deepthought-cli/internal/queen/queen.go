@@ -1,4 +1,4 @@
-// Package queen is DeepThought's permission gate (per docs/ARCHITECTURE.md): every tool
+// Package queen is DeepThought's permission gate: every tool
 // call passes through it before running. Named for the Borg Queen — the personification
 // of the Collective's will, whose approval every action needs; some she refuses
 // outright, no matter how the collective asks.
@@ -49,7 +49,7 @@ const (
 type Category string
 
 const (
-	CatRead Category = "read"
+	CatRead  Category = "read"
 	CatWrite Category = "write" // reserved for future edit tool; bash file writes land in run today
 	CatRun   Category = "run"
 	CatTool  Category = "tool"
@@ -152,9 +152,9 @@ type Gate struct {
 	mu sync.Mutex
 
 	// Legacy Mode kept for tests / NewGate(Review); Op is the source of truth.
-	Mode Mode
-	Op   OpMode
-	Rules Rules
+	Mode   Mode
+	Op     OpMode
+	Rules  Rules
 	Custom []OpMode
 
 	// Task-scoped grants: keys like "bash:ls *" cleared when the incursion ends.
