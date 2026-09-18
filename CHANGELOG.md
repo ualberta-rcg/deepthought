@@ -18,6 +18,37 @@ Entry format:
 
 ---
 
+## 2026-09-18 · deepthought-cli — F11 Software screen: searchable CVMFS modules
+
+- **New `internal/cvmfs/` package** (mirrors `internal/slurm/`): `Detected()`
+  (cached; cheap `MODULESHOME` env check, then a login-shell `type module`
+  probe), and a `Client` with a `Runner` seam that runs `module spider …`
+  **headlessly via `bash -lc`** — `module` is a shell function, not a binary.
+  `Spider(name)` → versions + related matches; `SpiderDetail(name,ver)` → the
+  "You will need to load" prerequisite lines + a copyable `module load …` line
+  (handles the no-dep "can be loaded directly" case). A module name is
+  validated against a conservative charset **before** it is interpolated into a
+  shell command line (no metacharacter injection). "Unable to find" is a normal
+  outcome, not an error.
+- **F11 = Software screen** (`internal/tui/software.go`, `ScreenSoftware` already
+  reserved in `nav.go`). A focused search box runs `module spider` in a
+  background `tea.Cmd` (the UI never blocks on CVMFS); results list the versions
+  with a `↑/↓` cursor, and Enter opens the exact load line for the picked version.
+  Static **Common stacks / CVMFS roots / Notes** reference blocks are drawn from
+  the alliance-cvmfs skill. Graceful: no Lmod → a single hint line. Typing at any
+  point starts a fresh search; `esc` goes back.
+- Bound `"f11": Software` in the keybinding defaults (the `keybindings.Software`
+  action and `ScreenSoftware` were already declared); wired through the root
+  (field/init/Update/View/activeInit/handleAction, resize).
+- Files: new `internal/cvmfs/{cvmfs,cvmfs_test}.go`,
+  `internal/tui/software.go`, `internal/tui/software_test.go`,
+  `internal/app/model.go`, `internal/keybindings/keybindings.go`.
+- Verified: parser tests table-driven on **real captured Lmod output** (versions,
+  dep lines, no-dep, not-found); a live smoke run confirmed `cuda` → 5 versions,
+  `cuda/13.2` → `module load StdEnv/2023 gcc/12.3 cuda/13.2`, missing module →
+  graceful; TUI tests cover reference blocks, results, detail, not-found, and
+  the no-modules degradation. `gofmt`/`go build`/`vet`/full `go test` green.
+
 ## 2026-09-18 · deepthought-cli — skills loader scans codex, claude-project, and system roots
 
 The skills `Loader` now discovers packs from the other tools' standard locations

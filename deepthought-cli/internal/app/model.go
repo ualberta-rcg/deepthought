@@ -82,6 +82,7 @@ type RootModel struct {
 	statusScr   tui.StatusModel
 	statsScr    tui.StatsModel
 	clusterScr  tui.ClusterModel
+	softwareScr tui.SoftwareModel
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -111,20 +112,21 @@ func NewRootModel(d Deps) RootModel {
 		sid = newSessionID()
 	}
 	return RootModel{
-		deps:       d,
-		screen:     d.StartScreen,
-		status:     d.Status,
-		clock:      time.Now(),
-		sessionID:  sid,
-		splash:     tui.NewSplashModel(splashBoot(d.Live), sid),
-		chat:       tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource),
-		continue_:  tui.NewContinueModel(d.ChatSource),
-		settings:   tui.NewSettingsModel(d.Live, d.Settings),
-		grid:       tui.NewGridModel(),
-		statusScr:  tui.NewStatusModel(statusInputs(d)),
-		statsScr:   tui.NewStatsModel(usageFunc(d.ChatSource)),
-		clusterScr: tui.NewClusterModel(),
-		bindings:   d.Bindings,
+		deps:        d,
+		screen:      d.StartScreen,
+		status:      d.Status,
+		clock:       time.Now(),
+		sessionID:   sid,
+		splash:      tui.NewSplashModel(splashBoot(d.Live), sid),
+		chat:        tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource),
+		continue_:   tui.NewContinueModel(d.ChatSource),
+		settings:    tui.NewSettingsModel(d.Live, d.Settings),
+		grid:        tui.NewGridModel(),
+		statusScr:   tui.NewStatusModel(statusInputs(d)),
+		statsScr:    tui.NewStatsModel(usageFunc(d.ChatSource)),
+		clusterScr:  tui.NewClusterModel(),
+		softwareScr: tui.NewSoftwareModel(),
+		bindings:    d.Bindings,
 	}
 }
 
@@ -273,6 +275,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).SetHealth(m.healthOK, m.healthMsg)
 		m.clusterScr = m.clusterScr.Resize(msg.Width, msg.Height)
+		m.softwareScr = m.softwareScr.Resize(msg.Width, msg.Height)
 		m.statsScr = m.statsScr.Resize(msg.Width, msg.Height).
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext).
 			SetActivity(m.sessionCycles, m.sessionMsgs).
@@ -407,6 +410,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statsScr, cmd = m.statsScr.Update(msg)
 	case tui.ScreenCluster:
 		m.clusterScr, cmd = m.clusterScr.Update(msg)
+	case tui.ScreenSoftware:
+		m.softwareScr, cmd = m.softwareScr.Update(msg)
 	}
 	return m, cmd
 }
@@ -430,6 +435,11 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		m.clusterScr = m.clusterScr.Resize(m.width, m.height)
 		m.pushScreen(tui.ScreenCluster)
 		return m, m.clusterScr.Init()
+	case keybindings.Software:
+		// F11 — the searchable CVMFS/module screen (spider runs in the background).
+		m.softwareScr = m.softwareScr.Resize(m.width, m.height)
+		m.pushScreen(tui.ScreenSoftware)
+		return m, m.softwareScr.Init()
 	case keybindings.Usage:
 		// F8 — dedicated Stats page.
 		m.statsScr = m.statsScr.
@@ -577,6 +587,8 @@ func (m RootModel) View() tea.View {
 		s = m.statsScr.View()
 	case tui.ScreenCluster:
 		s = m.clusterScr.View()
+	case tui.ScreenSoftware:
+		s = m.softwareScr.View()
 	}
 	// A centered overlay floats on top of whatever screen is active.
 	if m.overlay != nil {
@@ -610,6 +622,8 @@ func (m RootModel) activeInit() tea.Cmd {
 		return m.statsScr.Init()
 	case tui.ScreenCluster:
 		return m.clusterScr.Init()
+	case tui.ScreenSoftware:
+		return m.softwareScr.Init()
 	}
 	return nil
 }

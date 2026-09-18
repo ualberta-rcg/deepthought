@@ -33,6 +33,7 @@ var defaults = map[string]Action{
 	"f1": Help, "f2": Settings, "f3": Model, "f4": Effort,
 	"f5": NewChat, "f6": Resume, "f7": ContextView,
 	"f8": Usage, "f9": QueenMode, "f10": Cluster,
+	"f11": Software,
 	"f12": Diagnostics,
 }
 
