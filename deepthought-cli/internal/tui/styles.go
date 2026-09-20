@@ -56,8 +56,6 @@ var (
 	styleKeyBarKey     = lipgloss.NewStyle().Foreground(colOnAccent).Background(colPrimary).Bold(true)
 	styleEditActive    = lipgloss.NewStyle().Foreground(colSuccess).Bold(true) // the ▶ marker on the field being edited
 	styleEditValue     = lipgloss.NewStyle().Foreground(colPrimary)            // the typed value in an active input
-	styleTab           = lipgloss.NewStyle().Foreground(colDim).Padding(0, 2)
-	styleTabActive     = lipgloss.NewStyle().Foreground(colOnAccent).Background(colPrimary).Bold(true).Padding(0, 2)
 	styleFormBox       = lipgloss.NewStyle().
 				Border(lipgloss.RoundedBorder()).
 				BorderForeground(colSecondary).

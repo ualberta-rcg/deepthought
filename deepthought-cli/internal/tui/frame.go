@@ -194,7 +194,9 @@ func truncatePad(s string, n int) string {
 // in-screen modal (replaces the old picker that painted over a blank canvas).
 // Parent escape sequences before the child survive; cells under the child are
 // dropped (the child carries its own styling).
-func overlayCenter(parent, child string) string {
+// OverlayCenter composites child centered over parent (exported: the root
+// composites pickers over the active screen).
+func OverlayCenter(parent, child string) string {
 	pl := strings.Split(parent, "\n")
 	cl := strings.Split(child, "\n")
 	pw := 0
@@ -270,47 +272,4 @@ func spliceAt(line string, col int, cover string) string {
 		left += strings.Repeat(" ", col-lw)
 	}
 	return left + cover
-}
-
-// TwoPane renders a full-screen frame split into a narrow left nav pane and a
-// wide right detail pane, with a header line on top and the keybar on the
-// bottom (both spanning). Both panes fill the height — no wasted space. This is
-// the lazygit/k9s-style layout used by the settings screen.
-func TwoPane(w, h int, header, left, right, keybar string) string {
-	if w < 30 || h < 8 {
-		return AppScreen(w, h, "", right, keybar)
-	}
-	inner := w - 4 // border(1)+pad(1) each side
-	leftW := 24
-	if leftW > inner/3 {
-		leftW = inner / 3
-	}
-	if leftW < 14 {
-		leftW = 14
-	}
-	rightW := inner - leftW - 1 // -1 for the divider column
-	bodyH := h - 2 - 2          // inside border, minus header row + keybar row
-	if bodyH < 3 {
-		bodyH = 3
-	}
-
-	leftLines := strings.Split(padBlock(left, leftW, bodyH), "\n")
-	rightLines := strings.Split(padBlock(right, rightW, bodyH), "\n")
-	divider := styleSettingsFoot.Render("│")
-	var mid strings.Builder
-	for i := 0; i < bodyH; i++ {
-		if i > 0 {
-			mid.WriteByte('\n')
-		}
-		mid.WriteString(leftLines[i])
-		mid.WriteString(divider)
-		mid.WriteString(rightLines[i])
-	}
-	out := padLines(header, inner) + "\n" + mid.String() + "\n" + padLines(keybar, inner)
-	box := lipgloss.NewStyle().
-		Border(lipgloss.RoundedBorder()).
-		BorderForeground(colPrimary).
-		Padding(0, 1).
-		Width(w) // TOTAL width: content capacity = w-4 = inner (lipgloss v2 Width includes border+pad)
-	return box.Render(out)
 }

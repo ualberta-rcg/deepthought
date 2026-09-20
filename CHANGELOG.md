@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — dead code out, overlays composite for real, last guards
+
+- **Overlays finally float over the active screen:** RootModel.View composites
+  `overlay.View()` through `OverlayCenter` (now exported) — the old version placed the
+  card on an empty canvas, hiding the screen underneath while claiming to float. Added a
+  tiny-parent regression test.
+- **Dead code removed:** the fully orphaned `MenuModel` (+ menu.go; the `--no-splash` help
+  no longer claims a menu screen exists — it starts straight in chat), `TwoPane` (zero
+  callers since the flat Settings redesign), the unused `styleTab`/`styleTabActive` pair,
+  Settings orphans (`tabKey()`, the `modelFieldDefs()` method wrapper, `modelExists`, the
+  empty leftover section header, the `fieldRows`≡`entityRows` duplicate now delegating),
+  Chat orphans (`onOffValue`, `slashEcho`, `SessionUsage`, `SessionStats`) — and the
+  now-unused `styleSlashEcho`.
+- **Guards:** Status `sessionRows` handles a nil store (F12 used to panic on one);
+  the Models/Settings/Cron editors all close on their exit paths.
+- Verified: grep gates — no `MenuModel|TwoPane|styleTabActive|onOffValue|slashEcho`
+  references; `OverlayCenter` has its production caller in app/model.go; full suite green
+  (20 pkgs).
+
 ## 2026-09-20 · deepthought-cli — theme/chrome truth sweep: real commands, real labels, one note style
 
 Everything the UI claims is now true, and the one-off styles are gone.

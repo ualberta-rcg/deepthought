@@ -689,16 +689,6 @@ func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
 // Busy reports whether a model/tool turn is active.
 func (m ChatModel) Busy() bool { return m.busy }
 
-// SessionUsage returns the session's token totals for the Stats screen / status line.
-func (m ChatModel) SessionUsage() (in, out, lastContext int) {
-	return m.sessionIn, m.sessionOut, m.lastContext
-}
-
-// SessionStats returns token + activity counters for the Stats screen.
-func (m ChatModel) SessionStats() (in, out, lastContext, cycles, messages int) {
-	return m.sessionIn, m.sessionOut, m.lastContext, m.sessionCycles, m.sessionMsgs
-}
-
 // QueuedHint returns the front of the input queue (for the activity chip), or "".
 func (m ChatModel) QueuedHint() string {
 	if len(m.queue) == 0 {
@@ -1594,11 +1584,6 @@ func (m *ChatModel) userEcho(text string) {
 	m.sessionMsgs++
 	row := styleUserEcho.Width(m.width).Render(stylePromptPrefix.Render("❯ ") + text)
 	m.appendTurn(row)
-}
-
-// slashEcho renders "❯ /cmd" in dim (used when commands are run from history path).
-func (m ChatModel) slashEcho(cmd string) {
-	m.appendTurn(styleSlashEcho.Render("❯ " + cmd))
 }
 
 // systemLine renders a dim, prefix-less help/system message.

@@ -695,9 +695,11 @@ func (m RootModel) View() tea.View {
 	case tui.ScreenCron:
 		s = m.cronScr.View()
 	}
-	// A centered overlay floats on top of whatever screen is active.
+	// A centered overlay floats on top of whatever screen is active —
+	// composited OVER it (the old version placed the card on an empty canvas,
+	// hiding the screen underneath).
 	if m.overlay != nil {
-		s = m.overlay.View()
+		s = tui.OverlayCenter(s, m.overlay.View())
 	}
 	v := tea.NewView(s)
 	v.AltScreen = true // declarative in v2 — no tea.WithAltScreen()

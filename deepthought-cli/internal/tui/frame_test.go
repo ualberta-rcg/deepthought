@@ -73,7 +73,7 @@ func TestOverlayCenter(t *testing.T) {
 		"dddddddddddddddddddd",
 	}, "\n")
 	child := strings.Join([]string{"XY", "ZW"}, "\n")
-	got := overlayCenter(parent, child)
+	got := OverlayCenter(parent, child)
 	lines := strings.Split(got, "\n")
 	if len(lines) != 4 {
 		t.Fatalf("got %d lines, want 4", len(lines))
@@ -103,11 +103,21 @@ func TestOverlayCenter(t *testing.T) {
 func TestOverlayCenterANSIParent(t *testing.T) {
 	parent := styleError.Render("parent row that is long enough")
 	child := styleToolResult.Render("kid")
-	got := overlayCenter(parent, child)
+	got := OverlayCenter(parent, child)
 	if !strings.Contains(got, "kid") {
 		t.Error("child content lost")
 	}
 	if !strings.Contains(got, "\x1b[") {
 		t.Error("ANSI lost entirely")
+	}
+}
+
+// OverlayCenter: a tiny parent still composites (padding the parent short of
+// the child's column) rather than panicking.
+func TestOverlayCenterTinyParent(t *testing.T) {
+	got := OverlayCenter("ab", "XYZW")
+	lines := strings.Split(got, "\n")
+	if len(lines) != 1 || !strings.Contains(lines[0], "XYZW") {
+		t.Errorf("tiny parent composite = %q", got)
 	}
 }

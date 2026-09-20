@@ -234,8 +234,6 @@ func (m SettingsModel) updateList(key tea.KeyPressMsg) (SettingsModel, tea.Cmd) 
 	return m, nil
 }
 
-func (m SettingsModel) tabKey() string { return settingsTabs[m.tab].label }
-
 // tabKeyOf returns the settingsTabs key of the current tab.
 func (m SettingsModel) tabKeyOf() string { return settingsTabs[m.tab].key }
 
@@ -661,8 +659,6 @@ func (m SettingsModel) deleteEntity() (SettingsModel, tea.Cmd) {
 	return m, nil
 }
 
-// --- model test + list models ----------------------------------------------------
-
 // --- row model -------------------------------------------------------------------
 
 // rowCount is the number of navigable rows in the current view.
@@ -791,25 +787,7 @@ func (m SettingsModel) fieldRows() []string {
 
 // entityRows paints one provider/model's field list with the active editor
 // swapped in.
-func (m SettingsModel) entityRows() []string {
-	defs := m.fieldDefs()
-	rs := make([]string, 0, len(defs))
-	for i, d := range defs {
-		if m.edit != nil && i == m.editIdx {
-			rs = append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
-			continue
-		}
-		val := d.get(&m.dirty)
-		if d.password {
-			val = mask(val)
-		}
-		if d.kind == fMulti {
-			val = strings.Join(d.getMulti(&m.dirty), "+")
-		}
-		rs = append(rs, m.mark(i, settingRow(d.label, val)))
-	}
-	return rs
-}
+func (m SettingsModel) entityRows() []string { return m.fieldRows() }
 
 func (m SettingsModel) permRows() []string {
 	if m.permBucket != "" {
@@ -1469,10 +1447,6 @@ func providerFieldDefs(ref string) []fieldDef {
 	}
 }
 
-func (m SettingsModel) modelFieldDefs() []fieldDef {
-	return modelFieldDefs(m.entityRef, m.providerNames())
-}
-
 // modelFieldDefs builds a model's editable fields keyed by its stable id
 // reference (shared with the Models screen's editor).
 func modelFieldDefs(ref string, provNames []string) []fieldDef {
@@ -1718,15 +1692,6 @@ func (m SettingsModel) providerNames() []string {
 		out[i] = p.Name
 	}
 	return out
-}
-
-func (m SettingsModel) modelExists(id string) bool {
-	for _, mo := range m.dirty.Models {
-		if mo.ID == id {
-			return true
-		}
-	}
-	return false
 }
 
 func capStrings() []string {

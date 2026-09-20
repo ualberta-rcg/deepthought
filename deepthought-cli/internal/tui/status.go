@@ -209,8 +209,13 @@ func (m StatusModel) View() string {
 // --- section renderers ------------------------------------------------------
 
 func (m StatusModel) sessionRows() []string {
-	snap := m.store.Snapshot()
 	label, provider, caps := "—", "", ""
+	if m.store == nil {
+		return Section{Title: "Session", Rows: []string{
+			kv("model", "—"), kv("mode", orDefault(m.status.Mode, "—")),
+		}}.Render()
+	}
+	snap := m.store.Snapshot()
 	if mm, ok := activeModel(snap); ok {
 		label, provider, caps = mm.Label, mm.Provider, capabilitiesLabel(mm)
 		if label == "" {

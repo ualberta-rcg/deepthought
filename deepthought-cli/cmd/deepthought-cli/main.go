@@ -46,7 +46,7 @@ func main() {
 	}
 	subEtha := flag.String("sub-etha", "", "SSH listen address (e.g. :2323). Empty = run on the local TTY.")
 	configPath := flag.String("config", "", "path to settings file (default: ~/.deepthought/config.json; $DEEPTHOUGHT_CLI_HOME overrides the dir)")
-	noSplash := flag.Bool("no-splash", false, "skip the splash screen and start at the menu")
+	noSplash := flag.Bool("no-splash", false, "skip the splash screen and start straight in chat")
 	towel := flag.Bool("towel", false, "start or attach the user-space resident daemon")
 	flag.Parse()
 	if *towel {
