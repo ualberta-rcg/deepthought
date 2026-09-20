@@ -10,7 +10,6 @@ import (
 
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
-	"deepthought-cli/internal/unimatrix"
 )
 
 // fakeStore is an in-memory ConfigStore for editor tests.
@@ -51,13 +50,6 @@ func newTestSettings() SettingsModel {
 func atProvider(m SettingsModel, idx int) SettingsModel {
 	m.tab, m.view = tabIndex("providers"), viewEntity
 	m.entityKind, m.entityRef, m.adding, m.cursor = "provider", m.dirty.Providers[idx].Name, false, 0
-	return m
-}
-
-// atModel puts the editor on the models tab, entity idx's field list.
-func atModel(m SettingsModel, idx int) SettingsModel {
-	m.tab, m.view = tabIndex("models"), viewEntity
-	m.entityKind, m.entityRef, m.adding, m.cursor = "model", m.dirty.Models[idx].ID, false, 0
 	return m
 }
 
@@ -264,36 +256,6 @@ func TestProviderNameRequired(t *testing.T) {
 	m := atProvider(newTestSettings(), 0)
 	if err := setField(m, "name", newTextEdit("name", "  ", false)); err == nil {
 		t.Error("blank name should be rejected")
-	}
-}
-
-// Editing a model's capabilities lands the enums.
-func TestEditModelCapabilities(t *testing.T) {
-	m := atModel(newTestSettings(), 0)
-	e := newMultiEdit("capabilities", capStrings(), []string{"chat", "reasoning"})
-	if err := setField(m, "capabilities", e); err != nil {
-		t.Fatalf("set caps: %v", err)
-	}
-	mo := m.dirty.Models[0]
-	if !mo.Can(unimatrix.CapChat) || !mo.Can(unimatrix.CapReasoning) || mo.Can(unimatrix.CapVision) {
-		t.Errorf("caps = %v, want chat+reasoning", mo.Capabilities)
-	}
-}
-
-// Renaming a model rewires roles that referenced it.
-func TestEditModelIDRewiresRoles(t *testing.T) {
-	m := newTestSettings()
-	old := m.dirty.Models[0].ID
-	m.dirty.Roles = map[string]string{unimatrix.RoleChat: old}
-	m = atModel(m, 0)
-	if err := setField(m, "id", newTextEdit("id", "renamed-122b", false)); err != nil {
-		t.Fatalf("set id: %v", err)
-	}
-	if m.dirty.Models[0].ID != "renamed-122b" {
-		t.Errorf("id = %q", m.dirty.Models[0].ID)
-	}
-	if m.dirty.Roles[unimatrix.RoleChat] != "renamed-122b" {
-		t.Errorf("role not rewired: %q", m.dirty.Roles[unimatrix.RoleChat])
 	}
 }
 

@@ -14,6 +14,7 @@ const (
 	ScreenSplash Screen = iota
 	ScreenChat
 	ScreenSettings
+	ScreenModels
 	ScreenContinue
 	ScreenGrid
 	ScreenStatus

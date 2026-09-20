@@ -1,12 +1,10 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strconv"
 	"strings"
-	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/bubbletea/v2"
@@ -47,7 +45,6 @@ type settingsTab struct {
 var settingsTabs = []settingsTab{
 	{"general", "General"},     // profile + behavior (effort/max-tokens/temperature)
 	{"providers", "Providers"}, // backends
-	{"models", "Models"},       // model catalog (moves to its own screen soon)
 	{"roles", "Roles"},         // role → model assignment
 	{"permissions", "Perms"},
 	{"appearance", "Theme"},
@@ -93,13 +90,6 @@ type SettingsModel struct {
 	permBucket string
 	permAdding bool
 
-	// async: model test, list-models picker
-	testing    string
-	testResult string
-	listed     []string
-	listedProv string
-	listedSel  int
-
 	saved  string // transient toast
 	vp     viewport.Model
 	width  int
@@ -143,16 +133,6 @@ func (m SettingsModel) Init() tea.Cmd { return nil }
 // --- update ------------------------------------------------------------------
 
 func (m SettingsModel) Update(msg tea.Msg) (SettingsModel, tea.Cmd) {
-	switch msg := msg.(type) {
-	case modelTestResultMsg:
-		return m.handleTestResult(msg)
-	case modelsListedMsg:
-		return m.handleModelsListed(msg)
-	}
-	// List-models picker overlay.
-	if len(m.listed) > 0 {
-		return m.updatePicker(msg)
-	}
 	// Non-key messages (cursor-blink ticks) reach an open text editor so the
 	// caret blinks instead of freezing solid.
 	if m.edit != nil && m.edit.kind == fText {
@@ -235,16 +215,8 @@ func (m SettingsModel) updateList(key tea.KeyPressMsg) (SettingsModel, tea.Cmd) 
 	case "enter":
 		return m.activate()
 	case "d":
-		if m.view == viewList && (m.tabKey() == "providers" || m.tabKey() == "models") {
+		if m.view == viewList && m.tabKeyOf() == "providers" {
 			return m.deleteEntity()
-		}
-	case "t":
-		if m.view == viewList && m.tabKey() == "models" {
-			return m.testModel()
-		}
-	case "L":
-		if m.view == viewList && m.tabKey() == "providers" {
-			return m.listModels()
 		}
 	}
 	return m, nil
@@ -265,8 +237,6 @@ func (m SettingsModel) activate() (SettingsModel, tea.Cmd) {
 		return m.openScalarField()
 	case "providers":
 		return m.enterOrAddEntity("provider")
-	case "models":
-		return m.enterOrAddEntity("model")
 	case "roles":
 		return m.cycleRole()
 	case "permissions":
@@ -379,20 +349,13 @@ func (m SettingsModel) permRules() []string {
 // the "+ Add" row it stages a DRAFT entity (in-memory only — the store refuses
 // invalid files, so a half-filled provider could never be saved mid-add).
 func (m SettingsModel) enterOrAddEntity(kind string) (SettingsModel, tea.Cmd) {
+	if kind != "provider" {
+		return m, nil
+	}
 	n := m.entityCount()
 	if m.cursor >= n { // "+ Add"
 		if kind == "provider" {
 			m.dirty.Providers = append(m.dirty.Providers, config.Provider{Name: "", Wire: "openai"})
-			m.entityRef = ""
-		} else {
-			if len(m.dirty.Providers) == 0 {
-				m.saved = "add a provider first"
-				return m, nil
-			}
-			m.dirty.Models = append(m.dirty.Models, unimatrix.Model{
-				Provider:     m.dirty.Providers[0].Name,
-				Capabilities: []unimatrix.Capability{unimatrix.CapChat},
-			})
 			m.entityRef = ""
 		}
 		m.entityKind, m.adding, m.view, m.cursor = kind, true, viewEntity, 0
@@ -408,10 +371,7 @@ func (m SettingsModel) enterOrAddEntity(kind string) (SettingsModel, tea.Cmd) {
 }
 
 func (m SettingsModel) entityCount() int {
-	if m.tabKeyOf() == "providers" {
-		return len(m.dirty.Providers)
-	}
-	return len(m.dirty.Models)
+	return len(m.dirty.Providers)
 }
 
 // finishAdd closes a draft: if the working copy now validates, save it; if
@@ -443,14 +403,6 @@ func (m *SettingsModel) dropDraft() {
 		for i := len(m.dirty.Providers) - 1; i >= 0; i-- {
 			if strings.TrimSpace(m.dirty.Providers[i].Name) == m.entityRef {
 				m.dirty.Providers = append(m.dirty.Providers[:i], m.dirty.Providers[i+1:]...)
-				return
-			}
-		}
-	}
-	if m.entityKind == "model" {
-		for i := len(m.dirty.Models) - 1; i >= 0; i-- {
-			if strings.TrimSpace(m.dirty.Models[i].ID) == m.entityRef {
-				m.dirty.Models = append(m.dirty.Models[:i], m.dirty.Models[i+1:]...)
 				return
 			}
 		}
@@ -686,152 +638,12 @@ func (m SettingsModel) deleteEntity() (SettingsModel, tea.Cmd) {
 			}
 		})
 	}
-	if m.tabKeyOf() == "models" {
-		if m.cursor >= len(m.dirty.Models) {
-			return m, nil
-		}
-		id := m.dirty.Models[m.cursor].ID
-		for role, rid := range m.dirty.Roles {
-			if rid == id {
-				m.saved = fmt.Sprintf("can't delete %q — role %q uses it", id, role)
-				return m, nil
-			}
-		}
-		return m.persistRebase(func(f *config.File) {
-			for i, mo := range f.Models {
-				if mo.ID == id {
-					f.Models = append(f.Models[:i], f.Models[i+1:]...)
-					return
-				}
-			}
-		})
-	}
 	return m, nil
 }
 
 // --- model test + list models ----------------------------------------------------
 
-// testModel fires a tiny chat to verify the selected model works.
-func (m SettingsModel) testModel() (SettingsModel, tea.Cmd) {
-	if m.cursor >= len(m.dirty.Models) {
-		return m, nil
-	}
-	id := m.dirty.Models[m.cursor].ID
-	if m.testing != "" {
-		return m, nil
-	}
-	m.testing = id
-	m.saved = "testing " + id + "…"
-	store := m.store
-	return m, tea.Cmd(func() tea.Msg {
-		client, err := store.ClientFor(id)
-		if err != nil {
-			return modelTestResultMsg{modelID: id, err: err}
-		}
-		start := time.Now()
-		rep, err := client.Chat(context.Background(), babel.ChatRequest{
-			Model: id, Messages: []babel.Message{{Role: "user", Content: "Reply with exactly: OK"}}, MaxTokens: 16,
-		})
-		if err != nil {
-			return modelTestResultMsg{modelID: id, latency: time.Since(start), err: err}
-		}
-		return modelTestResultMsg{modelID: id, ok: true, latency: time.Since(start), text: rep.Text}
-	})
-}
-
-func (m SettingsModel) handleTestResult(r modelTestResultMsg) (SettingsModel, tea.Cmd) {
-	m.testing = ""
-	if r.err != nil {
-		m.testResult = "✗ " + r.err.Error()
-	} else {
-		m.testResult = fmt.Sprintf("✓ %s replied in %s", r.modelID, r.latency.Round(time.Millisecond))
-	}
-	m.saved = m.testResult
-	return m, nil
-}
-
-// listModels fetches /models from the selected provider.
-func (m SettingsModel) listModels() (SettingsModel, tea.Cmd) {
-	if m.cursor >= len(m.dirty.Providers) {
-		return m, nil
-	}
-	name := m.dirty.Providers[m.cursor].Name
-	m.saved = "listing " + name + "…"
-	store := m.store
-	return m, tea.Cmd(func() tea.Msg {
-		client, err := store.ProviderClient(name)
-		if err != nil {
-			return modelsListedMsg{provider: name, err: err}
-		}
-		ids, err := client.ListModels(context.Background())
-		return modelsListedMsg{provider: name, ids: ids, err: err}
-	})
-}
-
-func (m SettingsModel) handleModelsListed(msg modelsListedMsg) (SettingsModel, tea.Cmd) {
-	if msg.err != nil {
-		m.saved = "✗ " + msg.err.Error()
-		m.listed = nil
-		return m, nil
-	}
-	if len(msg.ids) == 0 {
-		m.saved = msg.provider + " listed no models"
-		return m, nil
-	}
-	m.listed = msg.ids
-	m.listedProv = msg.provider
-	m.listedSel = 0
-	m.saved = ""
-	return m, nil
-}
-
-func (m SettingsModel) updatePicker(msg tea.Msg) (SettingsModel, tea.Cmd) {
-	key, ok := msg.(tea.KeyPressMsg)
-	if !ok {
-		return m, nil
-	}
-	n := len(m.listed)
-	switch key.String() {
-	case "esc", "left", "h":
-		m.listed = nil
-	case "up", "k":
-		m.listedSel = (m.listedSel - 1 + n) % n
-	case "down", "j":
-		m.listedSel = (m.listedSel + 1) % n
-	case "enter", "right", "l":
-		return m.addFromList()
-	}
-	return m, nil
-}
-
-// addFromList creates a new model from a discovered ID and drills into it.
-func (m SettingsModel) addFromList() (SettingsModel, tea.Cmd) {
-	id := m.listed[m.listedSel]
-	prov := m.listedProv
-	m.listed = nil
-	return m.persistRebase(func(f *config.File) {
-		f.Models = append(f.Models, unimatrix.Model{
-			ID: id, Label: id, Provider: prov,
-			Capabilities: []unimatrix.Capability{unimatrix.CapChat},
-		})
-		m.entityKind, m.entityRef, m.adding, m.view, m.cursor = "model", id, false, viewEntity, 0
-	})
-}
-
 // --- row model -------------------------------------------------------------------
-
-type modelTestResultMsg struct {
-	modelID string
-	ok      bool
-	latency time.Duration
-	text    string
-	err     error
-}
-type modelsListedMsg struct {
-	provider string
-	ids      []string
-	err      error
-}
 
 // rowCount is the number of navigable rows in the current view.
 func (m SettingsModel) rowCount() int {
@@ -843,8 +655,6 @@ func (m SettingsModel) rowCount() int {
 		return len(m.fieldDefs())
 	case "providers":
 		return len(m.dirty.Providers) + 1 // + Add
-	case "models":
-		return len(m.dirty.Models) + 1
 	case "roles":
 		return len(unimatrix.Roles())
 	case "permissions":
@@ -908,13 +718,6 @@ func (m SettingsModel) rows() []string {
 			rs = append(rs, m.mark(i, fmt.Sprintf("%-16s %-7s %s", p.Name, p.Wire, strings.Join(p.Tags, ", "))))
 		}
 		rs = append(rs, m.mark(len(m.dirty.Providers), "+ Add provider"))
-		return rs
-	case "models":
-		rs := make([]string, 0, len(m.dirty.Models)+1)
-		for i, mo := range m.dirty.Models {
-			rs = append(rs, m.mark(i, fmt.Sprintf("%-18s %-12s %s", mo.ID, mo.Provider, strings.Join(mo.Caps(), "+"))))
-		}
-		rs = append(rs, m.mark(len(m.dirty.Models), "+ Add model"))
 		return rs
 	case "roles":
 		cfg, _ := config.Validate(m.dirty)
@@ -1072,11 +875,7 @@ func (m SettingsModel) View() string {
 		title += strings.Repeat(" ", gap) + styleToast.Render(m.saved)
 	}
 	body := m.tabRow() + "\n" + styleSettingsFoot.Render(settingsRoadmap) + "\n" + m.vp.View()
-	out := AppScreenScroll(m.width, m.height, title, body, m.vp.Height()+2, KeyBar(m.keybar()))
-	if len(m.listed) > 0 {
-		return overlayCenter(out, m.pickerView())
-	}
-	return out
+	return AppScreenScroll(m.width, m.height, title, body, m.vp.Height()+2, KeyBar(m.keybar()))
 }
 
 // keepCursorVisible scrolls the viewport so the cursor row is on screen.
@@ -1093,30 +892,8 @@ func (m *SettingsModel) keepCursorVisible() {
 	}
 }
 
-func (m SettingsModel) pickerView() string {
-	rows := []string{styleSettingsTitle.Render("Models on " + m.listedProv), ""}
-	for i, id := range m.listed {
-		mark := " "
-		if m.modelExists(id) {
-			mark = "✓"
-		}
-		line := mark + " " + id
-		if i == m.listedSel {
-			line = styleMenuSel.Render("▶ " + line)
-		} else {
-			line = styleMenuUnsel.Render("  " + line)
-		}
-		rows = append(rows, line)
-	}
-	rows = append(rows, "")
-	return styleFormBox.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
-}
-
 // keybar returns the per-state keybinding hints.
 func (m SettingsModel) keybar() []KeyHint {
-	if len(m.listed) > 0 {
-		return []KeyHint{{"↑↓", "select"}, {"enter", "add"}, {"esc", "cancel"}}
-	}
 	if m.edit != nil {
 		if m.edit.kind == fMulti {
 			return []KeyHint{{"↑↓", "move"}, {"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}}
@@ -1129,9 +906,7 @@ func (m SettingsModel) keybar() []KeyHint {
 	hints := []KeyHint{{"↑↓", "move"}, {"enter", "open"}, {"←/→", "tab"}}
 	switch m.tabKeyOf() {
 	case "providers":
-		hints = append(hints, KeyHint{"d", "delete"}, KeyHint{"L", "list"})
-	case "models":
-		hints = append(hints, KeyHint{"d", "delete"}, KeyHint{"t", "test"})
+		hints = append(hints, KeyHint{"d", "delete"})
 	}
 	return append(hints, KeyHint{"esc", "back"})
 }
@@ -1156,10 +931,8 @@ type fieldDef struct {
 // General/Appearance tab's flat list, or the open entity's fields.
 func (m SettingsModel) fieldDefs() []fieldDef {
 	switch {
-	case m.view == viewEntity && m.entityKind == "provider":
-		return m.providerFieldDefs()
 	case m.view == viewEntity:
-		return m.modelFieldDefs()
+		return m.providerFieldDefs()
 	case m.tabKeyOf() == "appearance":
 		return m.appearanceFieldDefs()
 	default: // general
@@ -1245,7 +1018,12 @@ func (m SettingsModel) generalFieldDefs() []fieldDef {
 }
 
 func (m SettingsModel) providerFieldDefs() []fieldDef {
-	ref := m.entityRef
+	return providerFieldDefs(m.entityRef)
+}
+
+// providerFieldDefs builds a provider's editable fields keyed by its stable
+// name reference (shared with the Models screen's editor).
+func providerFieldDefs(ref string) []fieldDef {
 	find := func(f *config.File) int { return providerIndex(f, ref) }
 	return []fieldDef{
 		{"name", fText, false, nil,
@@ -1346,9 +1124,13 @@ func (m SettingsModel) providerFieldDefs() []fieldDef {
 }
 
 func (m SettingsModel) modelFieldDefs() []fieldDef {
-	ref := m.entityRef
+	return modelFieldDefs(m.entityRef, m.providerNames())
+}
+
+// modelFieldDefs builds a model's editable fields keyed by its stable id
+// reference (shared with the Models screen's editor).
+func modelFieldDefs(ref string, provNames []string) []fieldDef {
 	find := func(f *config.File) int { return modelIndex(f, ref) }
-	provNames := m.providerNames()
 	caps := capStrings()
 	return []fieldDef{
 		{"id", fText, false, nil,

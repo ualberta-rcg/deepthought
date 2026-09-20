@@ -18,6 +18,29 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — the F11 Models screen (the catalog gets its own home)
+
+Models move out of Settings into a dedicated screen — the home for everything the project
+plans to do with models. F11 now opens it (the legend/F1 help already said "models").
+- **`internal/tui/models.go` (new):** the catalog list (`id · provider · caps` + dim
+  `[chat][agentic]` role badges) with `enter` edit · `L` add-from-provider (provider pick →
+  discovered-ids list, ✓ marks existing, no duplicates) · `t` test (latency ping) · `r`
+  role toggle (assign/unassign per role) · `d` delete (role-in-use guard) · esc back. All
+  writes re-base on a fresh snapshot like Settings (freshSave); the editor kit and
+  modelFieldDefs are shared with Settings (providerFieldDefs/modelFieldDefs are now free
+  functions keyed by the entity's stable reference).
+- **Settings slimmed to 6 tabs** (General · Providers · Roles · Perms · Theme · System):
+  the Models tab, its test/list/picker machinery, and the dead `L` action are gone. Also
+  fixed a latent case bug: the d/t/L action guards compared against tab LABELS
+  (`"providers"` ≠ `"Providers"`), so the keys never fired.
+- Root: `ScreenModels` wired (field/init/resize/update/view/activeInit/action via
+  pushScreenOnce) + included in the key-capture guard.
+- Files: models.go + models_test.go (new), settings.go (trimmed, defs extracted),
+  settings_test.go (model tests moved), nav.go, app/model.go.
+- Verified: TestModelsListRenders (80-col fit), EditRoundTrip (fresh-snapshot store
+  round-trip), RoleToggle (both directions), DeleteGuard, AddFromList (+ no-duplicate),
+  carried caps/id-rewrite field tests, SettingsHasNoModelsTab; full build/vet/test green.
+
 ## 2026-09-20 · deepthought-cli — Settings redesigned: flat tabs, all seven bugs fixed
 
 The cramped two-pane 4-level drill-down is replaced by a full-width **tabbed editor**

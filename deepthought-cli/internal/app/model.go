@@ -81,6 +81,7 @@ type RootModel struct {
 	settings    tui.SettingsModel
 	grid        tui.GridModel
 	statusScr   tui.StatusModel
+	modelsScr   tui.ModelsModel
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -265,6 +266,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.continue_ = m.continue_.Resize(msg.Width, msg.Height)
 		m.settings = m.settings.Resize(msg.Width, msg.Height)
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
+		m.modelsScr = m.modelsScr.Resize(msg.Width, msg.Height)
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).
 			SetHealth(m.healthOK, m.healthMsg).
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext, m.sessionCycles, m.sessionMsgs)
@@ -397,6 +399,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.grid, cmd = m.grid.Update(msg)
 	case tui.ScreenStatus:
 		m.statusScr, cmd = m.statusScr.Update(msg)
+	case tui.ScreenModels:
+		m.modelsScr, cmd = m.modelsScr.Update(msg)
 	}
 	return m, cmd
 }
@@ -410,6 +414,11 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 	case keybindings.Model:
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
+	case keybindings.Models:
+		// F11 — the Models screen (the catalog's own home).
+		m.modelsScr = m.modelsScr.Resize(m.width, m.height)
+		m.pushScreenOnce(tui.ScreenModels)
+		return m, m.modelsScr.Init()
 	case keybindings.Diagnostics:
 		// F12 — the unified Status page (app/system).
 		m.statusScr = m.statusScr.SetHealth(m.healthOK, m.healthMsg).SetClock(m.clock)
@@ -485,7 +494,8 @@ func (m *RootModel) pushScreenOnce(to tui.Screen) {
 // keystrokes (an inline text editor), in which case global keybindings must
 // not fire — a user-rebound letter would be swallowed mid-typing.
 func (m RootModel) screenCapturesKeys() bool {
-	return m.screen == tui.ScreenSettings && m.settings.CapturingKeys()
+	return (m.screen == tui.ScreenSettings && m.settings.CapturingKeys()) ||
+		(m.screen == tui.ScreenModels && m.modelsScr.CapturingKeys())
 }
 
 // pushOverlay suspends the current overlay (if any) onto the stack and makes o
@@ -566,6 +576,8 @@ func (m RootModel) View() tea.View {
 		s = m.grid.View()
 	case tui.ScreenStatus:
 		s = m.statusScr.View()
+	case tui.ScreenModels:
+		s = m.modelsScr.View()
 	}
 	// A centered overlay floats on top of whatever screen is active.
 	if m.overlay != nil {
@@ -597,6 +609,8 @@ func (m RootModel) activeInit() tea.Cmd {
 		return m.grid.Init()
 	case tui.ScreenStatus:
 		return m.statusScr.Init()
+	case tui.ScreenModels:
+		return m.modelsScr.Init()
 	}
 	return nil
 }
