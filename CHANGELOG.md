@@ -18,6 +18,23 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — the host descriptor rendered: Status "Host", richer env brief
+
+"Login node" was the wrong name and the wrong data (it showed the binary's build target as
+the OS). The Status page now renders the full **Host** descriptor: short name · FQDN · OS
+pretty name · kernel · arch · cpus · memory · user · shell · tz + detection chips — this box
+may not be a login node at all; it's just the host.
+- The **env brief** leads with the host line (short name + arch/cpus/mem) and OS+kernel,
+  and gains the first **negative capability**: a configured outbound proxy renders as
+  "outbound network via proxy … — direct connections fail" (a line that prevents three
+  failed pip/curl attempts pays for itself). Still hard-capped at 6 lines.
+- Probe parsers split into pure test seams (`osPrettyNameOf`/`memTotalGBOf`).
+- Files: internal/tui/{status.go,chat.go,sidebar_test.go,status_test.go},
+  internal/app/{model.go,model_test.go}.
+- Verified: TestHostProbeParsers (parsers + live gatherEnv on this host), TestEnvBriefHostFacts
+  (host line, OS/kernel, proxy negative), TestStatusAdaptiveSections updated for "Host";
+  full suite green (20 pkgs).
+
 ## 2026-09-20 · deepthought-cli — sidebar actually works: clipping fixed, live data, host descriptor probes
 
 The sidebar never appeared because every chat (re)build except WindowSizeMsg sized the chat

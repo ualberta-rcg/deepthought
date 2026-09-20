@@ -24,7 +24,7 @@ func statusPage(t *testing.T, env EnvInfo, snap *slurm.ClusterSnapshot) string {
 func TestStatusAdaptiveSections(t *testing.T) {
 	// 1) No Slurm: only the always-on sections; no cluster / dirs sections.
 	no := statusPage(t, EnvInfo{Host: "login1", User: "rahimk"}, nil)
-	for _, want := range []string{"Session", "Login node"} {
+	for _, want := range []string{"Session", "Host"} {
 		if !strings.Contains(no, want) {
 			t.Errorf("no-slurm page missing %q:\n%s", want, no)
 		}
@@ -38,7 +38,7 @@ func TestStatusAdaptiveSections(t *testing.T) {
 	// 2) Slurm detected + full snapshot: every section present.
 	snap := testSnapshot()
 	full := statusPage(t, EnvInfo{Slurm: true, Host: "login1", User: "rahimk"}, &snap)
-	for _, want := range []string{"Session", "Login node", "Cluster", "Your jobs", "Fairshare", "Your dirs"} {
+	for _, want := range []string{"Session", "Host", "Cluster", "Your jobs", "Fairshare", "Your dirs"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("slurm page missing %q:\n%s", want, full)
 		}

@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
@@ -820,8 +821,13 @@ func (m ChatModel) SetEnv(e EnvInfo) ChatModel {
 func (m ChatModel) envBrief() string {
 	var facts []string
 	e := m.env
-	if e.Host != "" {
-		facts = append(facts, "host "+e.Host)
+	if e.ShortName != "" || e.Host != "" {
+		facts = append(facts, "host "+orDefault(e.ShortName, e.Host)+hostSuffix(e))
+	}
+	if e.OSName != "" && e.Kernel != "" {
+		facts = append(facts, e.OSName+", kernel "+e.Kernel)
+	} else if e.OSName != "" {
+		facts = append(facts, e.OSName)
 	}
 	if e.Slurm && m.cluster.GPUType != "" {
 		facts = append(facts, "slurm cluster, GPUs "+m.cluster.GPUType)
@@ -837,6 +843,11 @@ func (m ChatModel) envBrief() string {
 	for _, r := range m.cluster.StorageRows {
 		facts = append(facts, fmt.Sprintf("%s %s/%s", r.Label, r.Used, r.Size))
 	}
+	// Negative capability: forbidden/constrained things are worth more than
+	// positive ones (they prevent failed attempts).
+	if p := proxyEnv(); p != "" {
+		facts = append(facts, "outbound network via proxy "+p+" — direct connections fail")
+	}
 	if len(facts) == 0 {
 		return ""
 	}
@@ -849,6 +860,32 @@ func (m ChatModel) envBrief() string {
 
 // envBriefMax caps the environment brief's size in the system prompt.
 const envBriefMax = 6
+
+// hostSuffix renders the arch/cpu/mem suffix for the host line ("" when
+// unprobed).
+func hostSuffix(e EnvInfo) string {
+	if e.Arch == "" && e.CPUs == 0 {
+		return ""
+	}
+	spec := e.Arch
+	if e.CPUs > 0 {
+		spec += fmt.Sprintf(", %d cpus", e.CPUs)
+	}
+	if e.MemGB > 0 {
+		spec += fmt.Sprintf(", %d GB", e.MemGB)
+	}
+	return " (" + spec + ")"
+}
+
+// proxyEnv reports the configured outbound proxy, if any.
+func proxyEnv() string {
+	for _, k := range []string{"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"} {
+		if v := os.Getenv(k); v != "" {
+			return v
+		}
+	}
+	return ""
+}
 
 // clusterBlurb is a compact, clearly-labelled snapshot of cluster state so the
 // model can reason about scheduling ("is the cluster busy?") without running

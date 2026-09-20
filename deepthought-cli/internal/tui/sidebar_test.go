@@ -59,3 +59,23 @@ func TestEnvBrief(t *testing.T) {
 		t.Errorf("undetected env should be empty, got %q", empty)
 	}
 }
+
+// The env brief now leads with the host line (short name + arch/cpus/mem) and
+// OS/kernel; a configured proxy renders as a negative capability.
+func TestEnvBriefHostFacts(t *testing.T) {
+	m := ChatModel{env: EnvInfo{
+		ShortName: "vulcan-login1", LongName: "vulcan-login1.example.ca",
+		OSName: "Ubuntu 22.04.4 LTS", Kernel: "5.15.0-107-generic",
+		Arch: "amd64", CPUs: 64, MemGB: 251,
+	}}
+	b := m.envBrief()
+	for _, want := range []string{"vulcan-login1", "amd64, 64 cpus", "Ubuntu 22.04.4 LTS", "kernel 5.15.0-107-generic"} {
+		if !strings.Contains(b, want) {
+			t.Errorf("envBrief missing %q:\n%s", want, b)
+		}
+	}
+	t.Setenv("https_proxy", "proxy.example.ca:8080")
+	if b := m.envBrief(); !strings.Contains(b, "proxy.example.ca:8080") || !strings.Contains(b, "direct connections fail") {
+		t.Errorf("proxy negative capability missing:\n%s", b)
+	}
+}

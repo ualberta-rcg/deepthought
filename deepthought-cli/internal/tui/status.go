@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -170,7 +169,7 @@ func slurmUp(m StatusModel) bool { return m.env.Slurm && m.gathered }
 func statusSections() []statusSection {
 	return []statusSection{
 		{always, StatusModel.sessionRows},
-		{always, StatusModel.nodeRows},
+		{always, StatusModel.hostRows},
 		{always, StatusModel.providersRows},
 		{always, StatusModel.modelsRows},
 		{always, StatusModel.usageRows},
@@ -234,21 +233,38 @@ func (m StatusModel) sessionRows() []string {
 	}.Render()
 }
 
-// nodeRows: the login node you're connected to, plus what it detected.
-func (m StatusModel) nodeRows() []string {
+// hostRows: the machine you're on — the host descriptor rendered (this box
+// may not be a login node; it's just the host).
+func (m StatusModel) hostRows() []string {
 	e := m.env
-	return Section{
-		Title: "Login node",
-		Rows: []string{
-			kv("host", orDefault(e.Host, "?")),
-			kv("user", orDefault(e.User, "?")),
-			kv("shell", orDefault(e.Shell, "?")),
-			kv("os", runtime.GOOS+"/"+runtime.GOARCH),
-			kv("tz", orDefault(e.TZ, "?")),
-			styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",
-				detChip(e.CVMFS), detChip(e.Module), detChip(e.Slurm))),
-		},
-	}.Render()
+	rows := []string{
+		kv("host", orDefault(e.ShortName, orDefault(e.Host, "?"))),
+	}
+	if e.LongName != "" && e.LongName != e.ShortName {
+		rows = append(rows, kv("fqdn", e.LongName))
+	}
+	if e.OSName != "" {
+		rows = append(rows, kv("os", e.OSName))
+	}
+	if e.Kernel != "" {
+		rows = append(rows, kv("kernel", e.Kernel))
+	}
+	rows = append(rows, kv("arch", orDefault(e.Arch, "?")))
+	if e.CPUs > 0 {
+		spec := fmt.Sprintf("%d", e.CPUs)
+		if e.MemGB > 0 {
+			spec += fmt.Sprintf(" · %d GB", e.MemGB)
+		}
+		rows = append(rows, kv("cpus", spec))
+	}
+	rows = append(rows,
+		kv("user", orDefault(e.User, "?")),
+		kv("shell", orDefault(e.Shell, "?")),
+		kv("tz", orDefault(e.TZ, "?")),
+		styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",
+			detChip(e.CVMFS), detChip(e.Module), detChip(e.Slurm))),
+	)
+	return Section{Title: "Host", Rows: rows}.Render()
 }
 
 func (m StatusModel) providersRows() []string {

@@ -209,8 +209,11 @@ func readSmallFile(path string) string {
 }
 
 // osPrettyName pulls PRETTY_NAME from /etc/os-release.
-func osPrettyName() string {
-	for _, line := range strings.Split(readSmallFile("/etc/os-release"), "\n") {
+func osPrettyName() string { return osPrettyNameOf(readSmallFile("/etc/os-release")) }
+
+// osPrettyNameOf is the pure parser (test seam).
+func osPrettyNameOf(content string) string {
+	for _, line := range strings.Split(content, "\n") {
 		if v, ok := strings.CutPrefix(line, "PRETTY_NAME="); ok {
 			return strings.Trim(strings.TrimSpace(v), `"`)
 		}
@@ -219,8 +222,11 @@ func osPrettyName() string {
 }
 
 // memTotalGB reads MemTotal from /proc/meminfo (rounded down to GB).
-func memTotalGB() int {
-	for _, line := range strings.Split(readSmallFile("/proc/meminfo"), "\n") {
+func memTotalGB() int { return memTotalGBOf(readSmallFile("/proc/meminfo")) }
+
+// memTotalGBOf is the pure parser (test seam).
+func memTotalGBOf(content string) int {
+	for _, line := range strings.Split(content, "\n") {
 		if v, ok := strings.CutPrefix(line, "MemTotal:"); ok {
 			var kb int
 			if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d kB", &kb); err == nil && kb > 0 {
