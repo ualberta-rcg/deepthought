@@ -18,6 +18,24 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — add the research-copilot roadmap (docs/ROADMAP.md)
+
+Captures the HPC research-assistant capability roadmap as durable project direction. It is a
+**vision, not yet built** — much of it is future work pending a server side that does not exist
+yet. No capability is implemented by this change; it only records direction.
+- **New `docs/ROADMAP.md`:** 22 capability areas (know the cluster, remember the project, plan
+  the work, check before the queue, environments, size with measurements, explain scheduling, job
+  lifecycle, survive disconnects, sweeps/workflows, diagnose with evidence, recover
+  intelligently, scientific progress, data management, provenance, validate the result, compare &
+  analyze, interactive→batch, scientific models as tools, reusable lab knowledge, autonomy &
+  spend control, iterative research); the 5-step priority build sequence; the "durable storage +
+  model as interpreter" architecture principle; which v1 foundations it leans on; client-side
+  near-term candidates; what is blocked on the server side; and pilot success metrics.
+- `CLAUDE.md`: links the roadmap under "Where to look"; updates the effort-picker description to
+  the neutral Off→Max labels; fixes the stale F-key line (F8/F10 were freed into F12 Status).
+- Files: `docs/ROADMAP.md` (new), `CLAUDE.md`.
+- Verified: doc renders; the CLAUDE.md cross-reference resolves.
+
 ## 2026-09-20 · deepthought-cli — use neutral thinking-level labels
 
 The effort (thinking-level) labels were HHGTTG-flavored (Autopilot → Common Sense → Pondering →

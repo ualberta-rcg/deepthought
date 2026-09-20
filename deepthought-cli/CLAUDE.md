@@ -57,15 +57,15 @@ running tools, and executing shell commands under a permission gate.
   with a pinned bottom **keybar**; **Settings** is a **two-pane drill-down**
   (lazygit/k9s-style: left = read-only section/entity tree; right = actionable list →
   inline field editor). **Overlay pickers** (`internal/tui/overlay.go`) float centered
-  over the active screen and nest: the **Effort** picker (`/effort`, F4 — HHGTTG labels
-  Autopilot→Infinite Improbability) and the **Model chooser** (F3 — switch the *running*
+  over the active screen and nest: the **Effort** picker (`/effort`, F4 — Off→Max labels)
+  and the **Model chooser** (F3 — switch the *running*
   model; press `e` to branch into Effort, which returns to the chooser). Splash shows the
   **DeepThought** mark + drifting rainbow, **"Don't Panic."**, a rotating HHGTTG subtitle,
   and a model·provider status line. F-keys: `F2` settings · `F3` model chooser · `F4`
-  effort · `F5` new chat · `F6` resume · `F7` context grid · `F8` stats · `F9` permission
-  mode · `F10` cluster · `F11` software · `F12` status. **Effort is the sole reasoning
+  effort · `F5` new chat · `F6` resume · `F7` context grid · `F9` permission
+  mode · `F11` software · `F12` status. **Effort is the sole reasoning
   control** (F4 /
-  `/effort`): off (Autopilot) = no thinking; any other level = thinking on at that
+  `/effort`): off = no thinking; any other level = thinking on at that
   level. Top bar (dark-grey band): rainbow `DeepThought · model [F3] · mode · effort [F4]`
   + responsive clock. Chat chrome: activity line above input + bottom status-line band.
 
@@ -180,6 +180,8 @@ alternative if the node ever feels it.
 
 ## Where to look
 
+- [`docs/ROADMAP.md`](docs/ROADMAP.md) — the research-copilot capability roadmap (vision; much
+  is future work pending the server side).
 - Repo root [`CLAUDE.md`](../CLAUDE.md) — repo-wide rules: two-product layout,
   build/run pointers, and the changelog-before-commit rule.
 - Repo root [`CHANGELOG.md`](../CHANGELOG.md) — running change record.
