@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — internal/cron: parse, safely rewrite, and track the user's crontab
+
+The foundation for cron management (F8 screen next) and the server's later fleet view.
+- **cron.go:** `Parse` (blank/comment/env/entry kinds, `@shortcuts`, stable 12-hex sha256
+  Hash per line, round-trips verbatim), `Diff` (by hash, position-independent), `Humanize`
+  ("every 5 min", "daily 09:00", "weekdays 09:00", "weekends 11:00", "@reboot" → "every
+  reboot"; raw fallback for rare shapes — honesty over cleverness).
+- **crontab.go:** `Client` with a `Runner` exec seam — `List` ("no crontab for" = empty,
+  not an error), `Install` (backs up the current table to Dir/backups first — newest 10
+  kept, 0600 — then pipes the new table to `crontab -` on stdin; no temp files, no shell
+  interpolation), `Undo` (restore newest backup; undo is itself undoable).
+- **registry.go:** `registry.json` in the cron dir (atomic, 0600) — `EntryRecord{Hash,
+  Schedule, Command, FirstSeen, LastSeen, Note}`, host-scoped + versioned for the future
+  multi-cluster aggregation; `Observe` folds parses in (removed entries kept for history),
+  `DiffSinceLast` reports added/removed since the last visit.
+- Files: internal/cron/{cron,crontab,exec,registry}.go + cron_test.go.
+- Verified: parse kinds/round-trip, humanize table, hash diff, registry observe+diff
+  round-trip, fake-Runner List/Install/Undo, backup rotation — all pass; build/vet green.
+
 ## 2026-09-20 · deepthought-cli — one streaming indicator: the bottom strip only
 
 The animated lowercase verb ("thinking"…"pondering") rendered in TWO places during a turn —
