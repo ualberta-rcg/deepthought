@@ -18,6 +18,16 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — one streaming indicator: the bottom strip only
+
+The animated lowercase verb ("thinking"…"pondering") rendered in TWO places during a turn —
+the bottom activity strip and a duplicate row inside the transcript under the streaming
+text. The in-transcript pending row is now a deliberate blank placeholder; the animated
+verb lives only in the bottom strip (the one with the animation worth keeping). Streamed
+text and the dim ∴ thinking block render unchanged.
+- Files: chat.go (pendingView).
+- Verified: full build/vet/test green; the activity strip still renders the spinner verb.
+
 ## 2026-09-20 · deepthought-cli — unification sweep: one title, one keybar, one empty vocabulary
 
 Every screen now speaks the same chrome language.

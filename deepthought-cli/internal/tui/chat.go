@@ -1143,15 +1143,11 @@ func onOffValue(on bool) string {
 	return "off"
 }
 
-// pendingView renders the animated "thinking…" row held at m.pendIdx (cold-start
-// wait, before the first delta). The glyph cycles through the logo-band colors.
-func (m ChatModel) pendingView() string {
-	verb := m.activityVerb
-	if verb == "" {
-		verb = "thinking"
-	}
-	return spinnerGlyph(m.spinFrame) + " " + styleSystem.Render(strings.ToLower(verb)+"…")
-}
+// pendingView renders the placeholder row held at m.pendIdx (cold-start wait,
+// before the first delta). Deliberately BLANK: the animated verb lives only in
+// the bottom activity strip — a second copy under the streaming text was
+// noise (the once-over removed it).
+func (m ChatModel) pendingView() string { return "" }
 
 // activityView renders the 1-row strip above the input.
 func (m ChatModel) activityView() string {
