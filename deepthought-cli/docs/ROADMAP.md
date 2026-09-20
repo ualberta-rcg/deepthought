@@ -12,7 +12,8 @@ within an explicit objective.
 > side** — groundwork has now started: a skeleton HTTP server + live reload + this document's
 > architecture live at `cmd/deepthought-server` (see [SERVER.md](SERVER.md)), destined for
 > `deepthought.vulcan.alliancecan.ca` as a container on the Vulcan Kubernetes cluster.
-> Individual capabilities are pulled forward one at a time, not as a batch.
+> Individual capabilities are pulled forward one at a time, not as a batch. The
+> architecture behind them: [DESIGN.md](DESIGN.md).
 >
 > **MCP note:** Claude Code already supports external tools through MCP and automation
 > through hooks — some of these capabilities could also be exposed to researchers using it.

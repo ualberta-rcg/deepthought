@@ -18,6 +18,26 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — docs/DESIGN.md (the design quarry) + the client-independence invariant
+
+- **New `docs/DESIGN.md`:** curated capture of the architecture direction — the unification
+  (one descriptor, many renderers; "detectors emit structured facts, never prose"), the
+  environment descriptor shape, capability lines + **negative capabilities**, probe
+  discipline, the assembled prompt stack (deterministic `prompt_hash`, per-class token
+  budgets, degraded-mode-is-a-prompt-line), execution contexts / the hop problem + agent
+  bootstrap, skills with requirement matching (unsatisfiable-with-reason), the taxonomy,
+  plans-as-graphs + content-addressed steps + **blessing** + error classes, the step-kind
+  executor pattern + server-side triggers (coexisting with the F8 crontab tool), the
+  server-vs-agent ownership table, phasing A–F (Phase A = the host descriptor, started),
+  and the open questions. Linked from ROADMAP.md + CLAUDE.md.
+- **Client independence is now a stated invariant:** "the CLI is the product; the server
+  is additive — no client code path dials, waits on, or requires it" in CLAUDE.md and
+  SERVER.md. Verified by grep: nothing under internal/ or cmd/deepthought-cli references
+  the server.
+- Files: docs/DESIGN.md (new), docs/ROADMAP.md, docs/SERVER.md, CLAUDE.md.
+- Verified: docs render + cross-references resolve; the independence grep is clean; full
+  suite green.
+
 ## 2026-09-20 · deepthought-cli — dead code out, overlays composite for real, last guards
 
 - **Overlays finally float over the active screen:** RootModel.View composites

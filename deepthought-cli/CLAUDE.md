@@ -71,28 +71,22 @@ running tools, and executing shell commands under a permission gate.
   /`embedding` + tags; "agentic" is derived = chat+tools), and `roles`
   (`chat`/`agentic`/`planning`/`summary`/`tombstone` → model ID; unset roles fall back
   to `chat`). Old single-`provider` v1 files migrate transparently on load and rewrite
-  as v2 on the next save. The settings **editor** is a **two-pane drill-down**
-  (`internal/tui/settings.go`): the left pane is a read-only section/entity tree; the
-  right pane is the actionable list → entity → **inline field edit**
-  (`internal/tui/settings_form.go`, a textinput for text fields + cyclers for enum/multi
-  — no modal forms; the active field renders with a distinct green ▶ so the typed value
-  is visible, not buried in the selected-row color). Every field commit **auto-saves**
-  to disk immediately (atomic, mode 0600) and hot-swaps the running config with no
-  restart via `app.Settings` (`Snapshot`/`Save`/`RoleClient`/`ClientFor`/
-  `ProviderClient`). Mixed providers each get a pooled `babel.Client`
-  (`unimatrix.Pool`). The editor also **tests a model** (`t` on the Models list — pings
-  it and reports latency) and **lists models from a provider** (`L` on the Providers
-  list — `GET {base}/models`, pick IDs to add; tolerant of providers that don't
-  implement the endpoint). List rows are compact (`id · provider · caps`;
-  `name · wire · tags`) — full URLs/detail live in the field editor.
+  as v2 on the next save. The settings **editor** is the flat **tabbed** layout above
+  (Overview · General · Providers · Roles · Routing · Perms · Theme · System):
+  every field commit **re-bases on a FRESH config snapshot** before validate+save
+  (concurrent edits — mode/effort switches — never clobber), "+ Add" stages in-memory
+  drafts until valid, providers expose their advanced knobs (timeout/breaker/budget/
+  clearance), Routing edits the declarative routes, and System renders the host
+  descriptor. Inline fields (`internal/tui/settings_form.go`): textinput + enum/multi
+  cyclers; the active field renders with a green ▶. Every commit **auto-saves**
+  (atomic, 0600) and hot-swaps via `app.Settings` (`Snapshot`/`Save`/`RoleClient`/
+  `ClientFor`/`ProviderClient`). Mixed providers each get a pooled `babel.Client`
+  (`unimatrix.Pool`). The **Models** screen (F11) tests a model (`t`) and adds from
+  provider discovery (`L` → `GET {base}/models`, pick IDs; tolerant of providers
+  without the endpoint).
 
-  **Section roadmap** (the left tree; live vs placeholder — mapped from the Claude Code
-  reference, `reference/src/utils/settings/types.ts` ~80 keys): live now = **Overview,
-  Providers, Models, Roles, Permissions** (operation modes safe/safe-auto/auto + rule
-  counts), **Appearance** (status-line toggle). Placeholders (select → "coming soon") =
-  **Behavior** (thinking ✓, temperature, max-tokens), **Shell & Env** (default shell,
-  extra env), **Memory, Skills, Tools, Clusters** (SSH/Slurm profiles), **Privacy**
-  (telemetry opt-out). Future bigger systems: Hooks, MCP, Plugins, Keybindings.
+  **Still placeholders** (the dim roadmap line in Settings): shell & env, memory,
+  skills, tools, privacy. Future bigger systems: Hooks, MCP, Plugins.
 
  The chat round-trip is **live and streaming with thinking** over OpenAI or
  Anthropic wire formats: non-slash input goes to
@@ -179,12 +173,22 @@ alternative if the node ever feels it.
   is future work pending the server side).
 - [`docs/SERVER.md`](docs/SERVER.md) — the server-side architecture + the live skeleton
   (`cmd/deepthought-server`; destined for deepthought.vulcan.alliancecan.ca).
+- [`docs/DESIGN.md`](docs/DESIGN.md) — the design quarry: environment descriptor,
+  prompt assembly, plans/attempts/blessing, triggers (Phase A = the host descriptor).
+  (`cmd/deepthought-server`; destined for deepthought.vulcan.alliancecan.ca).
 - Repo root [`CLAUDE.md`](../CLAUDE.md) — repo-wide rules: two-product layout,
   build/run pointers, and the changelog-before-commit rule.
 - Repo root [`CHANGELOG.md`](../CHANGELOG.md) — running change record.
 - Repo root [`docs/`](../docs/) — cross-cutting docs; app-specific docs belong in
   this directory (the old tree's `docs/` was intentionally not carried into the
   repo — add new docs here as they earn their keep).
+
+## The client runs standalone
+
+The CLI is the product; the server (docs/SERVER.md) is **additive**. No client code path
+dials, waits on, or requires the server — nothing under `internal/` or `cmd/deepthought-cli`
+imports or configures it. The server ships in the same module purely for the build, and
+every roadmap capability lands client-side first where feasible.
 
 ## North stars
 

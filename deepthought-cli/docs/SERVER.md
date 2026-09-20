@@ -6,6 +6,12 @@ detachable execution plane that persists state across client disconnects and res
 endpoint, live reload) plus this document — the execution plane grows in behind the same
 door with no client breakage.
 
+## The client runs standalone
+
+The CLI is the product; this server is additive. Nothing in the client dials or waits on
+it — the client's full functionality (chat loop, tools, skills, cron, status) runs
+client-side, and stays that way: capabilities land client-side first where feasible.
+
 ## Where it lives today
 
 `deepthought-cli/cmd/deepthought-server` + `deepthought-cli/internal/server`. Go
