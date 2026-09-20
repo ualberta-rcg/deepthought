@@ -187,7 +187,7 @@ func (m StatusModel) View() string {
 	m.vp.SetContent(body)
 	keybar := KeyBar([]KeyHint{
 		{Key: "↑/↓", Label: "scroll"},
-		{Key: "PgUp/PgDn", Label: ""},
+		{Key: "PgUp/PgDn", Label: "page"},
 		{Key: "r", Label: "refresh"},
 		{Key: "esc", Label: "back"},
 	})
@@ -252,7 +252,7 @@ func (m StatusModel) providersRows() []string {
 		}
 	}
 	if len(body) == 0 {
-		body = []string{styleSettingsFoot.Render("  (no providers configured)")}
+		body = []string{emptyRow("providers")}
 	}
 	return Section{Title: "Providers", Rows: body}.Render()
 }
@@ -274,7 +274,7 @@ func (m StatusModel) modelsRows() []string {
 		}
 	}
 	if len(body) == 0 {
-		body = []string{styleSettingsFoot.Render("  (none configured)")}
+		body = []string{emptyRow("models")}
 	}
 	return Section{Title: "Models", Rows: body}.Render()
 }
@@ -308,7 +308,7 @@ func (m StatusModel) usageRows() []string {
 func (m StatusModel) toolsRows() []string {
 	body := []string{"  " + styleSettingsVal.Render(strings.Join(m.tools, " · "))}
 	if len(m.tools) == 0 {
-		body = []string{styleSettingsFoot.Render("  (none)")}
+		body = []string{emptyRow("tools")}
 	}
 	return Section{Title: "Tools", Rows: body}.Render()
 }

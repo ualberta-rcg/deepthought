@@ -128,7 +128,7 @@ func (m MenuModel) View() string {
 		box,
 		"",
 		styleMenuFoot.Render(m.healthReason),
-		styleMenuFoot.Render("↑↓ move · enter open · q quit"),
+		KeyBar([]KeyHint{{"↑↓", "move"}, {"enter", "open"}, {"q", "quit"}}),
 	)
 	return placeCenter(m.width, m.height, full)
 }

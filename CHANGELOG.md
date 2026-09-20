@@ -18,6 +18,21 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — unification sweep: one title, one keybar, one empty vocabulary
+
+Every screen now speaks the same chrome language.
+- **Titles:** Continue adopts `screenTitle` → `DeepThought › Continue` (was the lone
+  "Continue Chat").
+- **Keybars:** the menu card and both overlay pickers (choice overlay, model chooser) use
+  KeyBar chips instead of inline footer sentences; esc is uniformly "cancel" on overlays.
+- **Empty states:** the 9 wordings collapse to `emptyRow(noun)` — Status
+  providers/models/tools, Cluster active-jobs/fairshare/storage, Continue saved-chats.
+- **Status keybar:** the dangling empty-label PgUp/PgDn chip now reads "page"; the model
+  chooser's empty text points at F11 ("no agentic models yet — F11 to add one").
+- Files: continue.go, status.go, cluster.go, menu.go, overlay.go, model_chooser.go.
+- Verified: full build/vet/test green; grep gates clean ((enter cycles)/esc close/esc
+  quit/Continue Chat/old empty wordings all gone).
+
 ## 2026-09-20 · deepthought-cli — the F11 Models screen (the catalog gets its own home)
 
 Models move out of Settings into a dedicated screen — the home for everything the project

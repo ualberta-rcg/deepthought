@@ -73,7 +73,7 @@ func (m modelChooser) Done() bool              { return m.done }
 func (m modelChooser) View() string {
 	rows := []string{styleSettingsTitle.Render("Model"), ""}
 	if len(m.models) == 0 {
-		rows = append(rows, styleSettingsFoot.Render("(no agentic models — add one in Settings)"))
+		rows = append(rows, styleSettingsFoot.Render("(no agentic models yet — F11 to add one)"))
 	}
 	for i, mm := range m.models {
 		label := mm.Label
@@ -88,7 +88,7 @@ func (m modelChooser) View() string {
 		}
 		rows = append(rows, line)
 	}
-	rows = append(rows, "", styleMenuFoot.Render("↑↓ move · enter select · e effort · esc cancel"))
+	rows = append(rows, "", KeyBar([]KeyHint{{"↑↓", "move"}, {"enter", "select"}, {"e", "effort"}, {"esc", "cancel"}}))
 	card := styleMenuBox.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	return placeCenter(m.width, m.height, card)
 }

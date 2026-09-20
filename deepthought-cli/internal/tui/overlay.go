@@ -104,7 +104,7 @@ func (c choiceOverlay) View() string {
 		}
 		rows = append(rows, line)
 	}
-	rows = append(rows, "", styleMenuFoot.Render("←→ move · enter select · esc cancel"))
+	rows = append(rows, "", KeyBar([]KeyHint{{"←→", "move"}, {"enter", "select"}, {"esc", "cancel"}}))
 	card := styleMenuBox.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 	return placeCenter(c.width, c.height, card)
 }

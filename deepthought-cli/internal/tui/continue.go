@@ -83,7 +83,7 @@ func (m ContinueModel) View() string {
 	}
 	rows := []string{""}
 	if len(m.chats) == 0 {
-		rows = append(rows, styleSettingsFoot.Render("(no saved chats)"))
+		rows = append(rows, emptyRow("saved chats"))
 	} else {
 		rows = append(rows, m.header())
 		for i, c := range m.chats {
@@ -104,7 +104,7 @@ func (m ContinueModel) View() string {
 	keybar := KeyBar([]KeyHint{
 		{"↑↓", "move"}, {"enter", "resume"}, {"esc", "back"},
 	})
-	frame := AppScreen(m.width, m.height, "Continue Chat", body, keybar)
+	frame := AppScreen(m.width, m.height, screenTitle("Continue"), body, keybar)
 	if m.toast != "" {
 		frame = lipgloss.JoinVertical(lipgloss.Center, styleToast.Render(m.toast), frame)
 	}

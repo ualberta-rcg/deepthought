@@ -85,7 +85,7 @@ func renderJobsBlock(c slurm.ClusterSnapshot) []string {
 	}
 	body := []string{}
 	if len(c.YourJobs) == 0 {
-		body = append(body, dimNote("  no active jobs"))
+		body = append(body, "  "+emptyRow("active jobs"))
 	} else {
 		for _, j := range c.YourJobs {
 			stStyle := lipgloss.NewStyle().Foreground(barWarn)
@@ -114,7 +114,7 @@ func renderJobsBlock(c slurm.ClusterSnapshot) []string {
 func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 	body := []string{}
 	if len(c.FairshareRows) == 0 {
-		body = append(body, dimNote("  (no fairshare data)"))
+		body = append(body, "  "+emptyRow("fairshare data"))
 		return Section{Title: "Fairshare", Rows: body}.Render()
 	}
 	for _, r := range c.FairshareRows {
@@ -141,7 +141,7 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 // renderStorageBlock: how full the user's directories are (home/scratch/projects).
 func renderStorageBlock(c slurm.ClusterSnapshot) []string {
 	if len(c.StorageRows) == 0 {
-		return Section{Title: "Your dirs", Rows: []string{dimNote("  (no storage data)")}}.Render()
+		return Section{Title: "Your dirs", Rows: []string{"  " + emptyRow("storage data")}}.Render()
 	}
 	body := []string{}
 	for _, r := range c.StorageRows {
