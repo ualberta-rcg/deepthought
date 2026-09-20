@@ -82,6 +82,7 @@ type RootModel struct {
 	grid        tui.GridModel
 	statusScr   tui.StatusModel
 	modelsScr   tui.ModelsModel
+	cronScr     tui.CronModel
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -122,6 +123,7 @@ func NewRootModel(d Deps) RootModel {
 		settings:  tui.NewSettingsModel(d.Live, d.Settings),
 		grid:      tui.NewGridModel(),
 		statusScr: tui.NewStatusModel(statusInputs(d)),
+		cronScr:   tui.NewCronModel(cronDataDir()),
 		bindings:  d.Bindings,
 	}
 }
@@ -267,6 +269,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings = m.settings.Resize(msg.Width, msg.Height)
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
 		m.modelsScr = m.modelsScr.Resize(msg.Width, msg.Height)
+		m.cronScr = m.cronScr.Resize(msg.Width, msg.Height)
+		m.cronScr = m.cronScr.Resize(msg.Width, msg.Height)
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).
 			SetHealth(m.healthOK, m.healthMsg).
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext, m.sessionCycles, m.sessionMsgs)
@@ -401,6 +405,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusScr, cmd = m.statusScr.Update(msg)
 	case tui.ScreenModels:
 		m.modelsScr, cmd = m.modelsScr.Update(msg)
+	case tui.ScreenCron:
+		m.cronScr, cmd = m.cronScr.Update(msg)
 	}
 	return m, cmd
 }
@@ -414,6 +420,11 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 	case keybindings.Model:
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
+	case keybindings.Cron:
+		// F8 — manage + track the user's crontab.
+		m.cronScr = m.cronScr.Resize(m.width, m.height)
+		m.pushScreenOnce(tui.ScreenCron)
+		return m, m.cronScr.Init()
 	case keybindings.Models:
 		// F11 — the Models screen (the catalog's own home).
 		m.modelsScr = m.modelsScr.Resize(m.width, m.height)
@@ -442,7 +453,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F4 — the effort picker overlay.
 		return m, func() tea.Msg { return tui.OpenEffortMsg{} }
 	case keybindings.Help:
-		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F9 mode · F11 models · F12 status · esc back · /quit to exit")
+		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F8 cron · F9 mode · F11 models · F12 status · esc back · /quit to exit")
 	case keybindings.ContextView:
 		// F7 — push the context grid.
 		m.pushScreen(tui.ScreenGrid)
@@ -495,7 +506,8 @@ func (m *RootModel) pushScreenOnce(to tui.Screen) {
 // not fire — a user-rebound letter would be swallowed mid-typing.
 func (m RootModel) screenCapturesKeys() bool {
 	return (m.screen == tui.ScreenSettings && m.settings.CapturingKeys()) ||
-		(m.screen == tui.ScreenModels && m.modelsScr.CapturingKeys())
+		(m.screen == tui.ScreenModels && m.modelsScr.CapturingKeys()) ||
+		(m.screen == tui.ScreenCron && m.cronScr.CapturingKeys())
 }
 
 // pushOverlay suspends the current overlay (if any) onto the stack and makes o
@@ -578,6 +590,8 @@ func (m RootModel) View() tea.View {
 		s = m.statusScr.View()
 	case tui.ScreenModels:
 		s = m.modelsScr.View()
+	case tui.ScreenCron:
+		s = m.cronScr.View()
 	}
 	// A centered overlay floats on top of whatever screen is active.
 	if m.overlay != nil {
@@ -611,6 +625,8 @@ func (m RootModel) activeInit() tea.Cmd {
 		return m.statusScr.Init()
 	case tui.ScreenModels:
 		return m.modelsScr.Init()
+	case tui.ScreenCron:
+		return m.cronScr.Init()
 	}
 	return nil
 }
@@ -780,4 +796,13 @@ func newSessionID() string {
 		return fmt.Sprintf("sess_%d", time.Now().UnixNano())
 	}
 	return fmt.Sprintf("sess_%s", hex.EncodeToString(b))
+}
+
+// cronDataDir resolves the cron store's data directory (DataDir on success,
+// the legacy default otherwise).
+func cronDataDir() string {
+	if dir, err := config.DataDir(); err == nil {
+		return dir
+	}
+	return os.Getenv("HOME") + "/.deepthought"
 }

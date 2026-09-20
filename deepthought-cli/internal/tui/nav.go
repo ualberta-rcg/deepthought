@@ -15,6 +15,7 @@ const (
 	ScreenChat
 	ScreenSettings
 	ScreenModels
+	ScreenCron
 	ScreenContinue
 	ScreenGrid
 	ScreenStatus

@@ -18,6 +18,27 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — the F8 Cron screen: manage + track the real crontab
+
+Cron management lands as its own screen, built on internal/cron, with a hard safety gate:
+replacing a crontab is destructive-class, so apply/undo ALWAYS require an explicit y/N —
+no op-mode shortcut exists.
+- **Staging model:** `a` add / `enter`·`e` edit (raw-line editor with validation) / `d`
+  delete mutate a PENDING table only. `P` reviews the old-vs-new diff (green +, red −);
+  `y` from the diff enters the confirm gate; `y` applies through internal/cron (which
+  backs the current table up first) and reloads. `u` undo goes through the same gate
+  (undo is itself undoable). Dirty-esc prompts before discarding. `r` refreshes.
+- **Tracking view:** entries render humanized (`daily 09:00`) with new-since-last-visit
+  marked green `+`; a "Removed since last visit" section lists entries the registry still
+  remembers. The Section-kit idiom; fits 80 cols.
+- Wiring: F8 (`app:cron`), legend + F1 help updated, root wiring with pushScreenOnce and
+  the key-capture guard (editor + confirm states).
+- Files: internal/tui/cron.go + cron_test.go (new), nav.go, keybindings.go, topbar.go,
+  app/model.go.
+- Verified: TestCronScreenRenders (humanized rows, 80-col fit), AddDiffApplyFlow (aborts
+  on non-y, applies exactly once through the fake client), DiscardGate, UndoGated — plus
+  the full suite green. Real `crontab` flows need a live pty on a scratch user.
+
 ## 2026-09-20 · deepthought-cli — internal/cron: parse, safely rewrite, and track the user's crontab
 
 The foundation for cron management (F8 screen next) and the server's later fleet view.

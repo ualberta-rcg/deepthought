@@ -22,6 +22,7 @@ const (
 	ContextView Action = "app:context"
 	Models      Action = "app:models"
 	QueenMode   Action = "app:queen-mode"
+	Cron        Action = "app:cron"
 	Diagnostics Action = "app:diagnostics"
 )
 
@@ -30,6 +31,7 @@ var reserved = map[string]bool{"ctrl+c": true, "ctrl+d": true}
 var defaults = map[string]Action{
 	"f1": Help, "f2": Settings, "f3": Model, "f4": Effort,
 	"f5": NewChat, "f6": Resume, "f7": ContextView,
+	"f8":  Cron,
 	"f9":  QueenMode,
 	"f11": Models,
 	"f12": Diagnostics,
