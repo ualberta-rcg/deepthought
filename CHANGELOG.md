@@ -18,6 +18,31 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — Cron screen repaired: crash, cursor, navigation, data-loss traps
+
+The F8 screen crashed deterministically on open (View rendered before the async crontab
+load landed → nil-pending deref), hid its cursor, and could destroy staged work with a
+reflex key.
+- **Crash:** every pending-table deref is nil-guarded; View renders a loading placeholder
+  pre-load and the actual error on a hard load failure (no crontab binary / corrupt
+  registry used to leave the screen panicking on EVERY frame, with the error toast never
+  painting). `updateConfirm`'s apply branch is nil-safe too.
+- **Cursor:** entries render with the standard `▶` marker (the list previously showed no
+  cursor at all while advertising ↑↓ move); `rowCount` matches the real navigable rows
+  (the old phantom +2 let the cursor park where enter/d/e silently no-op'd);
+  `stage()` seeds the cursor as an entries index (leading env/comment lines mis-placed
+  it); `keepCursorVisible` wired.
+- **Data-loss traps:** esc/q from the diff review now goes BACK to the list — it used to
+  open the discard gate, where a reflexive `y` destroyed all staged edits; `u` (undo) is
+  unreachable from the diff; an invalid add KEEPS the editor open (the seeded default row
+  is never left staged as junk) with an explanatory toast.
+- The pending-changes hint triplication (note + prose row + keybar) collapses into the
+  section title; the keybar is the one hint surface.
+- Files: internal/tui/cron.go, cron_test.go.
+- Verified: new TestCronPreloadNoPanic / TestCronLoadFailureRenders / TestCronCursorVisible
+  (incl. j-then-d deleting the SECOND entry) / TestCronEscFromDiffGoesBack /
+  TestCronInvalidAddKeepsEditor; the four carried cron tests still pass; full suite green.
+
 ## 2026-09-20 · deepthought-cli — the deepthought-server skeleton + live editing (server groundwork starts)
 
 The server side of the roadmap now has a real front door. Deploys as a container on the

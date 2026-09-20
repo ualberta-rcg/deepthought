@@ -169,6 +169,10 @@ func (m CronModel) Update(msg tea.Msg) (CronModel, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc", "q":
+		if m.view == cvDiff {
+			m.view = cvList // back to the list — never the discard gate from a review
+			return m, nil
+		}
 		if m.dirty() {
 			m.view = cvDiscard
 			return m, nil
@@ -213,7 +217,9 @@ func (m CronModel) Update(msg tea.Msg) (CronModel, tea.Cmd) {
 			return m, nil
 		}
 	case "u":
-		m.view, m.confirm = cvConfirm, "undo"
+		if m.view == cvList {
+			m.view, m.confirm = cvConfirm, "undo"
+		}
 		return m, nil
 	case "r":
 		return m, m.reloadCmd()
@@ -237,6 +243,10 @@ func (m CronModel) updateConfirm(key tea.KeyPressMsg) (CronModel, tea.Cmd) {
 				return cronAppliedMsg{err: client.Undo(context.Background())}
 			}
 		}
+		if m.pending == nil {
+			m.view, m.confirm = cvList, ""
+			return m, nil
+		}
 		rows := m.pending.rows
 		return m, func() tea.Msg {
 			return cronAppliedMsg{err: client.Install(context.Background(), rows)}
@@ -254,16 +264,7 @@ func (m *CronModel) stage() {
 		rows[i] = l.Raw
 	}
 	m.pending = &pendingTable{rows: rows}
-	m.cursor = m.firstEntry()
-}
-
-func (m *CronModel) firstEntry() int {
-	for i, l := range m.lines {
-		if l.Kind == cron.LineEntry {
-			return i
-		}
-	}
-	return 0
+	m.cursor = 0 // indexes the entries list (see pendingEntries), not the raw rows
 }
 
 func (m CronModel) dirty() bool {
@@ -278,6 +279,9 @@ func (m CronModel) dirty() bool {
 }
 
 func (m CronModel) pendingEntries() (out []int) {
+	if m.pending == nil {
+		return nil
+	}
 	for i, raw := range m.pending.rows {
 		if l := cron.Parse(raw); len(l) == 1 && l[0].Kind == cron.LineEntry {
 			out = append(out, i)
@@ -308,16 +312,16 @@ func (m CronModel) beginAdd() (CronModel, tea.Cmd) {
 
 func (m CronModel) commitEdit() (CronModel, tea.Cmd) {
 	raw := strings.TrimSpace(m.edit.value())
-	m.edit = nil
-	m.view = cvList
 	if raw == "" {
+		m.edit, m.view = nil, cvList
 		return m.stageDeleteAt(m.editIdx) // cleared = delete
 	}
 	if l := cron.Parse(raw); len(l) != 1 || l[0].Kind != cron.LineEntry {
-		m.toast = "not a valid crontab entry — edit again"
-		return m, nil
+		m.toast = "not a valid crontab entry — fix it (esc cancels and removes the row)"
+		return m, nil // stay in the editor; nothing junk stays staged
 	}
 	m.pending.rows[m.editIdx] = raw
+	m.edit, m.toast, m.view = nil, "", cvList
 	return m, nil
 }
 
@@ -347,14 +351,15 @@ func (m CronModel) pendingEntryAtCursor() int {
 // --- rows + view -----------------------------------------------------------------
 
 func (m CronModel) rowCount() int {
-	n := len(m.pendingEntries())
-	if m.dirty() {
-		return n + 2 // entries + "review changes" + "undo"
-	}
-	return n + 1 // + "undo last change"
+	// The cursor walks the entries; review/undo are key actions, not rows.
+	return len(m.pendingEntries())
 }
 
 func (m CronModel) rows() []string {
+	if m.pending == nil {
+		// Still loading (or the load failed — View shows the error toast).
+		return []string{dimNote("  loading crontab…")}
+	}
 	var out []string
 
 	added, removed := m.preg.DiffSinceLast(m.entryLines())
@@ -367,15 +372,15 @@ func (m CronModel) rows() []string {
 		addedSet[a.Hash] = true
 	}
 
-	// » Your crontab
+	// » Your crontab — one row per entry, the cursor marked like every other list.
 	body := []string{}
-	for _, idx := range m.pendingEntries() {
+	for k, idx := range m.pendingEntries() {
 		l := cron.Parse(m.pending.rows[idx])[0]
-		row := fmt.Sprintf("  %s %s", truncatePad(cron.Humanize(l.Schedule), 14), clipLine(l.Command, max(20, m.width-40)))
+		row := fmt.Sprintf("%s %s", truncatePad(cron.Humanize(l.Schedule), 14), clipLine(l.Command, max(20, m.width-40)))
 		if addedSet[l.Hash] {
-			row = styleToolResult.Render("+") + row[1:]
+			row = styleToolResult.Render("+") + row
 		}
-		body = append(body, row)
+		body = append(body, m.mark(k, row))
 	}
 	if len(body) == 0 {
 		body = []string{"  " + emptyRow("cron entries")}
@@ -402,10 +407,7 @@ func (m CronModel) rows() []string {
 		addN, delN := m.pendingCounts()
 		out = append(out, Section{
 			Title: "Pending changes",
-			Extra: fmt.Sprintf("+%d −%d", addN, delN),
-			Rows: []string{
-				"  " + styleSettingsFoot.Render("P review diff · y apply (backs up first)"),
-			},
+			Extra: fmt.Sprintf("+%d −%d — P review · y apply", addN, delN),
 		}.Render()...)
 	}
 	return out
@@ -511,6 +513,7 @@ func (m CronModel) View() string {
 		content = styleEditActive.Render("▶ ") + m.edit.view(m.width)
 		m.vp.SetContent(content)
 	}
+	m.keepCursorVisible()
 	prompt := ""
 	switch m.view {
 	case cvConfirm:
@@ -522,6 +525,28 @@ func (m CronModel) View() string {
 		m.vp.SetContent(strings.Join(m.rows(), "\n") + "\n" + prompt)
 	}
 	return AppScreenScroll(m.width, m.height, title, m.vp.View(), m.vp.Height(), KeyBar(m.keybar()))
+}
+
+// keepCursorVisible scrolls the viewport so the cursor row is on screen.
+func (m *CronModel) keepCursorVisible() {
+	h := m.vp.Height()
+	if h <= 0 || m.view != cvList {
+		return
+	}
+	y := m.vp.YOffset()
+	if m.cursor < y {
+		m.vp.SetYOffset(m.cursor)
+	} else if m.cursor >= y+h {
+		m.vp.SetYOffset(m.cursor - h + 1)
+	}
+}
+
+// mark renders one list row with the cursor highlight.
+func (m CronModel) mark(i int, text string) string {
+	if i == m.cursor {
+		return styleMenuSel.Render("▶ " + text)
+	}
+	return styleMenuUnsel.Render("  " + text)
 }
 
 func (m CronModel) keybar() []KeyHint {
