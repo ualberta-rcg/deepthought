@@ -26,10 +26,23 @@ type ProviderRow struct {
 	State            string
 }
 
-// EnvInfo is the static machine/session environment gathered once at startup.
+// EnvInfo is the host/session descriptor gathered once at startup (the design
+// doc's "one structured descriptor, many renderers": Status's Host section,
+// the chat env brief, the sidebar, Settings › System all render this).
+// Failed probes leave "" — never an error, never a crash.
 type EnvInfo struct {
-	CVMFS, Module, Slurm  bool
-	Shell, Host, User, TZ string
+	CVMFS, Module, Slurm bool
+	Shell, User, TZ      string
+
+	// Host facts (pure-stdlib probes; see gatherEnv).
+	Host      string // hostname as reported
+	ShortName string // first label ("vulcan-login1")
+	LongName  string // FQDN when known (may equal Host)
+	OSName    string // PRETTY_NAME from /etc/os-release
+	Kernel    string // /proc/sys/kernel/osrelease
+	Arch      string // runtime.GOARCH (native builds = host arch)
+	CPUs      int
+	MemGB     int
 }
 
 // StatusInputs bundles the Status page's external inputs (kept out of the model

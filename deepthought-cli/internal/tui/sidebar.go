@@ -5,8 +5,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/lipgloss/v2"
-
 	"deepthought-cli/internal/slurm"
 )
 
@@ -18,7 +16,8 @@ const SidebarWidth = 36
 type SidebarData struct {
 	Clock         time.Time
 	Cluster       slurm.ClusterSnapshot
-	ClusterOK     bool // false → "(cluster n/a)"
+	ClusterOK     bool    // false → render the Host section instead
+	Env           EnvInfo // host facts for non-Slurm hosts
 	SessionIn     int
 	SessionOut    int
 	LastContext   int
@@ -36,7 +35,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	}
 	var secs []string
 
-	// » Cluster
+	// » Cluster (live when polled) or » Host (no Slurm here)
 	if d.ClusterOK && d.Cluster.GPUs > 0 {
 		frac := frac01(float64(d.Cluster.GPUsUsed), float64(d.Cluster.GPUs))
 		gpu := fmt.Sprintf(" gpus  %s %d%%", healthBar(frac, w-14), fracPct(frac))
@@ -44,6 +43,11 @@ func RenderSidebar(d SidebarData, w, h int) string {
 			Title: "Cluster",
 			Extra: fmt.Sprintf("%d run", d.Cluster.JobsRunning),
 			Rows:  []string{clipLine(gpu, w)},
+		}.Render()...)
+	} else if e := d.Env; e.OSName != "" || e.Kernel != "" {
+		secs = append(secs, Section{
+			Title: "Host",
+			Rows:  []string{clipLine(" "+orDefault(e.OSName, e.ShortName), w)},
 		}.Render()...)
 	} else {
 		secs = append(secs, Section{
@@ -80,6 +84,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	secs = append(secs, Section{Title: "Providers", Rows: []string{clipLine(prow, w)}}.Render()...)
 
 	secs = append(secs, styleSettingsFoot.Render("  F12 for detail"))
-	body := padBlock(strings.Join(secs, "\n"), w, h)
-	return lipgloss.NewStyle().PaddingLeft(1).Render(body)
+	// Exactly w wide (the caller budgets w + a 1-col gutter — the old extra
+	// PaddingLeft made every join one column wider than the terminal).
+	return padBlock(strings.Join(secs, "\n"), w, h)
 }

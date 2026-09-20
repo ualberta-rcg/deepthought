@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -121,6 +122,8 @@ func NewRootModel(d Deps) RootModel {
 		status:    d.Status,
 		clock:     time.Now(),
 		sessionID: sid,
+		env:       env,
+		sidebar:   tui.SidebarData{Env: env},
 		splash:    tui.NewSplashModel(splashBoot(d.Live), sid),
 		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills).SetEnv(env),
 		continue_: tui.NewContinueModel(d.ChatSource),
@@ -164,6 +167,18 @@ func gatherEnv() tui.EnvInfo {
 		user = os.Getenv("LOGNAME")
 	}
 	tz, _ := time.Now().Zone()
+	short := host
+	if i := strings.IndexByte(host, '.'); i > 0 {
+		short = host[:i]
+	}
+	long := host
+	if !strings.Contains(host, ".") {
+		// Hostname is a short label; /proc/sys/kernel/domainname completes it
+		// when NIS/domain is configured (often "(none)" — leave as-is then).
+		if dom := strings.TrimSpace(readSmallFile("/proc/sys/kernel/domainname")); dom != "" && dom != "(none)" {
+			long = host + "." + dom
+		}
+	}
 	return tui.EnvInfo{
 		CVMFS:  dirExists("/cvmfs"),
 		Module: os.Getenv("LMOD_CMD") != "" || os.Getenv("LMOD_DIR") != "",
@@ -172,7 +187,49 @@ func gatherEnv() tui.EnvInfo {
 		Host:   host,
 		User:   user,
 		TZ:     tz,
+
+		ShortName: short,
+		LongName:  long,
+		OSName:    osPrettyName(),
+		Kernel:    strings.TrimSpace(readSmallFile("/proc/sys/kernel/osrelease")),
+		Arch:      runtime.GOARCH,
+		CPUs:      runtime.NumCPU(),
+		MemGB:     memTotalGB(),
 	}
+}
+
+// readSmallFile reads a small /proc-ish file ("" on any failure — a failed
+// probe is a missing fact, never an error).
+func readSmallFile(path string) string {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return ""
+	}
+	return string(b)
+}
+
+// osPrettyName pulls PRETTY_NAME from /etc/os-release.
+func osPrettyName() string {
+	for _, line := range strings.Split(readSmallFile("/etc/os-release"), "\n") {
+		if v, ok := strings.CutPrefix(line, "PRETTY_NAME="); ok {
+			return strings.Trim(strings.TrimSpace(v), `"`)
+		}
+	}
+	return ""
+}
+
+// memTotalGB reads MemTotal from /proc/meminfo (rounded down to GB).
+func memTotalGB() int {
+	for _, line := range strings.Split(readSmallFile("/proc/meminfo"), "\n") {
+		if v, ok := strings.CutPrefix(line, "MemTotal:"); ok {
+			var kb int
+			if _, err := fmt.Sscanf(strings.TrimSpace(v), "%d kB", &kb); err == nil && kb > 0 {
+				return kb / (1024 * 1024)
+			}
+			return 0
+		}
+	}
+	return 0
 }
 
 func dirExists(p string) bool {
@@ -220,6 +277,9 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tui.TickMsg:
 		m.sidebar.Clock = time.Time(msg)
+		if m.deps.Live != nil {
+			m.sidebar.Providers = m.deps.Live.ProviderStatus() // cheap: cached breaker states
+		}
 		// Session-wide clock: store, re-arm (tea.Every fires once), and stamp the
 		// Status page so its date/timezone ticks live. Handled before the screen
 		// router so it ticks on every screen.
@@ -244,6 +304,13 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tui.SessionUsageMsg:
 		m.sidebar.SessionIn, m.sidebar.SessionOut, m.sidebar.LastContext = msg.In, msg.Out, msg.LastContext
+		if m.deps.Live != nil {
+			if snap := m.deps.Live.Snapshot(); snap.Models != nil {
+				if mm, ok := activeModelOf(snap); ok {
+					m.sidebar.ContextWindow = mm.Context
+				}
+			}
+		}
 		m.sessionIn, m.sessionOut, m.lastContext = msg.In, msg.Out, msg.LastContext
 		m.sessionCycles, m.sessionMsgs = msg.Cycles, msg.Messages
 		m.statusScr = m.statusScr.SetSession(msg.In, msg.Out, msg.LastContext, msg.Cycles, msg.Messages)
@@ -262,7 +329,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar.Cluster, m.sidebar.ClusterOK = msg.snap, !msg.snap.FetchedAt.IsZero()
 		m.statusScr = m.statusScr.SetCluster(msg.snap)
 		m.chat = m.chat.SetCluster(msg.snap)
-		return m, tea.Tick(clusterPollInterval, func(time.Time) tea.Msg { return pollCluster() })
+		return m, tea.Tick(m.nextClusterPoll(), func(time.Time) tea.Msg { return pollCluster() })
 	case tui.RefreshClusterMsg:
 		// `r` on the Status page: re-poll now.
 		return m, pollClusterCmd()
@@ -271,11 +338,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it is first shown. Chat loses TopBarHeight rows to the top bar.
 		m.width, m.height = msg.Width, msg.Height
 		m.splash = m.splash.Resize(msg.Width, msg.Height)
-		chatW := msg.Width
-		if m.sidebarOn() {
-			chatW = msg.Width - tui.SidebarWidth - 1
-		}
-		m.chat = m.chat.Resize(chatW, msg.Height-tui.ChatChromeHeight(m.legendOn()))
+		m.chatResize()
 		m.continue_ = m.continue_.Resize(msg.Width, msg.Height)
 		m.settings = m.settings.Resize(msg.Width, msg.Height)
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
@@ -299,6 +362,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				SetSkills(m.deps.Skills).
 				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 			m.screen = tui.ScreenChat
+			m.chatResize()
 			return m, m.chat.Init()
 		}
 		m.settings = tui.NewSettingsModelAt(m.deps.Live, m.deps.Settings, "providers", true).
@@ -318,7 +382,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.To == tui.ScreenContinue {
 			m.continue_.Refresh()
 		}
-		m.pushScreen(msg.To)
+		m.pushScreenOnce(msg.To)
 		return m, m.activeInit()
 	case tui.ResumeChatMsg:
 		// Rebuild the chat model around the selected collective; resuming a chat
@@ -329,7 +393,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screenStack = nil
-		m.chat = cm.SetCluster(m.lastCluster).SetSkills(m.deps.Skills).Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
+		m.chat = cm.SetEnv(m.env).SetCluster(m.lastCluster).SetSkills(m.deps.Skills)
+		m.chatResize()
 		m.screen = tui.ScreenChat
 		return m, m.activeInit()
 	case tui.ShowOverlayMsg:
@@ -431,10 +496,14 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
 	case keybindings.Sidebar:
-		// F10 — cycle the live info column: auto → on → off (persisted; a bad
-		// write surfaces via the next config read like the other toggles).
+		// F10 — cycle the live info column: auto → on → off (persisted), then
+		// re-size the chat immediately so the column appears/disappears live.
+		if m.deps.Live == nil {
+			return m, nil
+		}
 		next := map[string]string{"auto": "on", "on": "off", "off": "auto"}[m.deps.Live.SidebarMode()]
 		_ = m.deps.Live.SetSidebar(next)
+		m.chatResize()
 		return m, nil
 	case keybindings.Cron:
 		// F8 — manage + track the user's crontab.
@@ -447,23 +516,24 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		m.pushScreenOnce(tui.ScreenModels)
 		return m, m.modelsScr.Init()
 	case keybindings.Diagnostics:
-		// F12 — the unified Status page (app/system).
+		// F12 — the unified Status page (app/system); opening it forces an
+		// instant cluster poll so the data is fresh.
 		m.statusScr = m.statusScr.SetHealth(m.healthOK, m.healthMsg).SetClock(m.clock)
-		m.pushScreen(tui.ScreenStatus)
-		return m, m.statusScr.Init()
+		m.pushScreenOnce(tui.ScreenStatus)
+		return m, tea.Batch(m.statusScr.Init(), pollClusterCmd())
 	case keybindings.NewChat:
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
 		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetEnv(m.env).
 			SetCluster(m.lastCluster).
-			SetSkills(m.deps.Skills).
-			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
+			SetSkills(m.deps.Skills)
+		m.chatResize()
 		m.screen = tui.ScreenChat
 		return m, m.chat.Init()
 	case keybindings.Resume:
 		// F6 — push the Continue/rejoin picker.
 		m.continue_.Refresh()
-		m.pushScreen(tui.ScreenContinue)
+		m.pushScreenOnce(tui.ScreenContinue)
 		return m, m.continue_.Init()
 	case keybindings.Effort:
 		// F4 — the effort picker overlay.
@@ -472,7 +542,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F8 cron · F9 mode · F11 models · F12 status · esc back · /quit to exit")
 	case keybindings.ContextView:
 		// F7 — push the context grid.
-		m.pushScreen(tui.ScreenGrid)
+		m.pushScreenOnce(tui.ScreenGrid)
 		return m, m.grid.Init()
 	case keybindings.QueenMode:
 		if m.deps.Gate != nil {
@@ -669,8 +739,19 @@ func usageFunc(src history.ChatStoreSource) func() map[string]history.Cost {
 	}
 }
 
-// clusterPollInterval is how often the background Slurm poller re-fetches.
-const clusterPollInterval = 5 * time.Minute
+// Cluster poll cadence: fast while a live view (the sidebar or the Status
+// page) is showing, slow in the background — the data is LIVE when watched.
+const (
+	clusterPollFast = 30 * time.Second
+	clusterPollSlow = 3 * time.Minute
+)
+
+func (m RootModel) nextClusterPoll() time.Duration {
+	if m.sidebarOn() || m.screen == tui.ScreenStatus {
+		return clusterPollFast
+	}
+	return clusterPollSlow
+}
 
 // clusterSnapshotMsg carries a background Slurm snapshot to the Status page.
 type clusterSnapshotMsg struct{ snap slurm.ClusterSnapshot }
@@ -819,6 +900,35 @@ func newSessionID() string {
 	return fmt.Sprintf("sess_%s", hex.EncodeToString(b))
 }
 
+// activeModelOf resolves the running (agentic, falling back to chat) model
+// from a config snapshot — the sidebar's context-window source.
+func activeModelOf(f config.File) (unimatrix.Model, bool) {
+	role := f.Roles[unimatrix.RoleAgentic]
+	if role == "" {
+		role = f.Roles[unimatrix.RoleChat]
+	}
+	for _, mm := range f.Models {
+		if mm.ID == role {
+			return mm, true
+		}
+	}
+	return unimatrix.Model{}, false
+}
+
+// chatResize sizes the chat to the terminal, minus the live info column and
+// its gutter when the sidebar is showing — the ONE place the narrowed width
+// is computed (splash advance, resume, F5 new chat, F10 toggle, and
+// WindowSizeMsg all funnel through here; previously only WindowSizeMsg did,
+// so every rebuilt chat was full-width and the joined sidebar overflowed the
+// terminal, clipping the column away entirely).
+func (m *RootModel) chatResize() {
+	chatW := m.width
+	if m.sidebarOn() {
+		chatW = m.width - tui.SidebarWidth - 1 // 1-col gutter
+	}
+	m.chat = m.chat.Resize(chatW, m.height-tui.ChatChromeHeight(m.legendOn()))
+}
+
 // sidebarOn reports whether the chat screen's live info column is showing:
 // auto = only on very wide terminals (>=160 cols); on = forced (>=120); off =
 // never.
@@ -833,7 +943,7 @@ func (m RootModel) sidebarOn() bool {
 	case "on":
 		return m.width >= 120
 	default: // auto
-		return m.width >= 160
+		return m.width >= 120
 	}
 }
 

@@ -28,8 +28,8 @@ func TestSidebarRender(t *testing.T) {
 		}
 	}
 	for i, ln := range strings.Split(v, "\n") {
-		if w := lipgloss.Width(ln); w > SidebarWidth+1 {
-			t.Errorf("line %d width %d > sidebar width", i, w)
+		if w := lipgloss.Width(ln); w != SidebarWidth {
+			t.Errorf("line %d width %d, want exactly %d (join must fit the terminal)", i, w, SidebarWidth)
 		}
 	}
 

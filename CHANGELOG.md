@@ -18,6 +18,34 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — sidebar actually works: clipping fixed, live data, host descriptor probes
+
+The sidebar never appeared because every chat (re)build except WindowSizeMsg sized the chat
+at FULL width — the joined sidebar overflowed the terminal and was clipped away entirely
+(deterministic ≥160 after splash); it was also one column over budget and showed dead data.
+- **chatResize funnel:** one helper computes the narrowed chat width (terminal − column −
+  gutter) and is now called from WindowSizeMsg, splash advance, ResumeChatMsg, F5 new chat,
+  AND the F10 toggle (toggling now re-sizes live instead of wrapping the screen).
+- **Width off-by-one:** RenderSidebar pads to exactly its width (the extra PaddingLeft made
+  every join one column too wide); the test now asserts EXACT width.
+- **F10 safety:** nil-guards the settings handle (it panicked with no Live deps) and the
+  auto threshold drops to ≥120 cols (160 was too far away to ever feel alive).
+- **Live data:** the cache now actually populates Providers (cached breaker states, on the
+  1 Hz tick) and ContextWindow (the active model's window, per session-usage tick) — both
+  were never set, leaving a blank row and a bare token count. Polling is adaptive: 30s while
+  the sidebar or Status is open, 3min background; opening F12 forces an instant poll.
+  Non-Slurm hosts render a Host section instead of a permanent "(cluster n/a)".
+- **Host descriptor (design-doc Phase A begins):** EnvInfo grows ShortName/LongName
+  (FQDN)/OSName (PRETTY_NAME from /etc/os-release)/Kernel (/proc/sys/kernel/osrelease)/
+  Arch/CPUs/MemGB, probed pure-stdlib in gatherEnv (failed probe = missing fact, never an
+  error). Found-bug fix: NewRootModel never set m.env — splash/F5 chats silently lost the
+  whole env brief; ResumeChatMsg now also SetEnvs (it dropped the brief on resume).
+- **Root hardening:** pushScreenOnce on EVERY screen-push site (F12/F6/F7/ScreenChangeMsg
+  still double-stacked; esc then popped into the same screen).
+- Files: internal/tui/{sidebar.go,status.go,sidebar_test.go}, internal/app/model.go.
+- Verified: sidebar exact-width test (was ≤+1, baking the bug in); full build/vet/test
+  green (20 pkgs). Live pty: F10 at 121+ cols shows the full column with nothing clipped.
+
 ## 2026-09-20 · deepthought-cli — Cron screen repaired: crash, cursor, navigation, data-loss traps
 
 The F8 screen crashed deterministically on open (View rendered before the async crontab
