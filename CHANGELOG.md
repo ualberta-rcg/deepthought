@@ -18,6 +18,25 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — remove the F11 Software screen + internal/cvmfs
+
+The Software screen (module search/load helper) is gone per the once-over decision: its
+static guidance blocks duplicated the alliance-cvmfs skill, and the agent path (skill +
+`module spider` via the bash tool) covers discovery. F11 passes to the new Models screen
+(arriving next in the series).
+- **Deleted:** `internal/tui/software.go` + `software_test.go`, and the entire
+  `internal/cvmfs` package — it was imported only by the screen; `app.gatherEnv` probes
+  `/cvmfs` + LMOD env directly, so the Status page's detection line is unaffected.
+- **Rewired:** `keybindings.Software` → `keybindings.Models` (`"app:models"`, still F11 —
+  existing rebinding files naming `app:software` simply stop matching; noted for anyone
+  with a custom keybindings.json). Legend + F1 help now say "F11 models". F11 no-ops until
+  the Models screen lands (next commits in this series).
+- Files: software.go/software_test.go/cvmfs/ (deleted), nav.go, keybindings.go, topbar.go,
+  app/model.go, topbar_test.go.
+- Verified: full go build/vet/test green (18 pkgs); grep gate — no ScreenSoftware/
+  softwareScr/internal-cvmfs references; remaining "cvmfs" hits are the Status detection
+  chip + gatherEnv probe, which are intentional.
+
 ## 2026-09-20 · deepthought-cli — solid brand colors + the big DON'T PANIC splash
 
 The rainbow is retired everywhere (top-bar wordmark, spinner, splash mark); the splash

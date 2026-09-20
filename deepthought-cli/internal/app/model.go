@@ -81,7 +81,6 @@ type RootModel struct {
 	settings    tui.SettingsModel
 	grid        tui.GridModel
 	statusScr   tui.StatusModel
-	softwareScr tui.SoftwareModel
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -111,19 +110,18 @@ func NewRootModel(d Deps) RootModel {
 		sid = newSessionID()
 	}
 	return RootModel{
-		deps:        d,
-		screen:      d.StartScreen,
-		status:      d.Status,
-		clock:       time.Now(),
-		sessionID:   sid,
-		splash:      tui.NewSplashModel(splashBoot(d.Live), sid),
-		chat:        tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills),
-		continue_:   tui.NewContinueModel(d.ChatSource),
-		settings:    tui.NewSettingsModel(d.Live, d.Settings),
-		grid:        tui.NewGridModel(),
-		statusScr:   tui.NewStatusModel(statusInputs(d)),
-		softwareScr: tui.NewSoftwareModel(),
-		bindings:    d.Bindings,
+		deps:      d,
+		screen:    d.StartScreen,
+		status:    d.Status,
+		clock:     time.Now(),
+		sessionID: sid,
+		splash:    tui.NewSplashModel(splashBoot(d.Live), sid),
+		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills),
+		continue_: tui.NewContinueModel(d.ChatSource),
+		settings:  tui.NewSettingsModel(d.Live, d.Settings),
+		grid:      tui.NewGridModel(),
+		statusScr: tui.NewStatusModel(statusInputs(d)),
+		bindings:  d.Bindings,
 	}
 }
 
@@ -270,7 +268,6 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).
 			SetHealth(m.healthOK, m.healthMsg).
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext, m.sessionCycles, m.sessionMsgs)
-		m.softwareScr = m.softwareScr.Resize(msg.Width, msg.Height)
 		if m.overlay != nil {
 			m.overlay = m.overlay.Resize(msg.Width, msg.Height)
 		}
@@ -398,8 +395,6 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.grid, cmd = m.grid.Update(msg)
 	case tui.ScreenStatus:
 		m.statusScr, cmd = m.statusScr.Update(msg)
-	case tui.ScreenSoftware:
-		m.softwareScr, cmd = m.softwareScr.Update(msg)
 	}
 	return m, cmd
 }
@@ -418,11 +413,6 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		m.statusScr = m.statusScr.SetHealth(m.healthOK, m.healthMsg).SetClock(m.clock)
 		m.pushScreen(tui.ScreenStatus)
 		return m, m.statusScr.Init()
-	case keybindings.Software:
-		// F11 — the searchable CVMFS/module screen (spider runs in the background).
-		m.softwareScr = m.softwareScr.Resize(m.width, m.height)
-		m.pushScreen(tui.ScreenSoftware)
-		return m, m.softwareScr.Init()
 	case keybindings.NewChat:
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
@@ -441,7 +431,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F4 — the effort picker overlay.
 		return m, func() tea.Msg { return tui.OpenEffortMsg{} }
 	case keybindings.Help:
-		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F9 mode · F11 software · F12 status · esc back · /quit to exit")
+		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F9 mode · F11 models · F12 status · esc back · /quit to exit")
 	case keybindings.ContextView:
 		// F7 — push the context grid.
 		m.pushScreen(tui.ScreenGrid)
@@ -558,8 +548,6 @@ func (m RootModel) View() tea.View {
 		s = m.grid.View()
 	case tui.ScreenStatus:
 		s = m.statusScr.View()
-	case tui.ScreenSoftware:
-		s = m.softwareScr.View()
 	}
 	// A centered overlay floats on top of whatever screen is active.
 	if m.overlay != nil {
@@ -591,8 +579,6 @@ func (m RootModel) activeInit() tea.Cmd {
 		return m.grid.Init()
 	case tui.ScreenStatus:
 		return m.statusScr.Init()
-	case tui.ScreenSoftware:
-		return m.softwareScr.Init()
 	}
 	return nil
 }

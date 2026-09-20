@@ -20,7 +20,7 @@ const (
 	NewChat     Action = "app:new-chat"
 	Resume      Action = "app:resume"
 	ContextView Action = "app:context"
-	Software    Action = "app:software"
+	Models      Action = "app:models"
 	QueenMode   Action = "app:queen-mode"
 	Diagnostics Action = "app:diagnostics"
 )
@@ -31,7 +31,7 @@ var defaults = map[string]Action{
 	"f1": Help, "f2": Settings, "f3": Model, "f4": Effort,
 	"f5": NewChat, "f6": Resume, "f7": ContextView,
 	"f9":  QueenMode,
-	"f11": Software,
+	"f11": Models,
 	"f12": Diagnostics,
 }
 
