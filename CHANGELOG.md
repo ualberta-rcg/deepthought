@@ -18,6 +18,35 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — standardize the F12 Status page on one Section kit + meters/chips
+
+The Status page rendered in two visual languages: the six plain sections used
+`styleSettingsTitle` + `kv()` (values unaligned), the four Slurm sections were near-verbatim
+`vulcan-status` blocks. Now every section is one reusable `Section` (header + aligned body +
+optional note + optional "→ cmd" source) built from a small viz kit, so the page reads as one
+surface — and the plain sections gain the data-driven meters/chips the Slurm ones already had.
+- **New `internal/tui/section.go`:** `Section{Title, Extra, Rows, Note, Source}` + `Render()`, and
+  the viz kit — `healthChip` / `stateChip` / `detChip` (one-line colored tokens, no border) and
+  `contextMeter` (a `healthBar` meter that degrades to a plain count when the model declares no
+  context window).
+- **Aligned label column:** `kv` now pads the raw label to a fixed width *before* styling so
+  values line up.
+- **Session:** health is a `healthChip`. **Login node:** the detection line uses `detChip`.
+  **Providers:** state uses `stateChip` (degraded is now amber, not red). **Usage:** a new
+  context meter (`▓▓▓░…  NN%  used/window`) driven by the active model's `Model.Context`.
+- **cluster.go:** the four Slurm renderers build a `Section` too (same data/output, one idiom).
+  `renderState` removed (superseded by `stateChip`); Models token totals use `formatTokens` to
+  match the Usage section.
+- **Cleanup:** deleted the dead single-color `bar()` from styles.go; fixed the stale "Cluster
+  screen (F10)" comment in bars.go.
+- Files: `section.go` (new), `status.go`, `cluster.go`, `styles.go`, `bars.go`,
+  `section_test.go` (new).
+- Verified: new `TestSectionRows` / `TestStateChip` / `TestHealthChip` / `TestDetChip` /
+  `TestContextMeter` / `TestUsageContextMeter` pass; existing `TestStatusAdaptiveSections` and
+  `TestClusterSectionRenderers` still pass; full `go build`/`vet`/`test` green; grep gate confirms
+  no `renderState` / single-color `bar()` / `styleSettingsTitle`-in-status remain. Eyeballed a
+  rendered page (Slurm snapshot): all sections share the look; the context meter and chips render.
+
 ## 2026-09-18 · deepthought-cli — adaptive F12 Status: merge F8 (Stats) + F10 (Cluster) into it; free those keys
 
 One status screen instead of three, and it **adapts to the host**. The page is

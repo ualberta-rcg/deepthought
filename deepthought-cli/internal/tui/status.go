@@ -205,132 +205,112 @@ func (m StatusModel) sessionRows() []string {
 			label = mm.ID
 		}
 	}
-	health := styleError.Render("✗ " + orDefault(m.health, "unavailable"))
-	if m.healthOK {
-		health = styleToolResult.Render("✓ reachable")
-	}
 	clockStr := "—"
 	if !m.clock.IsZero() {
 		clockStr = m.clock.Format("2006-01-02 15:04:05 MST")
 	}
-	return []string{
-		styleSettingsTitle.Render("Session"),
-		kv("model", fmt.Sprintf("%s  %s", label, styleSettingsFoot.Render(provider+"·"+caps))),
-		kv("effort", EffortLabel(babel.Effort(orDefault(m.status.Effort, "medium")))),
-		kv("mode", orDefault(m.status.Mode, "—")),
-		kv("health", health),
-		kv("now", clockStr),
-	}
+	return Section{
+		Title: "Session",
+		Rows: []string{
+			kv("model", fmt.Sprintf("%s  %s", label, styleSettingsFoot.Render(provider+"·"+caps))),
+			kv("effort", EffortLabel(babel.Effort(orDefault(m.status.Effort, "medium")))),
+			kv("mode", orDefault(m.status.Mode, "—")),
+			kv("health", healthChip(m.healthOK, m.health)),
+			kv("now", clockStr),
+		},
+	}.Render()
 }
 
 // nodeRows: the login node you're connected to, plus what it detected.
 func (m StatusModel) nodeRows() []string {
 	e := m.env
-	yesno := func(b bool) string {
-		if b {
-			return styleToolResult.Render("✓")
-		}
-		return styleError.Render("✗")
-	}
-	return []string{
-		styleSettingsTitle.Render("Login node"),
-		kv("host", orDefault(e.Host, "?")),
-		kv("user", orDefault(e.User, "?")),
-		kv("shell", orDefault(e.Shell, "?")),
-		kv("os", runtime.GOOS+"/"+runtime.GOARCH),
-		kv("tz", orDefault(e.TZ, "?")),
-		styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",
-			yesno(e.CVMFS), yesno(e.Module), yesno(e.Slurm))),
-	}
+	return Section{
+		Title: "Login node",
+		Rows: []string{
+			kv("host", orDefault(e.Host, "?")),
+			kv("user", orDefault(e.User, "?")),
+			kv("shell", orDefault(e.Shell, "?")),
+			kv("os", runtime.GOOS+"/"+runtime.GOARCH),
+			kv("tz", orDefault(e.TZ, "?")),
+			styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",
+				detChip(e.CVMFS), detChip(e.Module), detChip(e.Slurm))),
+		},
+	}.Render()
 }
 
 func (m StatusModel) providersRows() []string {
-	rows := []string{styleSettingsTitle.Render("Providers")}
-	if m.providers == nil {
-		return append(rows, styleSettingsFoot.Render("(no providers)"))
-	}
-	ps := m.providers()
-	if len(ps) == 0 {
-		return append(rows, styleSettingsFoot.Render("(none configured)"))
-	}
-	for _, p := range ps {
-		key := "✗"
-		if p.KeySet {
-			key = "✓"
+	var body []string
+	if m.providers != nil {
+		for _, p := range m.providers() {
+			key := "✗"
+			if p.KeySet {
+				key = "✓"
+			}
+			dot := styleSettingsFoot.Render("·")
+			body = append(body, fmt.Sprintf("  %s %s %s key%s %s tags[%s]",
+				truncatePad(p.Name, 18), styleSettingsFoot.Render(p.Wire), dot, key, stateChip(orDefault(p.State, "idle")), p.Tags))
 		}
-		state := p.State
-		if state == "" {
-			state = "idle"
-		}
-		dot := styleSettingsFoot.Render("·")
-		rows = append(rows, fmt.Sprintf("  %s %s %s key%s %s tags[%s]",
-			truncatePad(p.Name, 18), styleSettingsFoot.Render(p.Wire), dot, key, renderState(state), p.Tags))
 	}
-	return rows
+	if len(body) == 0 {
+		body = []string{styleSettingsFoot.Render("  (no providers configured)")}
+	}
+	return Section{Title: "Providers", Rows: body}.Render()
 }
 
 func (m StatusModel) modelsRows() []string {
-	rows := []string{styleSettingsTitle.Render("Models")}
-	if m.store == nil {
-		return rows
-	}
-	snap := m.store.Snapshot()
-	if len(snap.Models) == 0 {
-		return append(rows, styleSettingsFoot.Render("(none configured)"))
-	}
-	var usage map[string]history.Cost
-	if m.usage != nil {
-		usage = m.usage()
-	}
-	for _, mm := range snap.Models {
-		label := mm.Label
-		if label == "" {
-			label = mm.ID
+	var body []string
+	if m.store != nil {
+		usage := m.usageMap()
+		for _, mm := range m.store.Snapshot().Models {
+			label := mm.Label
+			if label == "" {
+				label = mm.ID
+			}
+			body = append(body, fmt.Sprintf("  %s  %s  %s  %s",
+				truncatePad(label, 24),
+				truncatePad(mm.Provider, 12),
+				truncatePad(capabilitiesLabel(mm), 18),
+				styleSettingsFoot.Render(tokenUsage(mm, usage))))
 		}
-		rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s",
-			truncatePad(label, 24),
-			truncatePad(mm.Provider, 12),
-			truncatePad(capabilitiesLabel(mm), 18),
-			styleSettingsFoot.Render(tokenUsage(mm, usage))))
 	}
-	return rows
+	if len(body) == 0 {
+		body = []string{styleSettingsFoot.Render("  (none configured)")}
+	}
+	return Section{Title: "Models", Rows: body}.Render()
 }
 
-// usageRows: this-session token use + per-model lifetime totals (ex-F8 Stats).
+// usageRows: this-session token use (with a context-usage meter) + per-model
+// lifetime totals (ex-F8 Stats).
 func (m StatusModel) usageRows() []string {
-	rows := []string{
-		styleSettingsTitle.Render("Usage"),
+	body := []string{
+		kv("context", contextMeter(m.lastContext, m.activeContextWindow())),
 		kv("input", fmt.Sprintf("%s tokens", formatTokens(m.sessionIn))),
 		kv("output", fmt.Sprintf("%s tokens", formatTokens(m.sessionOut))),
 		kv("total", fmt.Sprintf("%s tokens", formatTokens(m.sessionIn+m.sessionOut))),
-		kv("context", fmt.Sprintf("%s (last turn)", formatTokens(m.lastContext))),
 		kv("rounds", fmt.Sprintf("%d LLM · %d msgs", m.cycles, m.messages)),
 		kv("est. cost", estSessionCost(m.sessionIn, m.sessionOut)),
 	}
-	var usage map[string]history.Cost
-	if m.usage != nil {
-		usage = m.usage()
-	}
+	usage := m.usageMap()
 	if len(usage) == 0 {
-		rows = append(rows, styleSettingsFoot.Render("  lifetime: (no recorded usage yet)"))
+		body = append(body, styleSettingsFoot.Render("  lifetime: (no recorded usage yet)"))
 	} else {
-		rows = append(rows, styleSettingsFoot.Render("  lifetime (all chats):"))
+		body = append(body, styleSettingsFoot.Render("  lifetime (all chats):"))
 		for id, c := range usage {
-			rows = append(rows, fmt.Sprintf("    %s  %s",
+			body = append(body, fmt.Sprintf("    %s  %s",
 				truncatePad(id, 26),
 				styleSettingsFoot.Render(fmt.Sprintf("in %s · out %s",
 					formatTokens(c.InputTokens), formatTokens(c.OutputTokens)))))
 		}
 	}
-	return rows
+	return Section{Title: "Usage", Extra: "this session", Rows: body}.Render()
 }
 
 func (m StatusModel) toolsRows() []string {
-	rows := []string{styleSettingsTitle.Render("Tools")}
+	body := []string{"  " + styleSettingsVal.Render(strings.Join(m.tools, " · "))}
 	if len(m.tools) == 0 {
-		return append(rows, styleSettingsFoot.Render("(none)"))
+		body = []string{styleSettingsFoot.Render("  (none)")}
 	}
-	return append(rows, "  "+styleSettingsVal.Render(strings.Join(m.tools, " · ")))
+	return Section{Title: "Tools", Rows: body}.Render()
 }
 
 // The Slurm sections (ex-F10 Cluster screen) — shown only when Slurm is detected
@@ -385,23 +365,35 @@ func activeModel(snap config.File) (unimatrix.Model, bool) {
 	return unimatrix.Model{}, false
 }
 
-// kv renders a "label  value" row aligned with the rest of the page.
-func kv(label, value string) string {
-	return styleSettingsKey.Render(label) + "  " + value
-}
-
-func renderState(s string) string {
-	switch s {
-	case "ok":
-		return styleToolResult.Render("ok")
-	case "degraded":
-		return styleError.Render("degraded")
-	default:
-		return styleSettingsFoot.Render("idle")
+// activeContextWindow is the active model's context window (tokens), or 0 when
+// the active model is unknown or declares no window. Drives the Usage meter.
+func (m StatusModel) activeContextWindow() int {
+	if m.store == nil {
+		return 0
 	}
+	if mm, ok := activeModel(m.store.Snapshot()); ok {
+		return mm.Context
+	}
+	return 0
 }
 
-// tokenUsage renders the recorded token total for one model, or "—" when none.
+// usageMap returns the per-model lifetime usage, or nil when no provider is set.
+func (m StatusModel) usageMap() map[string]history.Cost {
+	if m.usage == nil {
+		return nil
+	}
+	return m.usage()
+}
+
+// kv renders an aligned "label  value" row. The raw label is padded to
+// statusLabelW *before* styling so values line up in a column; labels are short
+// ASCII, so byte padding is safe and we never truncate them.
+func kv(label, value string) string {
+	return styleSettingsKey.Render(fmt.Sprintf("%-*s", statusLabelW, label)) + "  " + value
+}
+
+// tokenUsage renders the recorded token total for one model (same formatTokens
+// style as the Usage section), or "—" when none.
 func tokenUsage(m unimatrix.Model, usage map[string]history.Cost) string {
 	if usage == nil {
 		return "tokens —"
@@ -410,7 +402,7 @@ func tokenUsage(m unimatrix.Model, usage map[string]history.Cost) string {
 	if !ok || (c.InputTokens == 0 && c.OutputTokens == 0) {
 		return "tokens —"
 	}
-	return fmt.Sprintf("in %d · out %d", c.InputTokens, c.OutputTokens)
+	return fmt.Sprintf("in %s · out %s", formatTokens(c.InputTokens), formatTokens(c.OutputTokens))
 }
 
 func capabilitiesLabel(m unimatrix.Model) string {

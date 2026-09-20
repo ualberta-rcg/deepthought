@@ -5,8 +5,6 @@
 package tui
 
 import (
-	"strings"
-
 	"charm.land/lipgloss/v2"
 )
 
@@ -104,26 +102,6 @@ var (
 // placeCenter centers a rendered block in a w×h area (used by splash & menu).
 func placeCenter(w, h int, block string) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
-}
-
-// bar renders a frac·width progress bar with filled (▓) and empty (░) cells,
-// tinted by status color. Used by the Status page (CPU usage, etc.).
-func bar(frac float64, width int) string {
-	if width < 1 {
-		width = 1
-	}
-	if frac < 0 {
-		frac = 0
-	}
-	if frac > 1 {
-		frac = 1
-	}
-	filled := int(frac*float64(width) + 0.5)
-	if filled > width {
-		filled = width
-	}
-	s := styleSettingsVal.Render(strings.Repeat("▓", filled)) + styleSettingsFoot.Render(strings.Repeat("░", width-filled))
-	return s
 }
 
 // spinnerGlyph renders spinner frame i as a single braille glyph painted in a

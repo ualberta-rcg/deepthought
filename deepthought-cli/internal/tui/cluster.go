@@ -18,7 +18,7 @@ const clusterBarW = 18
 // (incl. avail·usable).
 func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 	if c.Err != nil && c.NodesTotal == 0 {
-		return []string{sectionHead("Cluster"), styleError.Render("  ✗ " + c.Err.Error()), ""}
+		return Section{Title: "Cluster", Rows: []string{styleError.Render("  ✗ " + c.Err.Error())}}.Render()
 	}
 	total := c.NodesTotal
 	up := c.NodesUp
@@ -39,15 +39,16 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 	if c.GPUs > 0 {
 		gpuF = frac01(float64(c.GPUsUsed), float64(c.GPUs))
 	}
-	rows := []string{sectionHead("Cluster", fmt.Sprintf("%d running · %d pending", c.JobsRunning, c.JobsPending))}
 	nodesLine := fmt.Sprintf("  nodes  %s  %d/%d up", healthBar(nodeFrac, clusterBarW), up, total)
 	if down > 0 {
 		nodesLine += "  " + lipgloss.NewStyle().Foreground(barWarn).Render(fmt.Sprintf("(%d down)", down))
 	}
-	rows = append(rows, nodesLine)
-	rows = append(rows, fmt.Sprintf("  cpus   %s  %d%%  (%d/%d)", healthBar(cpuF, clusterBarW), fracPct(cpuF), c.CPUAlloc, c.CPUTotal))
+	body := []string{
+		nodesLine,
+		fmt.Sprintf("  cpus   %s  %d%%  (%d/%d)", healthBar(cpuF, clusterBarW), fracPct(cpuF), c.CPUAlloc, c.CPUTotal),
+	}
 	if c.MemTotalGB > 0 {
-		rows = append(rows, fmt.Sprintf("  mem    %s  %d%%  (%d/%d GB)", healthBar(memF, clusterBarW), fracPct(memF), c.MemAllocGB, c.MemTotalGB))
+		body = append(body, fmt.Sprintf("  mem    %s  %d%%  (%d/%d GB)", healthBar(memF, clusterBarW), fracPct(memF), c.MemAllocGB, c.MemTotalGB))
 	}
 	if c.GPUs > 0 {
 		avail := c.GPUs - c.GPUsUsed
@@ -59,13 +60,16 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 		if c.GPUType != "" {
 			typ = " " + c.GPUType
 		}
-		rows = append(rows, fmt.Sprintf("  gpus   %s  %d%%  (%d/%d%s · %d avail · %d usable)",
+		body = append(body, fmt.Sprintf("  gpus   %s  %d%%  (%d/%d%s · %d avail · %d usable)",
 			healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail, usable))
 	}
-	rows = append(rows, dimNote("  overall load across the whole cluster — not your usage. A GPU counts as usable only if its node also has the CPU+RAM to back it."))
-	rows = append(rows, hintNote("sinfo · squeue -t PD"))
-	rows = append(rows, "")
-	return rows
+	return Section{
+		Title:  "Cluster",
+		Extra:  fmt.Sprintf("%d running · %d pending", c.JobsRunning, c.JobsPending),
+		Rows:   body,
+		Note:   "  overall load across the whole cluster — not your usage. A GPU counts as usable only if its node also has the CPU+RAM to back it.",
+		Source: "sinfo · squeue -t PD",
+	}.Render()
 }
 
 // renderJobsBlock: the user's own running/pending jobs, with hold reasons.
@@ -79,37 +83,39 @@ func renderJobsBlock(c slurm.ClusterSnapshot) []string {
 			np++
 		}
 	}
-	rows := []string{sectionHead("Your jobs", fmt.Sprintf("%d running · %d pending", nr, np))}
+	body := []string{}
 	if len(c.YourJobs) == 0 {
-		rows = append(rows, dimNote("  no active jobs"))
+		body = append(body, dimNote("  no active jobs"))
 	} else {
 		for _, j := range c.YourJobs {
 			stStyle := lipgloss.NewStyle().Foreground(barWarn)
 			if j.State == "RUNNING" {
 				stStyle = styleSettingsVal
 			}
-			rows = append(rows, fmt.Sprintf("  %s  %s  %s  %s",
+			body = append(body, fmt.Sprintf("  %s  %s  %s  %s",
 				lipgloss.NewStyle().Bold(true).Render(truncatePad(j.ID, 8)),
 				stStyle.Render(truncatePad(j.State, 10)),
 				dimNote("up "+truncatePad(orDefault(j.Elapsed, "-"), 8)),
 				j.Name))
 			if j.State == "PENDING" && j.Reason != "" {
-				rows = append(rows, dimNote("       held: "+j.Reason))
+				body = append(body, dimNote("       held: "+j.Reason))
 			}
 		}
 	}
-	rows = append(rows, hintNote("squeue --me"))
-	rows = append(rows, "")
-	return rows
+	return Section{
+		Title:  "Your jobs",
+		Extra:  fmt.Sprintf("%d running · %d pending", nr, np),
+		Rows:   body,
+		Source: "squeue --me",
+	}.Render()
 }
 
 // renderFairshareBlock: per-account fairshare standing + LevelFS.
 func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
-	rows := []string{sectionHead("Fairshare")}
+	body := []string{}
 	if len(c.FairshareRows) == 0 {
-		rows = append(rows, dimNote("  (no fairshare data)"))
-		rows = append(rows, "")
-		return rows
+		body = append(body, dimNote("  (no fairshare data)"))
+		return Section{Title: "Fairshare", Rows: body}.Render()
 	}
 	for _, r := range c.FairshareRows {
 		label, p := slurm.FairshareTier(r.Fairshare)
@@ -122,28 +128,32 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 		if r.LevelFS != "" {
 			line += "  " + dimNote("LevelFS "+r.LevelFS+" ("+slurm.LevelFSTier(r.LevelFS)+")")
 		}
-		rows = append(rows, line)
+		body = append(body, line)
 	}
-	rows = append(rows, dimNote("  who goes first when the cluster is full. 1 = front of the queue (you've barely used your share); 0 = longest wait. It recovers on its own — past usage counts less each day."))
-	rows = append(rows, hintNote("sshare"))
-	rows = append(rows, "")
-	return rows
+	return Section{
+		Title:  "Fairshare",
+		Rows:   body,
+		Note:   "  who goes first when the cluster is full. 1 = front of the queue (you've barely used your share); 0 = longest wait. It recovers on its own — past usage counts less each day.",
+		Source: "sshare",
+	}.Render()
 }
 
 // renderStorageBlock: how full the user's directories are (home/scratch/projects).
 func renderStorageBlock(c slurm.ClusterSnapshot) []string {
-	rows := []string{sectionHead("Your dirs")}
 	if len(c.StorageRows) == 0 {
-		rows = append(rows, dimNote("  (no storage data)"))
-		return rows
+		return Section{Title: "Your dirs", Rows: []string{dimNote("  (no storage data)")}}.Render()
 	}
+	body := []string{}
 	for _, r := range c.StorageRows {
-		rows = append(rows, fmt.Sprintf("  %s  %s  %d%%  %s / %s",
+		body = append(body, fmt.Sprintf("  %s  %s  %d%%  %s / %s",
 			truncatePad(r.Label, 14), diskBar(frac01(float64(r.Pct), 100), clusterBarW), r.Pct, r.Used, r.Size))
 	}
-	rows = append(rows, dimNote("  how full your directories are. scratch is fast but NOT backed up — idle files rotate out."))
-	rows = append(rows, hintNote("diskusage_report"))
-	return rows
+	return Section{
+		Title:  "Your dirs",
+		Rows:   body,
+		Note:   "  how full your directories are. scratch is fast but NOT backed up — idle files rotate out.",
+		Source: "diskusage_report",
+	}.Render()
 }
 
 // frac01 clamps num/den to a 0–1 fraction (0 when den is 0).

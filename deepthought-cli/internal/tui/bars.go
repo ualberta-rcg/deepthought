@@ -7,13 +7,12 @@ import (
 	"charm.land/lipgloss/v2"
 )
 
-// The Cluster screen (F10) borrows the visual language of the hand-written
+// The Slurm Status sections borrow the visual language of the hand-written
 // /usr/local/bin/vulcan-status MOTD: ▓░ bars where FILL LENGTH is the primary
 // signal and color is reinforcement only, on a colorblind-safe palette (teal /
 // orange / bold light-red, which differ along the blue↔yellow axis AND in
 // lightness — never green-vs-red alone). These helpers render that language
-// inside the TUI. (The fixed single-color bar() in styles.go is the simpler
-// Status-page variant; these are the threshold-colored ones.)
+// inside the TUI; section.go's chips and meters reuse the same ramp colors.
 
 // Cluster-utilization ramp colors (fill), best → worst.
 var (
