@@ -31,43 +31,38 @@ running tools, and executing shell commands under a permission gate.
   navigation history stack**: splash (any key) → **New Chat** if an agentic model is
   configured, else → **Settings › Providers › + add**. F-keys/slash commands push a
   screen onto the stack; `esc` pops it (overlay first, then the screen stack, then
-  **chat** = home, where esc is a no-op). So `settings → models(F3) → effort(e) → esc`
-  walks models → settings → chat. While a turn streams, the 1st `esc` interrupts; the
+  **chat** = home, where esc is a no-op). While a turn streams, the 1st `esc` interrupts; the
   2nd (idle) is a no-op at chat. **Quitting is only** `/quit` (alias `/exit`, `/fish`)
-  or **2× `ctrl+c`** — no q/esc-quit. Screens: **Chat** (home), a **drill-down settings
-  editor** (incl. a new **General/Profile** section), **Continue** (the "which chat to
-  rejoin" picker), **Grid** (`/vortex`), a **Cluster** page (F10), a **Software**
-  page (F11), and a **Status** page (F12). (The old hub is gone — `hub.go` is a stub.)
-  The Status page (F12, `internal/tui/status.go`) is one unified, **scrollable**
-  screen: Session (model·effort·mode·health·clock/date/tz), Providers (cached
-  reachability from circuit breakers — no network), Models + per-model tokens (now
-  populated for Anthropic-wire models too), Tools, Environment
-  (CVMFS/module/Slurm/shell/host/user), and a one-line **Cluster** summary that
-  points to F10 for detail. The **Cluster** screen (F10, `internal/tui/cluster.go`)
-  is the full `vulcan-status`-styled view — nodes/CPUs/memory/GPUs (incl.
-  avail·usable), your jobs (with hold reason), per-account fairshare + LevelFS, and
-  storage — all from a background `slurm.Snapshot` poller at login + every 5 min
-  (colorblind-safe `▓░` bars, a "what this means" line under each block, `→ run:`
-  hints; opening never blocks). The **Software** screen (F11,
-  `internal/tui/software.go`) is a searchable CVMFS/module browser: type a name,
-  `module spider` runs in the background, pick a version for the exact
-  `module load …` line, plus static common-stacks / CVMFS-roots / notes blocks from
-  the alliance-cvmfs skill. The chat also gets a transient, clearly-labelled cluster
-  blurb each turn so the model can reason about scheduling without running `squeue`. **Settings/Continue/Status/Grid** use a full-terminal bordered frame
-  with a pinned bottom **keybar**; **Settings** is a **two-pane drill-down**
-  (lazygit/k9s-style: left = read-only section/entity tree; right = actionable list →
-  inline field editor). **Overlay pickers** (`internal/tui/overlay.go`) float centered
-  over the active screen and nest: the **Effort** picker (`/effort`, F4 — Off→Max labels)
-  and the **Model chooser** (F3 — switch the *running*
-  model; press `e` to branch into Effort, which returns to the chooser). Splash shows the
-  **DeepThought** mark + drifting rainbow, **"Don't Panic."**, a rotating HHGTTG subtitle,
-  and a model·provider status line. F-keys: `F2` settings · `F3` model chooser · `F4`
-  effort · `F5` new chat · `F6` resume · `F7` context grid · `F9` permission
-  mode · `F11` software · `F12` status. **Effort is the sole reasoning
+  or **2× `ctrl+c`** — no q/esc-quit. Screens: **Chat** (home, with a live info sidebar on
+  very wide terminals), the flat-tabbed **Settings** editor, **Continue**, **Grid**
+  (`/vortex`), **Cron** (F8), **Models** (F11), and **Status** (F12).
+  The **Status** page (F12, `internal/tui/status.go`) is one unified, scrollable,
+  **detection-gated** page built on the **Section kit** (`internal/tui/section.go` — every
+  block is a `Section{Title,Extra,Rows,Note,Source}` with bars/meters/chips): Session,
+  Login node, Providers (state chips), Models, Usage (context meter), Tools always; Cluster
+  / Your jobs / Fairshare / Your dirs only when Slurm (or storage rows) are detected — all
+  fed by the background `slurm.Snapshot` poller. The **Cron** screen (F8,
+  `internal/tui/cron.go`) manages the user's REAL crontab over `internal/cron` (staged
+  edits, diff review, hard y/N gate, backups, first/last-seen tracking registry). The
+  **Models** screen (F11, `internal/tui/models.go`) is the catalog's own home (edit, add
+  from provider discovery, test, role toggles, delete). The chat gets a transient, clearly-labelled cluster blurb AND a ≤6-line **environment
+  brief** each turn (host, slurm + GPU type, modules, fairshare, storage). Framed screens
+  share one kit (`internal/tui/frame.go`): `screenTitle` ("DeepThought › X"), `KeyBar`
+  chips, `emptyRow` vocabulary, ANSI-safe clipping, `overlayCenter` compositing. The
+  **Settings** editor (`internal/tui/settings.go`) is a flat **tabbed** layout (General ·
+  Providers · Roles · Perms · Theme · System; ←/→ or digits switch): every field commit
+  re-bases on a FRESH config snapshot before saving (concurrent edits never clobber),
+  "+ Add" stages in-memory drafts until valid, and the splash drops you straight at
+  Providers › + add when nothing is configured. **Overlay pickers** (`overlay.go`) nest:
+  the **Effort** picker (F4) and the **Model chooser** (F3). The splash is the big
+  **DON'T PANIC** wordmark (go-figure colossal, static cyan→violet brand gradient).
+  F-keys: `F1` help · `F2` settings · `F3` model · `F4` effort · `F5` new chat · `F6`
+  resume · `F7` grid · `F8` cron · `F9` mode · `F10` sidebar · `F11` models · `F12`
+  status. **Effort is the sole reasoning
   control** (F4 /
   `/effort`): off = no thinking; any other level = thinking on at that
-  level. Top bar (dark-grey band): rainbow `DeepThought · model [F3] · mode · effort [F4]`
-  + responsive clock. Chat chrome: activity line above input + bottom status-line band.
+  level. Top bar (dark-grey band): solid `DeepThought` wordmark · model [F3] · mode ·
+  effort [F4] + responsive clock (the rainbow is retired everywhere). Chat chrome: activity line above input + bottom status-line band.
 
   **Config v2** (`~/.deepthought/config.json`; see `configs/config.example.json`):
   `providers` (unlimited backends — name, base URL, API key or `$ENV_VAR`, wire
@@ -182,6 +177,8 @@ alternative if the node ever feels it.
 
 - [`docs/ROADMAP.md`](docs/ROADMAP.md) — the research-copilot capability roadmap (vision; much
   is future work pending the server side).
+- [`docs/SERVER.md`](docs/SERVER.md) — the server-side architecture + the live skeleton
+  (`cmd/deepthought-server`; destined for deepthought.vulcan.alliancecan.ca).
 - Repo root [`CLAUDE.md`](../CLAUDE.md) — repo-wide rules: two-product layout,
   build/run pointers, and the changelog-before-commit rule.
 - Repo root [`CHANGELOG.md`](../CHANGELOG.md) — running change record.

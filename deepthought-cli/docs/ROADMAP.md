@@ -8,9 +8,19 @@ validates and compares results, supports interactive→batch transitions and sci
 tools, shares lab knowledge, and gives the researcher control over autonomy and spend — all
 within an explicit objective.
 
-> **Status: vision, not yet built.** Much of this is future work and depends on a **server side
-> that does not exist yet** (see the architecture note below). This file is the durable record
-> of direction; individual capabilities are pulled forward one at a time, not as a batch.
+> **Status: vision, not yet built.** Much of this is future work and depends on the **server
+> side** — groundwork has now started: a skeleton HTTP server + live reload + this document's
+> architecture live at `cmd/deepthought-server` (see [SERVER.md](SERVER.md)), destined for
+> `deepthought.vulcan.alliancecan.ca` as a container on the Vulcan Kubernetes cluster.
+> Individual capabilities are pulled forward one at a time, not as a batch.
+>
+> **MCP note:** Claude Code already supports external tools through MCP and automation
+> through hooks — some of these capabilities could also be exposed to researchers using it.
+> The advantage here is how well the HPC capabilities work together. (Claude Code MCP docs:
+> https://code.claude.com/docs/en/mcp; Slurm arrays:
+> https://slurm.schedmd.com/job_array.html; Nextflow resume:
+> https://docs.seqera.io/nextflow/cache-and-resume; NERSC long-running jobs:
+> https://docs.nersc.gov/jobs/best-practices/#long-running-jobs)
 
 ## Architecture principle
 
@@ -19,7 +29,7 @@ storage**. The model *interprets evidence, proposes changes, and selects actions
 **execution system enforces constraints and tracks what actually happened.** This lets you swap
 models without losing research history.
 
-The missing piece today is the **server side**: a durable, detachable daemon that persists state
+The missing piece is the **server side**: a durable, detachable daemon that persists state
 across client disconnects and restarts and resumes work. v1's Transwarp socket
 (`--towel` / `ls` / `attach` / `stop`) is a primitive for this, not the thing itself.
 

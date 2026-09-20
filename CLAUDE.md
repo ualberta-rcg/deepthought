@@ -5,7 +5,7 @@ This repo holds **two products**, one directory each:
 | Dir | Product | Status |
 |---|---|---|
 | `deepthought-cli/` | Agentic terminal assistant in **Go**, served as a TUI over SSH. Users `ssh` in, land on a splash, and drive an LLM agent (code, HPC/Slurm, shell) under a permission gate. | v1 implemented, live |
-| `deepthought-server/` | Placeholder for the server-side product. | no code yet |
+| `deepthought-server/` | Placeholder for the server-side product (the skeleton starts at `deepthought-cli/cmd/deepthought-server` — Go internal/ can't cross modules; see `deepthought-cli/docs/SERVER.md`). | skeleton live |
 
 Read the app's own `CLAUDE.md` before working in it (`deepthought-cli/CLAUDE.md`
 carries the TUI status, naming lore, and conventions). Cross-cutting docs go in
