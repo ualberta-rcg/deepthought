@@ -1,0 +1,110 @@
+name: Build deepthought-server
+
+# Builds + tests the DeepThought server and publishes its container image.
+# Mirrors the aleph house pattern (deploy-gateway.yml): path-filtered push to
+# main + workflow_dispatch; Docker publish uses the same secret names
+# (DOCKER_HUB_USER / DOCKER_HUB_TOKEN, optional DOCKER_HUB_REPO override) so
+# enabling it is adding the secrets — the build + artifact path below needs
+# zero secrets and always runs.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'deepthought-cli/**'
+      - '.github/workflows/build-server.yml'
+  workflow_dispatch:
+    inputs:
+      IMAGE_TAG:
+        description: 'Immutable image tag override (default: server-<shortsha>)'
+        required: false
+        default: ''
+      STABLE_TAG:
+        description: 'Stable moving tag (default: latest)'
+        required: false
+        default: 'latest'
+
+jobs:
+  test-and-build:
+    name: Test + Build
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: deepthought-cli/go.mod
+
+      - name: Vet + Test
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          go vet ./...
+          go test ./...
+
+      - name: Build static binary
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../out/deepthought-server ./cmd/deepthought-server
+          ./../out/deepthought-server --help >/dev/null && echo "binary runs"
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepthought-server-${{ github.sha }}
+          path: out/deepthought-server
+          if-no-files-found: error
+
+      # --- Optional image publish (aleph secret conventions) ------------------
+      # Runs only when DOCKER_HUB_USER/DOCKER_HUB_TOKEN exist; skipped otherwise.
+      - name: Resolve image repository
+        id: repo
+        env:
+          SECRET_REPO: ${{ secrets.DOCKER_HUB_REPO }}
+          VAR_REPO: ${{ vars.DOCKER_HUB_REPO }}
+        run: |
+          set -euo pipefail
+          REPO="${SECRET_REPO}"
+          [ -z "${REPO}" ] && REPO="${VAR_REPO}"
+          [ -z "${REPO}" ] && REPO="rkhoja/deepthought"
+          echo "IMAGE_REPO=${REPO}" >> "$GITHUB_OUTPUT"
+          echo "Using IMAGE_REPO=${REPO}"
+
+      - name: Resolve tags
+        id: tags
+        env:
+          INPUT_IMAGE_TAG: ${{ github.event.inputs.IMAGE_TAG }}
+          INPUT_STABLE_TAG: ${{ github.event.inputs.STABLE_TAG }}
+        run: |
+          set -euo pipefail
+          SHA="${GITHUB_SHA::7}"
+          TAG="${INPUT_IMAGE_TAG}"
+          [ -z "${TAG}" ] && TAG="server-${SHA}"
+          STABLE="${INPUT_STABLE_TAG}"
+          [ -z "${STABLE}" ] && STABLE="latest"
+          echo "IMAGE_TAG=${TAG}" >> "$GITHUB_OUTPUT"
+          echo "STABLE_TAG=${STABLE}" >> "$GITHUB_OUTPUT"
+
+      - name: Build image (local)
+        run: |
+          set -euo pipefail
+          docker build -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" \
+            -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}" \
+            deepthought-cli
+
+      - name: Push image
+        if: ${{ env.HAS_DOCKER_CREDS == 'true' }}
+        env:
+          DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
+          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
+          HAS_DOCKER_CREDS: ${{ secrets.DOCKER_HUB_USER != '' && secrets.DOCKER_HUB_TOKEN != '' }}
+        run: |
+          set -euo pipefail
+          echo "${DOCKER_HUB_TOKEN}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
+          docker push "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}"
+          docker push "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}"
