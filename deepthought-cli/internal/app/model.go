@@ -116,7 +116,7 @@ func NewRootModel(d Deps) RootModel {
 	if sid == "" {
 		sid = newSessionID()
 	}
-	return RootModel{
+	m := RootModel{
 		deps:      d,
 		screen:    d.StartScreen,
 		status:    d.Status,
@@ -133,6 +133,8 @@ func NewRootModel(d Deps) RootModel {
 		cronScr:   tui.NewCronModel(cronDataDir()),
 		bindings:  d.Bindings,
 	}
+	m.settings = m.settings.SetEnv(env)
+	return m
 }
 
 // statusInputs builds the Status page's external inputs: cached provider rows,

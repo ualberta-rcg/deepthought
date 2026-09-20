@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -43,12 +44,14 @@ type settingsTab struct {
 }
 
 var settingsTabs = []settingsTab{
+	{"overview", "Overview"},   // config at a glance: health, roles, counts
 	{"general", "General"},     // profile + behavior (effort/max-tokens/temperature)
-	{"providers", "Providers"}, // backends
+	{"providers", "Providers"}, // backends (advanced fields in the entity editor)
 	{"roles", "Roles"},         // role → model assignment
+	{"routing", "Routing"},     // declarative routes (capability/cost/prefer)
 	{"permissions", "Perms"},
 	{"appearance", "Theme"},
-	{"system", "System"}, // read-only: cluster/storage/keybindings reference
+	{"system", "System"}, // read-only: host descriptor + storage + keybindings
 }
 
 // settingsRoadmap is the dim one-liner under the tab row marking where the
@@ -72,6 +75,7 @@ const (
 type SettingsModel struct {
 	store ConfigStore
 	info  SettingsInfo
+	env   EnvInfo     // host descriptor → the System tab
 	dirty config.File // working copy (render cache + draft staging)
 
 	tab    int          // index into settingsTabs
@@ -120,6 +124,12 @@ func NewSettingsModelAt(store ConfigStore, info SettingsInfo, tabKey string, add
 	if add {
 		m.cursor = m.entityCount()
 	}
+	return m
+}
+
+// SetEnv stamps the host descriptor (drives the System tab).
+func (m SettingsModel) SetEnv(e EnvInfo) SettingsModel {
+	m.env = e
 	return m
 }
 
@@ -192,6 +202,7 @@ func (m SettingsModel) switchTab(i int) (SettingsModel, tea.Cmd) {
 
 func (m SettingsModel) gotoTab(i int) (SettingsModel, tea.Cmd) {
 	m.finishAdd()
+	m.edit = nil // never carry an open editor across tabs
 	m.tab, m.view, m.cursor, m.permBucket, m.permAdding = i, viewList, 0, "", false
 	m.saved = ""
 	return m, nil
@@ -233,6 +244,10 @@ func (m SettingsModel) activate() (SettingsModel, tea.Cmd) {
 		return m.openField()
 	}
 	switch m.tabKeyOf() {
+	case "overview", "system":
+		return m, nil // read-only tabs
+	case "routing":
+		return m.enterOrAddRoute()
 	case "general", "appearance":
 		return m.openScalarField()
 	case "providers":
@@ -300,7 +315,7 @@ func (m SettingsModel) activatePermRules() (SettingsModel, tea.Cmd) {
 	rules := m.permRules()
 	if m.cursor >= len(rules) { // "+ Add rule"
 		m.edit = newTextEdit(m.permBucket+" rule", "", false)
-		m.edit.setWidth(m.width)
+		m.edit.setWidth(m.width - 8)
 		m.editIdx = -1
 		m.permAdding = true
 		return m, m.focusCmd()
@@ -399,6 +414,10 @@ func (m *SettingsModel) finishAdd() {
 
 // dropDraft removes the staged (still-invalid) entity from the working copy.
 func (m *SettingsModel) dropDraft() {
+	if m.entityKind == "route" {
+		delete(m.dirty.Routes, m.entityRef)
+		return
+	}
 	if m.entityKind == "provider" {
 		for i := len(m.dirty.Providers) - 1; i >= 0; i-- {
 			if strings.TrimSpace(m.dirty.Providers[i].Name) == m.entityRef {
@@ -439,7 +458,7 @@ func (m SettingsModel) openEdit(d fieldDef, idx int) (SettingsModel, tea.Cmd) {
 	case fMulti:
 		edit = newMultiEdit(d.label, d.options, d.getMulti(&m.dirty))
 	}
-	edit.setWidth(m.width)
+	edit.setWidth(m.width - 8)
 	m.edit = edit
 	m.editIdx = idx
 	return m, m.focusCmd()
@@ -651,6 +670,12 @@ func (m SettingsModel) rowCount() int {
 		return len(m.fieldDefs())
 	}
 	switch m.tabKeyOf() {
+	case "overview":
+		return len(m.overviewRows())
+	case "routing":
+		return len(m.routeKeys()) + 1 // + Add
+	case "system":
+		return len(m.systemRows())
 	case "general", "appearance":
 		return len(m.fieldDefs())
 	case "providers":
@@ -662,14 +687,8 @@ func (m SettingsModel) rowCount() int {
 			return len(m.permRules()) + 1 // + Add rule
 		}
 		return 4 // mode, allow, ask, deny
-	case "system":
-		return m.systemRowCount()
 	}
 	return 0
-}
-
-func (m SettingsModel) systemRowCount() int {
-	return 8 + 12 // cluster/storage reference + F1-F12
 }
 
 func (m SettingsModel) clampCursor() {
@@ -710,6 +729,12 @@ func (m SettingsModel) rows() []string {
 		return m.entityRows()
 	}
 	switch m.tabKeyOf() {
+	case "overview":
+		return m.overviewRows()
+	case "routing":
+		return m.routingRows()
+	case "system":
+		return m.systemRows()
 	case "general", "appearance":
 		return m.fieldRows()
 	case "providers":
@@ -734,8 +759,6 @@ func (m SettingsModel) rows() []string {
 		return rs
 	case "permissions":
 		return m.permRows()
-	case "system":
-		return m.systemRows()
 	}
 	return nil
 }
@@ -811,24 +834,34 @@ func (m SettingsModel) permRows() []string {
 }
 
 func (m SettingsModel) systemRows() []string {
-	rows := []string{
-		settingRow("scheduler", "Slurm"),
-		settingRow("cluster", envOr("SLURM_CLUSTER_NAME", "local discovery")),
-		settingRow("partitions / GRES", "machine-readable discovery"),
-		settingRow("fairshare", "sshare + sprio"),
-		settingRow("queue", "squeue --json"),
-		settingRow("home", envOr("HOME", "—")+" · backed up"),
-		settingRow("scratch", envOr("SCRATCH", "—")+" · 60-day purge"),
-		settingRow("project", envOr("PROJECT", "—")+" · backed up"),
+	e := m.env
+	var rows []string
+	add := func(k, v string) { rows = append(rows, settingRow(k, v)) }
+	add("host", orDefault(e.ShortName, orDefault(e.Host, "?")))
+	if e.LongName != "" && e.LongName != e.ShortName {
+		add("fqdn", e.LongName)
 	}
+	add("os", orDefault(e.OSName, "—"))
+	add("kernel", orDefault(e.Kernel, "—"))
+	add("arch", orDefault(e.Arch, "?"))
+	if e.CPUs > 0 {
+		spec := fmt.Sprintf("%d", e.CPUs)
+		if e.MemGB > 0 {
+			spec += fmt.Sprintf(" · %d GB", e.MemGB)
+		}
+		add("cpus", spec)
+	}
+	add("home", envOr("HOME", "—")+" · backed up")
+	add("scratch", envOr("SCRATCH", "—")+" · 60-day purge")
+	add("project", envOr("PROJECT", "—")+" · backed up")
 	for i := 1; i <= 12; i++ {
-		rows = append(rows, settingRow(fmt.Sprintf("F%d", i), functionKeyLabel(i)))
+		add(fmt.Sprintf("F%d", i), functionKeyLabel(i))
 	}
-	rs := make([]string, len(rows))
+	out := make([]string, len(rows))
 	for i, r := range rows {
-		rs[i] = m.mark(i, r)
+		out[i] = m.mark(i, r)
 	}
-	return rs
+	return out
 }
 
 // mark renders one list row with the cursor highlight.
@@ -911,6 +944,201 @@ func (m SettingsModel) keybar() []KeyHint {
 	return append(hints, KeyHint{"esc", "back"})
 }
 
+// --- Overview + Routing (the refill) -------------------------------------------------
+
+// overviewRows: the config at a glance — health, the active model + every
+// role assignment, counts, and the file path. Read-only ( Roles edits roles,
+// Providers/Models edit entities).
+func (m SettingsModel) overviewRows() []string {
+	health, healthOK := "valid", true
+	if _, err := config.Validate(m.dirty); err != nil {
+		health, healthOK = err.Error(), false
+	}
+	h := styleToolResult.Render("✓ valid")
+	if !healthOK {
+		h = styleError.Render("✗ " + health)
+	}
+	rows := []string{
+		settingRow("config", h),
+		settingRow("file", m.store.Path()),
+		settingRow("models", fmt.Sprintf("%d  (F11 manages them)", len(m.dirty.Models))),
+		settingRow("providers", fmt.Sprintf("%d", len(m.dirty.Providers))),
+		settingRow("routes", fmt.Sprintf("%d  (Routing tab)", len(m.dirty.Routes))),
+	}
+	if mm, ok := activeModel(m.dirty); ok {
+		rows = append(rows, settingRow("running", modelLabel(mm)))
+	}
+	for _, role := range unimatrix.Roles() {
+		assigned := "—"
+		if id := m.dirty.Roles[role]; id != "" {
+			assigned = id
+		}
+		rows = append(rows, settingRow(role, assigned))
+	}
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = m.mark(i, r)
+	}
+	return out
+}
+
+// routeKeys returns the route names in a stable order.
+func (m SettingsModel) routeKeys() []string {
+	out := make([]string, 0, len(m.dirty.Routes))
+	for k := range m.dirty.Routes {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// routingRows: the route list with the cursor marked.
+func (m SettingsModel) routingRows() []string {
+	rs := []string{}
+	for i, k := range m.routeKeys() {
+		r := m.dirty.Routes[k]
+		spec := string(r.Capability)
+		if r.NeedsTools {
+			spec += " · tools"
+		}
+		if r.MaxCost > 0 {
+			spec += fmt.Sprintf(" · ≤$%g", r.MaxCost)
+		}
+		if len(r.Prefer) > 0 {
+			spec += " · prefer " + strings.Join(r.Prefer, ",")
+		}
+		rs = append(rs, m.mark(i, settingRow(k, spec)))
+	}
+	return append(rs, m.mark(len(m.routeKeys()), "+ Add route"))
+}
+
+// enterOrAddRoute: enter on a route opens its field editor; "+ Add" stages a
+// draft route (the same draft discipline as providers).
+func (m SettingsModel) enterOrAddRoute() (SettingsModel, tea.Cmd) {
+	keys := m.routeKeys()
+	if m.cursor >= len(keys) { // + Add
+		if m.dirty.Routes == nil {
+			m.dirty.Routes = map[string]config.Route{}
+		}
+		m.dirty.Routes["new-route"] = config.Route{Capability: unimatrix.CapGenerate}
+		m.entityKind, m.entityRef, m.adding = "route", "new-route", true
+		m.view, m.cursor = viewEntity, 0
+		return m, nil
+	}
+	m.entityKind, m.entityRef, m.adding = "route", keys[m.cursor], false
+	m.view, m.cursor = viewEntity, 0
+	return m, nil
+}
+
+// routeFieldDefs: one route's editable fields, keyed by its stable name.
+func routeFieldDefs(ref string) []fieldDef {
+	find := func(f *config.File) *config.Route {
+		if r, ok := f.Routes[ref]; ok {
+			return &r
+		}
+		return nil
+	}
+	caps := capStrings()
+	return []fieldDef{
+		{"name", fText, false, nil,
+			func(f *config.File) string { return ref }, nil,
+			func(f *config.File, e *fieldEdit) error {
+				n := strings.TrimSpace(e.value())
+				if n == "" {
+					return fmt.Errorf("name is required")
+				}
+				if _, exists := f.Routes[n]; exists && n != ref {
+					return fmt.Errorf("route %q already used", n)
+				}
+				if _, ok := f.Routes[ref]; !ok {
+					return fmt.Errorf("route was removed elsewhere")
+				}
+				f.Routes[n] = f.Routes[ref]
+				if n != ref {
+					delete(f.Routes, ref)
+				}
+				return nil
+			}},
+		{"capability", fEnum, false, caps,
+			func(f *config.File) string {
+				if r := find(f); r != nil {
+					return string(r.Capability)
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				r := find(f)
+				if r == nil {
+					return fmt.Errorf("route was removed elsewhere")
+				}
+				r.Capability = unimatrix.Capability(e.value())
+				f.Routes[ref] = *r
+				return nil
+			}},
+		{"needs tools", fEnum, false, []string{"off", "on"},
+			func(f *config.File) string {
+				if r := find(f); r != nil && r.NeedsTools {
+					return "on"
+				}
+				return "off"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				r := find(f)
+				if r == nil {
+					return fmt.Errorf("route was removed elsewhere")
+				}
+				r.NeedsTools = e.value() == "on"
+				f.Routes[ref] = *r
+				return nil
+			}},
+		{"max cost $", fText, false, nil,
+			func(f *config.File) string {
+				if r := find(f); r != nil && r.MaxCost > 0 {
+					return fmt.Sprintf("%g", r.MaxCost)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				r := find(f)
+				if r == nil {
+					return fmt.Errorf("route was removed elsewhere")
+				}
+				v, err := strconv.ParseFloat(strings.TrimSpace(e.value()), 64)
+				if err != nil || v < 0 {
+					return fmt.Errorf("max cost must be a number")
+				}
+				r.MaxCost = v
+				f.Routes[ref] = *r
+				return nil
+			}},
+		{"prefer", fText, false, nil,
+			func(f *config.File) string {
+				if r := find(f); r != nil {
+					return strings.Join(r.Prefer, ", ")
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				r := find(f)
+				if r == nil {
+					return fmt.Errorf("route was removed elsewhere")
+				}
+				r.Prefer = parseTags(e.value())
+				f.Routes[ref] = *r
+				return nil
+			}},
+		{"delete", fEnum, false, []string{"-", "DELETE"},
+			func(f *config.File) string { return "-" }, nil,
+			func(f *config.File, e *fieldEdit) error {
+				if e.value() != "DELETE" {
+					return fmt.Errorf("cycle to DELETE and enter to remove this route")
+				}
+				delete(f.Routes, ref)
+				return nil
+			}},
+	}
+}
+
 // --- field definitions -------------------------------------------------------------
 
 // fieldDef describes one editable field. get/set take the target config.File
@@ -931,6 +1159,8 @@ type fieldDef struct {
 // General/Appearance tab's flat list, or the open entity's fields.
 func (m SettingsModel) fieldDefs() []fieldDef {
 	switch {
+	case m.view == viewEntity && m.entityKind == "route":
+		return routeFieldDefs(m.entityRef)
 	case m.view == viewEntity:
 		return m.providerFieldDefs()
 	case m.tabKeyOf() == "appearance":
@@ -1120,6 +1350,118 @@ func providerFieldDefs(ref string) []fieldDef {
 				f.Providers[i].Tags = parseTags(e.value())
 				return nil
 			}},
+		// Advanced knobs — consumed by RouteClient + the circuit breakers with
+		// no UI before this; 0 = unset (defaults apply).
+		{"timeout_ms", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].TimeoutMS > 0 {
+					return strconv.Itoa(f.Providers[i].TimeoutMS)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(e.value()))
+				if err != nil || n < 0 {
+					return fmt.Errorf("timeout must be a non-negative number")
+				}
+				f.Providers[i].TimeoutMS = n
+				return nil
+			}},
+		{"max_failures", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].MaxFailures > 0 {
+					return strconv.Itoa(f.Providers[i].MaxFailures)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(e.value()))
+				if err != nil || n < 0 {
+					return fmt.Errorf("max failures must be a non-negative number")
+				}
+				f.Providers[i].MaxFailures = n
+				return nil
+			}},
+		{"cooldown_ms", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].CooldownMS > 0 {
+					return strconv.Itoa(f.Providers[i].CooldownMS)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(e.value()))
+				if err != nil || n < 0 {
+					return fmt.Errorf("cooldown must be a non-negative number")
+				}
+				f.Providers[i].CooldownMS = n
+				return nil
+			}},
+		{"max_usd", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].MaxUSD > 0 {
+					return fmt.Sprintf("%g", f.Providers[i].MaxUSD)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				v, err := strconv.ParseFloat(strings.TrimSpace(e.value()), 64)
+				if err != nil || v < 0 {
+					return fmt.Errorf("max usd must be a number")
+				}
+				f.Providers[i].MaxUSD = v
+				return nil
+			}},
+		{"max_tokens", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].MaxTokens > 0 {
+					return strconv.Itoa(f.Providers[i].MaxTokens)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(e.value()))
+				if err != nil || n < 0 {
+					return fmt.Errorf("max tokens must be a non-negative number")
+				}
+				f.Providers[i].MaxTokens = n
+				return nil
+			}},
+		{"clearance", fEnum, false, []string{"public", "internal", "restricted", "secret"},
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return orDefault(f.Providers[i].Clearance, "public")
+				}
+				return "public"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				f.Providers[i].Clearance = e.value()
+				return nil
+			}},
 	}
 }
 
@@ -1231,6 +1573,36 @@ func modelFieldDefs(ref string, provNames []string) []fieldDef {
 				f.Models[i].Context = n
 				return nil
 			}},
+		{"reasoning_style", fEnum, false, []string{"", "gptoss", "qwen", "gemma4", "deepseek", "anthropic"},
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].ReasoningStyle
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				f.Models[i].ReasoningStyle = e.value()
+				return nil
+			}},
+		{"effort_override", fEnum, false, []string{"", "off", "low", "medium", "high", "max"},
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].Effort
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				f.Models[i].Effort = e.value()
+				return nil
+			}},
 		{"tags", fText, false, nil,
 			func(f *config.File) string {
 				if i := find(f); i >= 0 {
@@ -1286,6 +1658,18 @@ func (m SettingsModel) appearanceFieldDefs() []fieldDef {
 			func(f *config.File, e *fieldEdit) error {
 				ensureStatusLine(f)
 				f.StatusLine.Command = strings.TrimSpace(e.value())
+				return nil
+			}},
+		{"sidebar", fEnum, false, []string{"auto", "on", "off"},
+			func(f *config.File) string {
+				if f.Appearance != nil && f.Appearance.Sidebar != "" {
+					return f.Appearance.Sidebar
+				}
+				return "auto"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				ensureAppearance(f)
+				f.Appearance.Sidebar = e.value()
 				return nil
 			}},
 		{"top bar legend", fEnum, false, []string{"on", "off"},

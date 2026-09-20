@@ -18,6 +18,32 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — Settings refilled: Overview + Routing tabs, advanced knobs, host System
+
+"It feels empty" — fixed with real substance, not padding.
+- **Overview tab (new, first):** config health (live validation), the settings file path,
+  model/provider/route counts, the running model, and every role assignment at a glance —
+  the at-a-glance page the redesign lost. Read-only (Roles edits roles; F11 manages models).
+- **Routing tab (new):** the declarative routes that `RouteClient` consumes — until now
+  editable only by hand in config.json, with ZERO UI anywhere. List + add/edit/delete with
+  the same draft discipline as providers (name, capability, needs-tools, max-cost, prefer,
+  and a deliberate DELETE enum).
+- **Provider advanced fields (entity editor):** timeout, max-failures, cooldown (circuit
+  breaker), max-usd + max-tokens (budgets), clearance — all consumed by routing/breakers
+  with no way to view or edit them before.
+- **Models (F11):** `reasoning_style` (load-bearing — drives the babel request wire
+  format; hand-edit-only until now) + per-model `effort` override fields.
+- **Theme tab:** the `sidebar` field (auto/on/off — only reachable via F10 before).
+- **System tab:** the host descriptor (short name, FQDN, OS, kernel, arch, cpus·mem) +
+  storage paths + F-key map. Settings gains `SetEnv` (root passes the descriptor).
+- **Fixes:** `gotoTab` closes any open editor (F-keys fire during enum/multi edits and
+  could leave a stale editor rendering over a different tab's fields); the inline editor
+  width matches the frame's content width (was 4 over).
+- Files: internal/tui/settings.go + settings_test.go, internal/app/model.go.
+- Verified: TestSettingsOverviewAndRouting (overview renders; route add→commit→esc saves
+  through the store; DELETE removes) + TestProviderAdvancedFields (all six knobs present);
+  tab-switch test updated for the 8-tab row; full suite green (20 pkgs).
+
 ## 2026-09-20 · deepthought-cli — the host descriptor rendered: Status "Host", richer env brief
 
 "Login node" was the wrong name and the wrong data (it showed the binary's build target as

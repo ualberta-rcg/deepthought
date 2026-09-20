@@ -10,6 +10,7 @@ import (
 
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/unimatrix"
 )
 
 // fakeStore is an in-memory ConfigStore for editor tests.
@@ -203,11 +204,11 @@ func TestEscLadder(t *testing.T) {
 func TestTabSwitching(t *testing.T) {
 	m := newTestSettings()
 	m, _ = m.Update(keyPress(tea.KeyRight, ""))
-	if m.tabKeyOf() != "providers" {
-		t.Errorf("right → %q, want providers", m.tabKeyOf())
+	if m.tabKeyOf() != "general" {
+		t.Errorf("right → %q, want general", m.tabKeyOf())
 	}
 	m.cursor = 3
-	m, _ = m.Update(keyPress(tea.KeyRight, "")) // → models
+	m, _ = m.Update(keyPress(tea.KeyRight, "")) // → providers
 	if m.cursor != 0 {
 		t.Error("tab switch should reset the cursor")
 	}
@@ -296,5 +297,60 @@ func TestPersistRebaseWritesFile(t *testing.T) {
 	}
 	if store.saved == nil || store.saved.Effort != "low" {
 		t.Error("file not written")
+	}
+}
+
+// The refill: Overview + Routing tabs render; routes add/edit/delete through
+// the store; the provider editor exposes the advanced knobs.
+func TestSettingsOverviewAndRouting(t *testing.T) {
+	m := newTestSettings().Resize(84, 24)
+	m, _ = m.gotoTab(tabIndex("overview"))
+	plain := stripTestANSI.ReplaceAllString(m.View(), "")
+	for _, want := range []string{"Overview", "valid", "providers", "routes"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("overview missing %q", want)
+		}
+	}
+
+	// Routing: add a route via "+ Add", set a field, save; delete via DELETE.
+	m, _ = m.gotoTab(tabIndex("routing"))
+	m, _ = m.Update(keyPress(tea.KeyEnter, "")) // "+ Add route" (cursor past keys)
+	if !m.adding || m.entityRef != "new-route" {
+		t.Fatalf("route draft not staged: adding=%v ref=%q", m.adding, m.entityRef)
+	}
+	m.edit = newEnumEdit("capability", capStrings(), "embed")
+	m.editIdx = 1
+	m, _ = m.commitField()
+	m, _ = m.escBack() // finishAdd: validates + persists
+	store := m.store.(*fakeStore)
+	if store.saved == nil {
+		t.Fatal("route add did not save")
+	}
+	if r, ok := store.saved.Routes["new-route"]; !ok || r.Capability != unimatrix.CapEmbed {
+		t.Fatalf("route = %+v", store.saved.Routes["new-route"])
+	}
+
+	// DELETE field removes it.
+	m.dirty = store.Snapshot()
+	m.entityKind, m.entityRef, m.adding, m.view = "route", "new-route", false, viewEntity
+	m.edit = newEnumEdit("delete", []string{"-", "DELETE"}, "DELETE")
+	m.editIdx = 5
+	m, _ = m.commitField()
+	if _, still := m.dirty.Routes["new-route"]; still {
+		t.Error("DELETE should remove the route")
+	}
+}
+
+// The provider editor exposes the advanced knobs (breaker/budget fields).
+func TestProviderAdvancedFields(t *testing.T) {
+	m := atProvider(newTestSettings(), 0)
+	labels := map[string]bool{}
+	for _, d := range m.fieldDefs() {
+		labels[d.label] = true
+	}
+	for _, want := range []string{"timeout_ms", "max_failures", "cooldown_ms", "max_usd", "max_tokens", "clearance"} {
+		if !labels[want] {
+			t.Errorf("provider editor missing %q", want)
+		}
 	}
 }
