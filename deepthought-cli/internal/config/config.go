@@ -117,6 +117,11 @@ type Appearance struct {
 	// TopBarLegend toggles the F-key legend row under the top bar. nil = on
 	// (the default — the legend is the least-surprising state for a new user).
 	TopBarLegend *bool `json:"top_bar_legend,omitempty"`
+
+	// Sidebar controls the chat screen's live info column: "" or "auto" =
+	// show on very wide terminals (>=160 cols); "on" = force (>=120 cols);
+	// "off" = hide.
+	Sidebar string `json:"sidebar,omitempty"`
 }
 
 // TopBarLegendOn reports the effective legend setting (default on when unset).

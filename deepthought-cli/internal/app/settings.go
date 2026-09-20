@@ -135,6 +135,26 @@ func (s *Settings) TopBarLegend() bool {
 	return s.cfg.File.TopBarLegendOn()
 }
 
+// SidebarMode returns the effective sidebar setting ("auto" when unset).
+func (s *Settings) SidebarMode() string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.cfg.File.Appearance != nil && s.cfg.File.Appearance.Sidebar != "" {
+		return s.cfg.File.Appearance.Sidebar
+	}
+	return "auto"
+}
+
+// SetSidebar persists a sidebar mode ("auto" | "on" | "off").
+func (s *Settings) SetSidebar(mode string) error {
+	f := s.Snapshot()
+	if f.Appearance == nil {
+		f.Appearance = &config.Appearance{}
+	}
+	f.Appearance.Sidebar = mode
+	return s.Save(f)
+}
+
 func (s *Settings) MaxTokens() int {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

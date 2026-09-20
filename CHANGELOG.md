@@ -18,6 +18,27 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — live info sidebar (F10) + the environment brief
+
+**Sidebar:** on very wide terminals the chat screen grows a compact live info column on
+the right — Cluster (GPU bar + running count), Your jobs, the context meter, Provider
+chips, dim "F12 for detail". Pure rendering over the existing ticks (clock, cluster
+poll, session usage) — no new timers. `auto` (default): shows at ≥160 cols; `on`:
+forces at ≥120; `off`: hides. **F10 cycles** the mode and persists
+(`appearance.sidebar`); the legend + F1 help now say "F10 sidebar" (F10 was free since
+the Cluster merge). Chat width shrinks by column+gutter; the top/bottom bands stay
+full-width.
+- **Environment brief (the "detected cluster info in the system prompt, not super big"
+  ask):** `ChatModel.envBrief()` — host, slurm + GPU type, lmod modules, fairshare,
+  storage rows — hard-capped at 6 lines, "" when nothing detected — injected per
+  request right after the cluster blurb (transient, never persisted).
+- Files: internal/tui/sidebar.go + sidebar_test.go (new), chat.go (env + brief),
+  config.go (Appearance.Sidebar), keybindings.go, topbar.go, app/settings.go
+  (SidebarMode/SetSidebar), app/model.go (cache, layout math, F10).
+- Verified: TestSidebarRender (sections, clip-to-column, no-cluster degrade),
+  TestEnvBrief (facts present, 6-line cap, empty degrade); full suite green (19 pkgs).
+  The side-by-side composition needs a live wide pty to eyeball.
+
 ## 2026-09-20 · deepthought-cli — the F8 Cron screen: manage + track the real crontab
 
 Cron management lands as its own screen, built on internal/cron, with a hard safety gate:

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
@@ -83,6 +84,8 @@ type RootModel struct {
 	statusScr   tui.StatusModel
 	modelsScr   tui.ModelsModel
 	cronScr     tui.CronModel
+	env         tui.EnvInfo
+	sidebar     tui.SidebarData
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -107,6 +110,7 @@ type RootModel struct {
 // to now so the first paint isn't blank; a fresh ChatModel is built from the shared
 // client + model id.
 func NewRootModel(d Deps) RootModel {
+	env := gatherEnv()
 	sid := d.SessionID
 	if sid == "" {
 		sid = newSessionID()
@@ -118,7 +122,7 @@ func NewRootModel(d Deps) RootModel {
 		clock:     time.Now(),
 		sessionID: sid,
 		splash:    tui.NewSplashModel(splashBoot(d.Live), sid),
-		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills),
+		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills).SetEnv(env),
 		continue_: tui.NewContinueModel(d.ChatSource),
 		settings:  tui.NewSettingsModel(d.Live, d.Settings),
 		grid:      tui.NewGridModel(),
@@ -215,6 +219,7 @@ func (m RootModel) Init() tea.Cmd {
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tui.TickMsg:
+		m.sidebar.Clock = time.Time(msg)
 		// Session-wide clock: store, re-arm (tea.Every fires once), and stamp the
 		// Status page so its date/timezone ticks live. Handled before the screen
 		// router so it ticks on every screen.
@@ -238,6 +243,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusLine = m.renderStatusLine()
 		return m, nil
 	case tui.SessionUsageMsg:
+		m.sidebar.SessionIn, m.sidebar.SessionOut, m.sidebar.LastContext = msg.In, msg.Out, msg.LastContext
 		m.sessionIn, m.sessionOut, m.lastContext = msg.In, msg.Out, msg.LastContext
 		m.sessionCycles, m.sessionMsgs = msg.Cycles, msg.Messages
 		m.statusScr = m.statusScr.SetSession(msg.In, msg.Out, msg.LastContext, msg.Cycles, msg.Messages)
@@ -253,6 +259,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// cluster/fairshare/dirs sections) and the chat (for the model's cluster
 		// blurb), then re-arm the next poll in 5 min.
 		m.lastCluster = msg.snap
+		m.sidebar.Cluster, m.sidebar.ClusterOK = msg.snap, !msg.snap.FetchedAt.IsZero()
 		m.statusScr = m.statusScr.SetCluster(msg.snap)
 		m.chat = m.chat.SetCluster(msg.snap)
 		return m, tea.Tick(clusterPollInterval, func(time.Time) tea.Msg { return pollCluster() })
@@ -264,12 +271,15 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// it is first shown. Chat loses TopBarHeight rows to the top bar.
 		m.width, m.height = msg.Width, msg.Height
 		m.splash = m.splash.Resize(msg.Width, msg.Height)
-		m.chat = m.chat.Resize(msg.Width, msg.Height-tui.ChatChromeHeight(m.legendOn()))
+		chatW := msg.Width
+		if m.sidebarOn() {
+			chatW = msg.Width - tui.SidebarWidth - 1
+		}
+		m.chat = m.chat.Resize(chatW, msg.Height-tui.ChatChromeHeight(m.legendOn()))
 		m.continue_ = m.continue_.Resize(msg.Width, msg.Height)
 		m.settings = m.settings.Resize(msg.Width, msg.Height)
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
 		m.modelsScr = m.modelsScr.Resize(msg.Width, msg.Height)
-		m.cronScr = m.cronScr.Resize(msg.Width, msg.Height)
 		m.cronScr = m.cronScr.Resize(msg.Width, msg.Height)
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).
 			SetHealth(m.healthOK, m.healthMsg).
@@ -284,7 +294,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the add-provider area.
 		m.screenStack = nil
 		if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
-			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
+			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetEnv(m.env).
 				SetCluster(m.lastCluster).
 				SetSkills(m.deps.Skills).
 				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
@@ -420,6 +430,13 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 	case keybindings.Model:
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
+	case keybindings.Sidebar:
+		// F10 — cycle the live info column: auto → on → off.
+		next := map[string]string{"auto": "on", "on": "off", "off": "auto"}[m.deps.Live.SidebarMode()]
+		if err := m.deps.Live.SetSidebar(next); err != nil {
+			m.status = m.status // no toast plumbing here; silent like other toggles
+		}
+		return m, nil
 	case keybindings.Cron:
 		// F8 — manage + track the user's crontab.
 		m.cronScr = m.cronScr.Resize(m.width, m.height)
@@ -438,7 +455,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 	case keybindings.NewChat:
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
-		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).
+		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetEnv(m.env).
 			SetCluster(m.lastCluster).
 			SetSkills(m.deps.Skills).
 			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
@@ -579,7 +596,12 @@ func (m RootModel) View() tea.View {
 		if m.legendOn() {
 			top += "\n" + tui.RenderKeyLegendRow(m.width)
 		}
-		s = top + "\n" + m.chat.View() + "\n" + bottom
+		body := m.chat.View()
+		if m.sidebarOn() {
+			gutter := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(strings.Repeat("│", 1))
+			body = lipgloss.JoinHorizontal(lipgloss.Top, body, gutter, tui.RenderSidebar(m.sidebar, tui.SidebarWidth, m.height-tui.ChatChromeHeight(m.legendOn())))
+		}
+		s = top + "\n" + body + "\n" + bottom
 	case tui.ScreenContinue:
 		s = m.continue_.View()
 	case tui.ScreenSettings:
@@ -796,6 +818,24 @@ func newSessionID() string {
 		return fmt.Sprintf("sess_%d", time.Now().UnixNano())
 	}
 	return fmt.Sprintf("sess_%s", hex.EncodeToString(b))
+}
+
+// sidebarOn reports whether the chat screen's live info column is showing:
+// auto = only on very wide terminals (>=160 cols); on = forced (>=120); off =
+// never.
+func (m RootModel) sidebarOn() bool {
+	mode := "auto"
+	if m.deps.Live != nil {
+		mode = m.deps.Live.SidebarMode()
+	}
+	switch mode {
+	case "off":
+		return false
+	case "on":
+		return m.width >= 120
+	default: // auto
+		return m.width >= 160
+	}
 }
 
 // cronDataDir resolves the cron store's data directory (DataDir on success,

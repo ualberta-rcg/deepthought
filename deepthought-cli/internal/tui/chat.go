@@ -158,6 +158,7 @@ type ChatModel struct {
 	coll      *history.Collective
 	store     history.Store
 	cluster   slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
+	env       EnvInfo               // static host/session environment → the env brief
 	skills    string                // compact "available skills" index → a per-request system note
 	replayed  bool                  // prior turns rendered into the transcript (resume)
 	busy      bool
@@ -800,8 +801,54 @@ func (m ChatModel) requestMessages() []babel.Message {
 	if blurb := m.clusterBlurb(); blurb != "" {
 		msgs = append(msgs, babel.Message{Role: "system", Content: blurb})
 	}
+	if b := m.envBrief(); b != "" {
+		msgs = append(msgs, babel.Message{Role: "system", Content: b})
+	}
 	return msgs
 }
+
+// SetEnv stamps the static environment (drives the per-request env brief).
+func (m ChatModel) SetEnv(e EnvInfo) ChatModel {
+	m.env = e
+	return m
+}
+
+// envBrief is the compact, detection-driven environment note injected into
+// every request beside the cluster blurb — the model's ground truth about
+// WHERE it runs. Hard-capped at envBriefMax lines ("not super big"); ""
+// when nothing was detected.
+func (m ChatModel) envBrief() string {
+	var facts []string
+	e := m.env
+	if e.Host != "" {
+		facts = append(facts, "host "+e.Host)
+	}
+	if e.Slurm && m.cluster.GPUType != "" {
+		facts = append(facts, "slurm cluster, GPUs "+m.cluster.GPUType)
+	} else if e.Slurm {
+		facts = append(facts, "slurm cluster")
+	}
+	if e.Module {
+		facts = append(facts, "lmod modules")
+	}
+	if m.cluster.Fairshare > 0 {
+		facts = append(facts, fmt.Sprintf("fairshare %.2f", m.cluster.Fairshare))
+	}
+	for _, r := range m.cluster.StorageRows {
+		facts = append(facts, fmt.Sprintf("%s %s/%s", r.Label, r.Used, r.Size))
+	}
+	if len(facts) == 0 {
+		return ""
+	}
+	if len(facts) > envBriefMax {
+		facts = facts[:envBriefMax]
+	}
+	return "\n[Environment — detected at startup; verify before acting on it.]\n" +
+		strings.Join(facts, "\n") + "\n"
+}
+
+// envBriefMax caps the environment brief's size in the system prompt.
+const envBriefMax = 6
 
 // clusterBlurb is a compact, clearly-labelled snapshot of cluster state so the
 // model can reason about scheduling ("is the cluster busy?") without running

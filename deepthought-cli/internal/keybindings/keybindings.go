@@ -23,6 +23,7 @@ const (
 	Models      Action = "app:models"
 	QueenMode   Action = "app:queen-mode"
 	Cron        Action = "app:cron"
+	Sidebar     Action = "app:sidebar"
 	Diagnostics Action = "app:diagnostics"
 )
 
@@ -33,6 +34,7 @@ var defaults = map[string]Action{
 	"f5": NewChat, "f6": Resume, "f7": ContextView,
 	"f8":  Cron,
 	"f9":  QueenMode,
+	"f10": Sidebar,
 	"f11": Models,
 	"f12": Diagnostics,
 }
