@@ -92,3 +92,9 @@ func (m *Map) Resolve(context Context, key string) (Action, bool) {
 }
 
 func Reserved(key string) bool { return reserved[key] }
+
+// DefaultAction reports the action a key is bound to in the default map
+// ("" when unbound) — lets UIs label keys from the single source of truth.
+func DefaultAction(key string) Action {
+	return defaults[key]
+}

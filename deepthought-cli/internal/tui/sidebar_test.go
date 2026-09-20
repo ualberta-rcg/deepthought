@@ -45,7 +45,7 @@ func TestEnvBrief(t *testing.T) {
 	m := ChatModel{env: EnvInfo{Host: "login01", Slurm: true, Module: true}}
 	m = m.SetCluster(testSnapshot())
 	b := m.envBrief()
-	for _, want := range []string{"login01", "lmod modules", "l40s", "fairshare"} {
+	for _, want := range []string{"login01", "lmod modules", "l40s"} { // fairshare lives in the cluster blurb now
 		if !strings.Contains(b, want) {
 			t.Errorf("envBrief missing %q:\n%s", want, b)
 		}

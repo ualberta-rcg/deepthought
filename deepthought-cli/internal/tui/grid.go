@@ -37,6 +37,6 @@ func (m GridModel) Update(msg tea.Msg) (GridModel, tea.Cmd) {
 }
 func (m GridModel) View() string {
 	body := strings.Join(m.lines, "\n")
-	return AppScreen(m.width, m.height, "DeepThought › Grid", body,
+	return AppScreen(m.width, m.height, screenTitle("Grid"), body,
 		KeyBar([]KeyHint{{Key: "esc", Label: "back"}}))
 }

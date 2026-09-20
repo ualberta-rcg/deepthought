@@ -11,8 +11,8 @@ import (
 // builds one of these (see statusSections), so the whole page speaks a single
 // visual language — the same header, note, and source treatment for the plain
 // sections (Session, Usage, …) and the Slurm ones (Cluster, Your dirs, …).
-// Note carries its own leading indent; Source is a bare command — hintNote adds
-// the "  → " prefix.
+// Note is bare text — Render adds the standard indent; Source is a bare command
+// (hintNote adds the "  → " prefix).
 type Section struct {
 	Title  string   // required — rendered as "» Title"
 	Extra  string   // optional dim summary, right of the header ("2 running · 1 pending")
@@ -28,7 +28,7 @@ func (s Section) Render() []string {
 	out := []string{sectionHead(s.Title, s.Extra)}
 	out = append(out, s.Rows...)
 	if s.Note != "" {
-		out = append(out, dimNote(s.Note))
+		out = append(out, dimNote("  "+s.Note))
 	}
 	if s.Source != "" {
 		out = append(out, hintNote(s.Source))

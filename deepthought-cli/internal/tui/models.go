@@ -479,9 +479,12 @@ func (m ModelsModel) rows() []string {
 	switch m.view {
 	case mvList:
 		rs := make([]string, 0, len(m.dirty.Models)+1)
+		if len(m.dirty.Models) == 0 {
+			rs = append(rs, "  "+emptyRow("models"))
+		}
 		for i, mo := range m.dirty.Models {
-			rs = append(rs, m.mark(i, fmt.Sprintf("%-20s %-12s %-14s %s",
-				mo.ID, mo.Provider, strings.Join(mo.Caps(), "+"), m.roleBadges(mo.ID))))
+			rs = append(rs, m.mark(i, fmt.Sprintf("%s %s %s %s",
+				truncatePad(mo.ID, 20), truncatePad(mo.Provider, 12), truncatePad(strings.Join(mo.Caps(), "+"), 14), m.roleBadges(mo.ID))))
 		}
 		rs = append(rs, m.mark(len(m.dirty.Models), "+ Add from provider"))
 		return rs
@@ -518,7 +521,7 @@ func (m ModelsModel) rows() []string {
 	case mvProvPick:
 		rs := make([]string, 0, len(m.dirty.Providers))
 		for i, p := range m.dirty.Providers {
-			rs = append(rs, m.mark(i, fmt.Sprintf("%-16s %-7s %s", p.Name, p.Wire, strings.Join(p.Tags, ", "))))
+			rs = append(rs, m.mark(i, fmt.Sprintf("%s %s %s", truncatePad(p.Name, 16), truncatePad(p.Wire, 7), strings.Join(p.Tags, ", "))))
 		}
 		return rs
 	case mvListed:

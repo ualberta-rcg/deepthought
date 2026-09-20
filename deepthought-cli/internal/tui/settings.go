@@ -13,6 +13,7 @@ import (
 
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/keybindings"
 	"deepthought-cli/internal/unimatrix"
 )
 
@@ -739,8 +740,11 @@ func (m SettingsModel) rows() []string {
 		return m.fieldRows()
 	case "providers":
 		rs := make([]string, 0, len(m.dirty.Providers)+1)
+		if len(m.dirty.Providers) == 0 {
+			rs = append(rs, "  "+emptyRow("providers"))
+		}
 		for i, p := range m.dirty.Providers {
-			rs = append(rs, m.mark(i, fmt.Sprintf("%-16s %-7s %s", p.Name, p.Wire, strings.Join(p.Tags, ", "))))
+			rs = append(rs, m.mark(i, fmt.Sprintf("%s %s %s", truncatePad(p.Name, 16), truncatePad(p.Wire, 7), strings.Join(p.Tags, ", "))))
 		}
 		rs = append(rs, m.mark(len(m.dirty.Providers), "+ Add provider"))
 		return rs
@@ -1761,14 +1765,35 @@ func envOr(key, fallback string) string {
 }
 
 func functionKeyLabel(n int) string {
-	labels := []string{"help", "settings", "model", "effort", "new chat", "resume", "context", "", "mode", "", "models", "status"}
-	if n < 1 || n > len(labels) {
-		return ""
+	// Derived from the REAL default bindings — never a second table to drift.
+	action := keybindings.DefaultAction(fmt.Sprintf("f%d", n))
+	switch action {
+	case keybindings.Help:
+		return "help"
+	case keybindings.Settings:
+		return "settings"
+	case keybindings.Model:
+		return "model chooser"
+	case keybindings.Effort:
+		return "effort"
+	case keybindings.NewChat:
+		return "new chat"
+	case keybindings.Resume:
+		return "resume"
+	case keybindings.ContextView:
+		return "grid"
+	case keybindings.Cron:
+		return "cron"
+	case keybindings.QueenMode:
+		return "mode"
+	case keybindings.Sidebar:
+		return "sidebar"
+	case keybindings.Models:
+		return "models"
+	case keybindings.Diagnostics:
+		return "status"
 	}
-	if labels[n-1] == "" {
-		return "(free)"
-	}
-	return labels[n-1]
+	return "(free)"
 }
 
 // settingRow renders one "key: value" line.

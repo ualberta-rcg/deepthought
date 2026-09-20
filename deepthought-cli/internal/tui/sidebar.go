@@ -5,11 +5,22 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/lipgloss/v2"
+
 	"deepthought-cli/internal/slurm"
 )
 
 // SidebarWidth is the live info column's width on the chat screen.
 const SidebarWidth = 36
+
+// RenderSidebarGutter paints the 1-column divider between the chat and the
+// live column, from the palette (a retheme touches only styles.go).
+func RenderSidebarGutter(h int) string {
+	if h < 1 {
+		return ""
+	}
+	return lipgloss.NewStyle().Foreground(colBarBg).Render(strings.Repeat("│", h))
+}
 
 // SidebarData is everything the sidebar renders; the root caches it from the
 // existing ticks (clock, cluster poll, session usage) — no new timers.

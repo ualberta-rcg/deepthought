@@ -67,7 +67,7 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 		Title:  "Cluster",
 		Extra:  fmt.Sprintf("%d running · %d pending", c.JobsRunning, c.JobsPending),
 		Rows:   body,
-		Note:   "  overall load across the whole cluster — not your usage. A GPU counts as usable only if its node also has the CPU+RAM to back it.",
+		Note:   "whole-cluster load, not your usage; usable = GPU + the CPU/RAM to back it.",
 		Source: "sinfo · squeue -t PD",
 	}.Render()
 }
@@ -133,7 +133,7 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 	return Section{
 		Title:  "Fairshare",
 		Rows:   body,
-		Note:   "  who goes first when the cluster is full. 1 = front of the queue (you've barely used your share); 0 = longest wait. It recovers on its own — past usage counts less each day.",
+		Note:   "who goes first when the cluster is full; 1 = front of the queue. Recovers on its own as past usage decays.",
 		Source: "sshare",
 	}.Render()
 }
@@ -151,7 +151,7 @@ func renderStorageBlock(c slurm.ClusterSnapshot) []string {
 	return Section{
 		Title:  "Your dirs",
 		Rows:   body,
-		Note:   "  how full your directories are. scratch is fast but NOT backed up — idle files rotate out.",
+		Note:   "scratch is fast but NOT backed up — idle files rotate out.",
 		Source: "diskusage_report",
 	}.Render()
 }

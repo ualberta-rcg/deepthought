@@ -87,7 +87,7 @@ func (m ContinueModel) View() string {
 	} else {
 		rows = append(rows, m.header())
 		for i, c := range m.chats {
-			line := fmt.Sprintf("%-50s %s  %d turn",
+			line := fmt.Sprintf("%-50s %s  %d turns",
 				truncatePad(c.Title, 50),
 				c.UpdatedAt.Format("2006-01-02 15:04"),
 				c.Incursions)
@@ -100,15 +100,14 @@ func (m ContinueModel) View() string {
 		}
 	}
 	rows = append(rows, "")
+	if m.toast != "" {
+		rows = append(rows, "", styleToast.Render(m.toast))
+	}
 	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
 	keybar := KeyBar([]KeyHint{
 		{"↑↓", "move"}, {"enter", "resume"}, {"esc", "back"},
 	})
-	frame := AppScreen(m.width, m.height, screenTitle("Continue"), body, keybar)
-	if m.toast != "" {
-		frame = lipgloss.JoinVertical(lipgloss.Center, styleToast.Render(m.toast), frame)
-	}
-	return frame
+	return AppScreen(m.width, m.height, screenTitle("Continue"), body, keybar)
 }
 
 // header renders a column header aligned with the list rows.

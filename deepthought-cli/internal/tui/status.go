@@ -203,7 +203,7 @@ func (m StatusModel) View() string {
 		{Key: "r", Label: "refresh"},
 		{Key: "esc", Label: "back"},
 	})
-	return AppScreenScroll(m.width, m.height, "DeepThought › Status", m.vp.View(), m.vp.Height(), keybar)
+	return AppScreenScroll(m.width, m.height, screenTitle("Status"), m.vp.View(), m.vp.Height(), keybar)
 }
 
 // --- section renderers ------------------------------------------------------

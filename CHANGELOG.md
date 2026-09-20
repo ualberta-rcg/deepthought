@@ -18,6 +18,38 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — theme/chrome truth sweep: real commands, real labels, one note style
+
+Everything the UI claims is now true, and the one-off styles are gone.
+- **Command registry reconciled:** the popover suggested ~10 commands submit() rejected
+  (/theme, /cost, /doctor, /clear, /rewind, /keybindings, /expand, /pin, /annotate —
+  gone); `/status` `/models` `/cron` navigate to their screens (F12/F11/F8 equivalents,
+  joining /settings and /context). `/help` and the F1 notice are accurate (F1 now lists
+  F10 sidebar, calls F7 grid — and switches to chat first so the notice is actually
+  visible from any screen).
+- **F-key labels derive from the real bindings:** `functionKeyLabel` reads
+  `keybindings.DefaultAction` (new export) — the System tab's reference said F7 context /
+  F8 free / F10 free while the real bindings were grid/cron/sidebar; one source of truth,
+  never a second table.
+- **One note style:** `Section.Render` adds the standard indent and callers pass bare
+  text; the long vulcan-status footnote paragraphs are now one-liners ("scratch is fast
+  but NOT backed up"), keeping data + bars + the single "→ cmd" hint.
+- **Palette discipline:** the sidebar gutter renders via `tui.RenderSidebarGutter`
+  (colBarBg — app stopped hardcoding ANSI 238); `barFill`'s anonymous color "2" is named
+  (`barEmpty`).
+- **Empty states + truncation:** the Models catalog and Settings Providers show
+  `emptyRow` when empty; Models/provider rows truncate their columns (a 30-char name
+  used to shift every column and hide tags).
+- **Chat small fixes:** interrupt clears queued lines (the toast always claimed "esc
+  clears"); the queued-toast double-styling dies; the env brief drops fairshare/storage
+  (the cluster blurb already sends them — the model read duplicate facts twice a turn).
+- **Continue:** the toast rides inside the frame (it used to push the screen one row past
+  the terminal); "N turns" plural.
+- Files: internal/commands/commands.go, keybindings/keybindings.go, tui/{chat,settings,
+  models,cluster,section,bars,sidebar,status,grid,continue}.go, app/model.go.
+- Verified: full suite green (20 pkgs); greps — no phantom commands in the registry, no
+  hardcoded 238 outside styles.go, functionKeyLabel has no literal key table.
+
 ## 2026-09-20 · deepthought-cli — Settings refilled: Overview + Routing tabs, advanced knobs, host System
 
 "It feels empty" — fixed with real substance, not padding.

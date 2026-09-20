@@ -37,6 +37,10 @@ var (
 	fsThrottled = lipgloss.Color("203") // bold light red
 )
 
+// barEmpty is the dim color of a bar's unfilled cells (ANSI 2 — stays visible
+// on every profile).
+var barEmpty = lipgloss.Color("2")
+
 // barFill paints width cells, pct% filled, in the given color (bold optional).
 // Returns the ANSI string for the bar only.
 func barFill(pct, width int, col color.Color, bold bool) string {
@@ -52,7 +56,7 @@ func barFill(pct, width int, col color.Color, bold bool) string {
 	filled := pct * width / 100
 	st := lipgloss.NewStyle().Foreground(col).Bold(bold)
 	return st.Render(strings.Repeat("▓", filled)) +
-		lipgloss.NewStyle().Foreground(lipgloss.Color("2")).Render(strings.Repeat("░", width-filled))
+		lipgloss.NewStyle().Foreground(barEmpty).Render(strings.Repeat("░", width-filled))
 }
 
 // healthBar is a cluster-utilization bar: teal under 80, orange 80–95, bold red

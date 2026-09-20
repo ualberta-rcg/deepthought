@@ -572,10 +572,17 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		}
 		return m, nil
 	case val == "/help" || val == "?":
-		m.systemLine("help: type a message · !cmd for bash · /help (or ?) · /model · /settings · /quit")
+		m.systemLine("keys: F1 help · F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status")
+		m.systemLine("cmds: !cmd bash · /model · /effort · /settings · /status · /models · /cron · /context · /import · /resume · /quit")
 		return m, nil
 	case val == "/settings":
 		return m, Goto(ScreenSettings)
+	case val == "/status":
+		return m, Goto(ScreenStatus)
+	case val == "/models":
+		return m, Goto(ScreenModels)
+	case val == "/cron":
+		return m, Goto(ScreenCron)
 	case val == "/context":
 		return m, Goto(ScreenGrid)
 	case val == "/model":
@@ -631,6 +638,7 @@ func (m ChatModel) interrupt() (ChatModel, tea.Cmd) {
 		m.cancel()
 		m.cancel = nil
 	}
+	m.queue = nil // esc clears queued lines — the toast always said it did
 	m.busy = false
 	m.streaming = false
 	m.streamCh = nil
@@ -837,12 +845,7 @@ func (m ChatModel) envBrief() string {
 	if e.Module {
 		facts = append(facts, "lmod modules")
 	}
-	if m.cluster.Fairshare > 0 {
-		facts = append(facts, fmt.Sprintf("fairshare %.2f", m.cluster.Fairshare))
-	}
-	for _, r := range m.cluster.StorageRows {
-		facts = append(facts, fmt.Sprintf("%s %s/%s", r.Label, r.Used, r.Size))
-	}
+	// (fairshare + storage live in the cluster blurb — no duplicate facts.)
 	// Negative capability: forbidden/constrained things are worth more than
 	// positive ones (they prevent failed attempts).
 	if p := proxyEnv(); p != "" {

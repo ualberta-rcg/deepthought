@@ -547,7 +547,10 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F4 — the effort picker overlay.
 		return m, func() tea.Msg { return tui.OpenEffortMsg{} }
 	case keybindings.Help:
-		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 context · F8 cron · F9 mode · F11 models · F12 status · esc back · /quit to exit")
+		// F1 — accurate keys + where the commands live; visible wherever you
+		// are (the chat screen is pushed so the notice actually shows).
+		m.pushScreenOnce(tui.ScreenChat)
+		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status · esc back · /help for commands")
 	case keybindings.ContextView:
 		// F7 — push the context grid.
 		m.pushScreenOnce(tui.ScreenGrid)
@@ -675,7 +678,7 @@ func (m RootModel) View() tea.View {
 		}
 		body := m.chat.View()
 		if m.sidebarOn() {
-			gutter := lipgloss.NewStyle().Foreground(lipgloss.Color("238")).Render(strings.Repeat("│", 1))
+			gutter := tui.RenderSidebarGutter(m.height - tui.ChatChromeHeight(m.legendOn()))
 			body = lipgloss.JoinHorizontal(lipgloss.Top, body, gutter, tui.RenderSidebar(m.sidebar, tui.SidebarWidth, m.height-tui.ChatChromeHeight(m.legendOn())))
 		}
 		s = top + "\n" + body + "\n" + bottom

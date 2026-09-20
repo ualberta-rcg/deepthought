@@ -389,7 +389,7 @@ func (m CronModel) rows() []string {
 		Title:  "Your crontab",
 		Extra:  fmt.Sprintf("%d entries", len(m.pendingEntries())),
 		Rows:   body,
-		Note:   "  edits are staged — P reviews, y applies (with backup), u undoes",
+		Note:   "edits are staged; every apply takes a backup first",
 		Source: "crontab -l",
 	}.Render()...)
 
@@ -465,7 +465,7 @@ func (m CronModel) diffRows() []string {
 		Title: "Review changes",
 		Extra: fmt.Sprintf("+%d −%d", len(added), len(removed)),
 		Rows:  body,
-		Note:  "  y applies the NEW table (the current one is backed up first) · esc back",
+		Note:  "y applies the NEW table; the current one is backed up first · esc back",
 	}.Render()
 }
 
