@@ -104,18 +104,14 @@ func placeCenter(w, h int, block string) string {
 	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, block)
 }
 
-// spinnerGlyph renders spinner frame i as a single braille glyph painted in a
-// cycling logo-band color (red → orange → yellow → green → blue, then repeat).
-// The bubbles spinner.Model drives only the tick timing; we color the glyph
-// ourselves because a spinner.Model applies one Style to every frame, and we want
-// each frame in a different color. Callers track the frame index locally (the
-// spinner's own frame field is unexported) and pass it here.
+// spinnerGlyph renders spinner frame i as a single braille glyph painted in
+// the solid brand color. The bubbles spinner.Model drives only the tick timing;
+// callers track the frame index locally (the spinner's own frame field is
+// unexported) and pass it here.
 func spinnerGlyph(i int) string {
 	frames := DefaultSpinner.Frames
 	if len(frames) == 0 {
 		return "·"
 	}
-	glyph := frames[i%len(frames)]
-	c := lipgloss.Color(markBands[i%len(markBands)])
-	return lipgloss.NewStyle().Foreground(c).Render(glyph)
+	return lipgloss.NewStyle().Foreground(colPrimary).Render(frames[i%len(frames)])
 }

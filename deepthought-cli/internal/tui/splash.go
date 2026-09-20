@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"image/color"
+	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/spinner"
@@ -9,15 +11,13 @@ import (
 )
 
 const (
-	splashName    = "DeepThought"  // rendered as tall ASCII art beside the rainbow mark
-	splashTagline = "Don't Panic." // permanent anchor on the splash
 	splashVersion = "DeepThought v0.0.1"
 	splashHint    = "press any key to continue"
 )
 
-// splashSubtitles are the rotating HHGTTG one-liners shown as a secondary
-// accent under the permanent "Don't Panic." tagline. One is chosen per boot
-// (see subtitleFor) so the splash feels alive without flickering.
+// splashSubtitles are the rotating HHGTTG one-liners shown under the DON'T
+// PANIC wordmark. One is chosen per boot (see subtitleFor) so the splash feels
+// alive without flickering.
 var splashSubtitles = []string{
 	"Share and Enjoy.",
 	"Mostly Harmless.",
@@ -27,11 +27,9 @@ var splashSubtitles = []string{
 	"42.",
 }
 
-const (
-	splashDriftFrames = 4 // spinner frames per one-row upward rainbow drift (~0.5 s/row)
-	headerGapCols     = 1 // cells between the mark's right edge and the wordmark
-	footerRows        = 7 // blank + subtitle + status + version + spinner + blank + hint
-)
+// footerRows is the splash chrome below the wordmark: blank + subtitle +
+// status + version + spinner + blank + hint.
+const footerRows = 7
 
 // splashSpinner aliases the default braille set (see spinners.go).
 var splashSpinner = DefaultSpinner
@@ -44,9 +42,9 @@ type BootInfo struct {
 	Ready    bool   // false when no API key / nothing configured
 }
 
-// SplashModel is the boot screen: mark + wordmark + status + rotating
-// subtitle + version + spinner. It is a plain struct, not a tea.Model — the
-// root wraps it.
+// SplashModel is the boot screen: the big DON'T PANIC wordmark + status +
+// rotating subtitle + version + spinner. It is a plain struct, not a
+// tea.Model — the root wraps it.
 type SplashModel struct {
 	spin      spinner.Model
 	spinFrame int // our own frame counter; the spinner's frame field is unexported
@@ -105,21 +103,19 @@ func (m SplashModel) Resize(w, h int) SplashModel {
 	return m
 }
 
-// View composes the header — the rainbow mark and the colossal "DeepThought"
-// wordmark (splashHeader picks the biggest layout that fits) — then the
-// permanent "Don't Panic." tagline, a rotating HHGTTG subtitle accent, a
-// status line (model · provider), version + spinner, and the hint. The whole
-// block is centered as one unit; the rainbow drifts slowly upward.
+// View composes the splash: the DON'T PANIC wordmark (dontPanicHeader picks
+// the biggest rendering that fits), a rotating HHGTTG subtitle, a status line
+// (model · provider), version + spinner, and the hint. The whole block is
+// centered as one unit. Colors are the solid brand pair.
 func (m SplashModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	header := splashHeader(m.width, m.height-footerRows, m.spinFrame/splashDriftFrames, wordmark())
+	header := dontPanicHeader(m.width, m.height-footerRows)
 
 	block := lipgloss.JoinVertical(lipgloss.Center,
 		header,
 		"",
-		styleTagline.Render(splashTagline),
 		styleVersion.Render(m.sub),
 		styleVersion.Render(m.statusLine()),
 		styleVersion.Render(splashVersion),
@@ -141,75 +137,96 @@ func (m SplashModel) statusLine() string {
 	return m.boot.Model + " · " + m.boot.Provider
 }
 
-// wordmark renders the name as colossal ASCII art (bigText); splashHeader
-// centers it against the mark at whatever height the font gives it.
-func wordmark() []string {
-	return bigText(splashName)
-}
-
-// splashHeader picks the biggest mark+wordmark layout that fits width×height
-// (height is what remains above the footer):
-//
-//  1. side by side — the mark and the wordmark as two pictures, vertically
-//     centered against each other; the pair is centered as one unit.
-//  2. stacked — the full-size mark over the wordmark, each centered.
-//  3. compact — the shrunken mark alone; the name rides the version line.
-//
-// drift is the rainbow's upward drift in rows.
-func splashHeader(width, height, drift int, word []string) string {
-	if len(word) == 0 {
-		word = []string{splashName}
-	}
-
-	if need := markFull.width() + headerGapCols + widestRow(word); width >= need && height >= markFull.rows {
-		// Two pictures: each paints itself; JoinHorizontal pads both to
-		// rectangles, so Align(Center) pads uniformly and the slant survives.
-		pair := lipgloss.JoinHorizontal(lipgloss.Center,
-			markFull.render(drift),
-			strings.Repeat(" ", headerGapCols),
-			paintWord(word, drift))
-		return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(pair)
-	}
-
-	if width >= widestRow(word) && height >= markFull.rows+1+len(word) {
-		// Stacked: mark centered by its widest row (uniform pad keeps the
-		// slant), wordmark centered beneath, the sweep continuing downward.
-		out := make([]string, 0, markFull.rows+1+len(word))
-		markPad := strings.Repeat(" ", max(0, (width-markFull.width())/2))
-		for r := 0; r < markFull.rows; r++ {
-			out = append(out, markPad+paintRow(markFull.row(r), r, drift))
+// dontPanicHeader picks the biggest DON'T PANIC wordmark that fits the given
+// width×height, in order: the colossal font on one line, colossal stacked
+// (DON'T over PANIC), the small font on one line, then styled plain text.
+// Every art candidate is painted with paintGradient — a restrained left→right
+// cyan→violet brand shade, static.
+func dontPanicHeader(width, height int) string {
+	for _, cand := range [][]string{
+		bigTextIn(bigTextFont, "DON'T PANIC"),
+		stackArt(bigTextIn(bigTextFont, "DON'T"), bigTextIn(bigTextFont, "PANIC")),
+		bigTextIn(smallTextFont, "DON'T PANIC"),
+	} {
+		if len(cand) > 0 && widestRow(cand) <= width && len(cand) <= height {
+			return paintGradient(cand)
 		}
-		out = append(out, "")
-		wordPad := strings.Repeat(" ", max(0, (width-widestRow(word))/2))
-		for i, wl := range word {
-			out = append(out, wordPad+paintRow(wl, markFull.rows+i, drift))
+	}
+	return styleName.Render("DON'T PANIC")
+}
+
+// stackArt joins two art blocks with one blank row between them.
+func stackArt(top, bottom []string) []string {
+	if len(top) == 0 || len(bottom) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(top)+1+len(bottom))
+	out = append(out, top...)
+	out = append(out, "")
+	return append(out, bottom...)
+}
+
+// paintGradient colors each rune of ASCII-art lines along the brand gradient
+// keyed by column, so wide wordmarks shade gently from cyan (left) to violet
+// (right).
+func paintGradient(lines []string) string {
+	w := widestRow(lines)
+	var b strings.Builder
+	for _, ln := range lines {
+		for i, r := range ln {
+			t := 0.0
+			if w > 1 {
+				t = float64(i) / float64(w-1)
+			}
+			b.WriteString(lipgloss.NewStyle().Foreground(brandGradient(t)).Render(string(r)))
 		}
-		return strings.Join(out, "\n")
+		b.WriteByte('\n')
 	}
-
-	// Compact: the small mark, centered (plain ASCII if even that is wide).
-	if width < markCompact.width() {
-		return markCompact.renderPlain()
-	}
-	return lipgloss.NewStyle().Width(width).Align(lipgloss.Center).Render(markCompact.render(drift))
+	return strings.TrimSuffix(b.String(), "\n")
 }
 
-// paintWord colors each wordmark row with the band of the mark row it will
-// sit beside once the pair is vertically centered, so both pictures share a
-// hue per row.
-func paintWord(word []string, drift int) string {
-	top := max(0, (markFull.rows-len(word))/2)
-	styled := make([]string, len(word))
-	for i, wl := range word {
-		styled[i] = paintRow(wl, top+i, drift)
-	}
-	return strings.Join(styled, "\n")
+// The gradient endpoints mirror the palette in styles.go (colPrimary cyan,
+// colSecondary violet); keep them in sync on a retheme.
+const (
+	gradFrom = "#7DD3FC"
+	gradTo   = "#C084FC"
+)
+
+// brandGradient lerps between the two brand colors — cyan at t=0, violet at
+// t=1.
+func brandGradient(t float64) color.Color {
+	return lipgloss.Color(brandGradientHex(t))
 }
 
-// paintRow colors one header line with the spectrum band for that row at the
-// current drift, measured against the full-size mark.
-func paintRow(line string, r, drift int) string {
-	return lipgloss.NewStyle().Foreground(lipgloss.Color(bandForRow(r, drift, markFull.rows))).Render(line)
+// brandGradientHex is brandGradient's #RRGGBB string form (and the test seam).
+func brandGradientHex(t float64) string {
+	if t < 0 {
+		t = 0
+	}
+	if t > 1 {
+		t = 1
+	}
+	r0, g0, b0 := hexRGB(gradFrom)
+	r1, g1, b1 := hexRGB(gradTo)
+	mix := func(a, c int) int { return a + int(t*float64(c-a)) }
+	return "#" + hexByte(mix(r0, r1)) + hexByte(mix(g0, g1)) + hexByte(mix(b0, b1))
+}
+
+// hexRGB parses a #rrggbb color string into its components.
+func hexRGB(s string) (r, g, b int) {
+	if len(s) != 7 || s[0] != '#' {
+		return 0, 0, 0
+	}
+	v, err := strconv.ParseUint(s[1:], 16, 32)
+	if err != nil {
+		return 0, 0, 0
+	}
+	return int(v >> 16 & 0xFF), int(v >> 8 & 0xFF), int(v & 0xFF)
+}
+
+func hexByte(v int) string {
+	const hex = "0123456789ABCDEF"
+	return string(hex[v>>4&0xF]) + string(hex[v&0xF])
 }
 
 // widestRow returns the visible width of the widest line.

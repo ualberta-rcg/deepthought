@@ -11,7 +11,7 @@ import (
 // ProgramColorOpts forces ANSI 256-color output. PuTTY (and many SSH clients)
 // advertise TERM=xterm, which Bubble Tea treats as 16-color — near-black greys
 // then collapse to black and the chrome band disappears. 256-color keeps the
-// dark-slate bar and rainbow mark readable without needing client TERM tweaks.
+// dark-slate bar and solid brand wordmark readable without needing client TERM tweaks.
 func ProgramColorOpts(environ []string) []tea.ProgramOption {
 	if environ == nil {
 		environ = os.Environ()

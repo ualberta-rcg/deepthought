@@ -18,6 +18,30 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — solid brand colors + the big DON'T PANIC splash
+
+The rainbow is retired everywhere (top-bar wordmark, spinner, splash mark); the splash
+centerpiece becomes the Hitchhiker's-Guide cover instruction itself.
+- **Splash:** big **DON'T PANIC** wordmark (go-figure "colossal" — one line wide, stacked
+  `DON'T`/`PANIC` at 80 cols, "small"-font and plain-text fallbacks) painted with a
+  restrained static cyan→violet brand gradient (`brandGradient`/`paintGradient`). The old
+  slanted-bar mark, the drifting spectrum, and the separate "Don't Panic." tagline are gone;
+  the rotating HHGTTG subtitle, boot status line, version, spinner, and hint stay.
+- **Top bar:** the DeepThought wordmark is the solid `styleStatusApp` chip (was a per-rune
+  recolored word drifting every clock second). **Spinner:** one solid brand-color glyph (was
+  cycling six spectrum colors per frame).
+- **Deleted:** `internal/tui/logo.go` entirely (markBands/bandForRow/markSpec — the spectrum
+  had exactly one remaining consumer each), `doubleRows` (test-only), stale "rainbow"
+  comments in app/color.go + app/session.go.
+- Files: splash.go (rewritten), bigtext.go (font variants; bigTextIn), topbar.go, styles.go,
+  app/color.go, app/session.go (comments), splash_test.go (new), logo.go + logo_test.go
+  (deleted).
+- Verified: new TestBrandGradient / TestDontPanicHeaderFits (fits at 200/100/80/60/40 cols,
+  plain-text fallback carries the wordmark) / TestSplashViewRenders pass; full
+  go build/vet/test green; grep gate `markBands|bandForRow|rainbow|doubleRows|markFull` empty;
+  eyeballed the render at 100x30 and 80x24 (stacked colossal fits 24 rows). Gradient colors
+  still need a live truecolor pty to appreciate.
+
 ## 2026-09-20 · deepthought-cli — add the research-copilot roadmap (docs/ROADMAP.md)
 
 Captures the HPC research-assistant capability roadmap as durable project direction. It is a

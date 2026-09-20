@@ -37,7 +37,7 @@ func SSHHandler(addr string, d Deps) bubbletea.Handler {
 			m.settings = m.settings.Resize(w, h)
 		}
 		// Force ANSI 256 so PuTTY's default TERM=xterm doesn't crush the
-		// dark-grey chrome band (and rainbow) down to black.
+		// dark-grey chrome band down to black.
 		environ := sess.Environ()
 		if len(environ) == 0 {
 			environ = os.Environ()

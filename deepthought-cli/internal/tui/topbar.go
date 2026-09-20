@@ -3,7 +3,6 @@ package tui
 import (
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -48,16 +47,16 @@ func TickClock() tea.Cmd {
 	})
 }
 
-// RenderTopBar paints the 1-row dark-grey top bar: rainbow DeepThought · model [F3]
-// · mode · effort [F4] on the left, a responsive clock on the right. The band
-// background is applied to every cell so the bar is solid dark grey, not black.
+// RenderTopBar paints the 1-row dark-grey top bar: the solid DeepThought
+// wordmark · model [F3] · mode · effort [F4] on the left, a responsive clock on
+// the right. The band background is applied to every cell so the bar is solid
+// dark grey, not black.
 func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
 	if w < 1 {
 		return ""
 	}
-	drift := clock.Second() % len(markBands)
 	left := lipgloss.JoinHorizontal(lipgloss.Left,
-		rainbowWord("DeepThought", drift),
+		styleStatusApp.Render("DeepThought"),
 		styleStatusSep.Render(" │ "),
 		styleStatusModel.Render(st.Model),
 		styleStatusHint.Render(" [F3]"),
@@ -156,27 +155,6 @@ func padBar(w int, left, right string) string {
 	}
 	pad := styleBarPad.Render(strings.Repeat(" ", gap))
 	return left + pad + right
-}
-
-// rainbowWord colors each rune of s with the splash spectrum, drifted by drift
-// bands so the hue walks across the word on every clock second.
-func rainbowWord(s string, drift int) string {
-	n := utf8.RuneCountInString(s)
-	if n == 0 {
-		return ""
-	}
-	var b strings.Builder
-	i := 0
-	for _, r := range s {
-		c := lipgloss.Color(bandForRow(i, drift, n))
-		b.WriteString(lipgloss.NewStyle().
-			Foreground(c).
-			Background(colBarBg).
-			Bold(true).
-			Render(string(r)))
-		i++
-	}
-	return b.String()
 }
 
 // formatBarClock picks a clock format that fits the remaining width:
