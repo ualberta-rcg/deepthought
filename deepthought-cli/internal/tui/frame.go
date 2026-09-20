@@ -71,7 +71,7 @@ func AppScreen(w, h int, title, body, keybar string) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colPrimary).
 		Padding(0, 1).
-		Width(inner)
+		Width(w) // TOTAL width: content capacity = w-4 = inner (lipgloss v2 Width includes border+pad)
 	return box.Render(out)
 }
 
@@ -111,7 +111,7 @@ func AppScreenScroll(w, h int, title, body string, bodyH int, keybar string) str
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colPrimary).
 		Padding(0, 1).
-		Width(inner)
+		Width(w) // TOTAL width: content capacity = w-4 = inner (lipgloss v2 Width includes border+pad)
 	return box.Render(out)
 }
 
@@ -311,6 +311,6 @@ func TwoPane(w, h int, header, left, right, keybar string) string {
 		Border(lipgloss.RoundedBorder()).
 		BorderForeground(colPrimary).
 		Padding(0, 1).
-		Width(inner)
+		Width(w) // TOTAL width: content capacity = w-4 = inner (lipgloss v2 Width includes border+pad)
 	return box.Render(out)
 }

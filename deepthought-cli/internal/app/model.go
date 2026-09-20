@@ -358,8 +358,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
-		if action, ok := m.bindings.Resolve(keybindings.Global, msg.String()); ok {
-			return m.handleAction(action)
+		if !m.screenCapturesKeys() {
+			if action, ok := m.bindings.Resolve(keybindings.Global, msg.String()); ok {
+				return m.handleAction(action)
+			}
 		}
 		if msg.String() == "ctrl+c" {
 			if m.screen == tui.ScreenChat && m.chat.Busy() {
@@ -403,7 +405,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 	switch action {
 	case keybindings.Settings:
 		// F2 — push Settings onto the nav stack (esc returns here).
-		m.pushScreen(tui.ScreenSettings)
+		m.pushScreenOnce(tui.ScreenSettings)
 		return m, m.settings.Init()
 	case keybindings.Model:
 		// F3 — the model chooser overlay (switch the running model).
@@ -468,6 +470,22 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 func (m *RootModel) pushScreen(to tui.Screen) {
 	m.screenStack = append(m.screenStack, m.screen)
 	m.screen = to
+}
+
+// pushScreenOnce pushes a screen only when it isn't already active, so
+// pressing its F-key twice doesn't double-stack (which made the first esc pop
+// back into the same screen).
+func (m *RootModel) pushScreenOnce(to tui.Screen) {
+	if m.screen != to {
+		m.pushScreen(to)
+	}
+}
+
+// screenCapturesKeys reports whether the active screen is consuming raw
+// keystrokes (an inline text editor), in which case global keybindings must
+// not fire — a user-rebound letter would be swallowed mid-typing.
+func (m RootModel) screenCapturesKeys() bool {
+	return m.screen == tui.ScreenSettings && m.settings.CapturingKeys()
 }
 
 // pushOverlay suspends the current overlay (if any) onto the stack and makes o

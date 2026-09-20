@@ -5,6 +5,9 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/unimatrix"
@@ -34,31 +37,207 @@ func (f *fakeStore) ProviderClient(string) (*babel.Client, error) {
 	return nil, fmt.Errorf("no client in test")
 }
 
+// keyPress builds a KeyPressMsg the way the terminal driver does: code +
+// printable text (space arrives as Text " " — which String() names "space").
+func keyPress(code rune, text string) tea.KeyPressMsg {
+	return tea.KeyPressMsg{Code: code, Text: text}
+}
+
 func newTestSettings() SettingsModel {
 	return NewSettingsModel(&fakeStore{}, SettingsInfo{})
 }
 
-// atProvider puts the editor on provider entityIdx's field list.
+// atProvider puts the editor on the providers tab, entity idx's field list.
 func atProvider(m SettingsModel, idx int) SettingsModel {
-	m.level, m.section, m.entityKind, m.entityIdx, m.cursor = lvlEntity, "providers", "provider", idx, 0
+	m.tab, m.view = tabIndex("providers"), viewEntity
+	m.entityKind, m.entityRef, m.adding, m.cursor = "provider", m.dirty.Providers[idx].Name, false, 0
 	return m
 }
 
+// atModel puts the editor on the models tab, entity idx's field list.
 func atModel(m SettingsModel, idx int) SettingsModel {
-	m.level, m.section, m.entityKind, m.entityIdx, m.cursor = lvlEntity, "models", "model", idx, 0
+	m.tab, m.view = tabIndex("models"), viewEntity
+	m.entityKind, m.entityRef, m.adding, m.cursor = "model", m.dirty.Models[idx].ID, false, 0
 	return m
 }
 
-// setField builds the entity's field defs and applies the named field's setter
-// with the given editor (the same path the inline editor takes on commit).
+func tabIndex(key string) int {
+	for i, t := range settingsTabs {
+		if t.key == key {
+			return i
+		}
+	}
+	return 0
+}
+
+// setField builds the current field defs and applies the named field's setter
+// to f (the same path the inline editor takes on commit).
 func setField(m SettingsModel, name string, edit *fieldEdit) error {
 	for _, d := range m.fieldDefs() {
 		if d.label == name {
-			return d.set(edit)
+			return d.set(&m.dirty, edit)
 		}
 	}
 	return fmt.Errorf("no field %q", name)
 }
+
+// --- the seven bug regressions -------------------------------------------------
+
+// Bug 1: the space key toggles a multi-select field. bubbletea v2 names the
+// key "space"; the old `case " "` never matched and capabilities could not be
+// changed at all.
+func TestSpaceTogglesMultiField(t *testing.T) {
+	e := newMultiEdit("capabilities", []string{"chat", "reasoning", "vision"}, []string{"chat"})
+	if e.on[0] != true {
+		t.Fatalf("seed: option 0 should be on")
+	}
+	e.update(keyPress(tea.KeySpace, " "))
+	if e.on[0] != false {
+		t.Error("space should have toggled option 0 off")
+	}
+	e.update(keyPress(tea.KeySpace, " "))
+	if e.on[0] != true {
+		t.Error("space should have toggled option 0 back on")
+	}
+	// left/right move the cursor like fEnum.
+	e2 := newMultiEdit("segments", []string{"a", "b", "c"}, []string{"a"})
+	e2.update(keyPress(tea.KeyRight, ""))
+	if e2.cur != 1 {
+		t.Errorf("right moved to %d, want 1", e2.cur)
+	}
+}
+
+// Bug 2: adding a provider is traversable — name → base_url → esc saves; an
+// early esc drops the draft without touching the store.
+func TestAddProviderDraftFlow(t *testing.T) {
+	store := &fakeStore{}
+	m := NewSettingsModelAt(store, SettingsInfo{}, "providers", true)
+	if m.cursor != len(m.dirty.Providers) {
+		t.Fatalf("add cursor = %d, want %d (the + Add row)", m.cursor, len(m.dirty.Providers))
+	}
+	m, _ = m.activate() // stages the draft
+	if !m.adding || m.view != viewEntity {
+		t.Fatalf("draft not staged: adding=%v view=%v", m.adding, m.view)
+	}
+
+	// Draft commits apply to the working copy only (the store would reject a
+	// half-filled provider — the old whole-file validation trap).
+	m.edit = newTextEdit("name", "gw", false)
+	m.editIdx = 0
+	m, _ = m.commitField()
+	if store.saved != nil {
+		t.Fatal("draft commit must not save yet")
+	}
+	m.edit = newTextEdit("base_url", "https://gw.local/v1", false)
+	m.editIdx = 1
+	m, _ = m.commitField()
+
+	// Esc out of the entity view: the now-valid draft is saved.
+	m, _ = m.escBack()
+	if store.saved == nil {
+		t.Fatal("valid draft should have been saved on exit")
+	}
+	found := false
+	for _, p := range store.saved.Providers {
+		if p.Name == "gw" {
+			found = true
+		}
+	}
+	if !found {
+		t.Error("saved file lacks the new provider")
+	}
+}
+
+func TestAddProviderEarlyEscDropsDraft(t *testing.T) {
+	store := &fakeStore{}
+	m := NewSettingsModelAt(store, SettingsInfo{}, "providers", true)
+	m, _ = m.activate()
+	m, _ = m.escBack() // blank draft: dropped, nothing saved
+	if store.saved != nil {
+		t.Error("blank draft should not be saved")
+	}
+	for _, p := range m.dirty.Providers {
+		if p.Name == "" {
+			t.Error("blank draft left in the working copy")
+		}
+	}
+}
+
+// Bug 3: a field commit re-bases on a FRESH snapshot, so concurrent changes
+// made elsewhere (effort dial, mode switch, /model) survive the save.
+func TestCommitRebasesOnFreshSnapshot(t *testing.T) {
+	store := &fakeStore{}
+	m := NewSettingsModel(store, SettingsInfo{})
+	// An out-of-band write lands after the editor took its snapshot.
+	fresh := store.Snapshot()
+	fresh.Name = "Rahim"
+	store.saved = &fresh
+
+	m, _ = m.gotoTab(tabIndex("general"))
+	m.edit = newEnumEdit("effort", []string{"off", "low", "medium", "high", "max"}, "off")
+	m.editIdx = 0
+	m, _ = m.commitField()
+
+	if store.saved == nil || store.saved.Effort != "off" {
+		t.Fatalf("effort not committed: %+v", store.saved)
+	}
+	if store.saved.Name != "Rahim" {
+		t.Error("out-of-band change was clobbered by the commit (stale-snapshot bug)")
+	}
+}
+
+// Bug 5 (view side): esc walks the ladder field → entity → list → Back.
+func TestEscLadder(t *testing.T) {
+	m := atProvider(newTestSettings(), 0)
+	m, _ = m.Update(keyPress(tea.KeyEnter, "")) // open field 0
+	if m.edit == nil {
+		t.Fatal("enter should open the field editor")
+	}
+	m, _ = m.Update(keyPress(tea.KeyEsc, ""))
+	if m.edit != nil || m.view != viewEntity {
+		t.Fatalf("esc from field: edit=%v view=%v", m.edit != nil, m.view)
+	}
+	m, _ = m.Update(keyPress(tea.KeyEsc, ""))
+	if m.view != viewList {
+		t.Fatalf("esc from entity: view=%v, want list", m.view)
+	}
+	m, cmd := m.Update(keyPress(tea.KeyEsc, ""))
+	if cmd == nil {
+		t.Error("esc at the tab list should emit Back()")
+	}
+}
+
+// Tabs switch with ←/→ and wrap; switching resets the cursor and view.
+func TestTabSwitching(t *testing.T) {
+	m := newTestSettings()
+	m, _ = m.Update(keyPress(tea.KeyRight, ""))
+	if m.tabKeyOf() != "providers" {
+		t.Errorf("right → %q, want providers", m.tabKeyOf())
+	}
+	m.cursor = 3
+	m, _ = m.Update(keyPress(tea.KeyRight, "")) // → models
+	if m.cursor != 0 {
+		t.Error("tab switch should reset the cursor")
+	}
+	// Wrap from the first tab leftwards to the last.
+	m, _ = m.gotoTab(0)
+	m, _ = m.Update(keyPress(tea.KeyLeft, ""))
+	if m.tab != len(settingsTabs)-1 {
+		t.Errorf("left wrap → tab %d, want %d", m.tab, len(settingsTabs)-1)
+	}
+}
+
+// The rendered editor fits 80 columns exactly (clipLine safety net or not).
+func TestSettingsViewFits80(t *testing.T) {
+	m := newTestSettings().Resize(80, 24)
+	for i, ln := range strings.Split(m.View(), "\n") {
+		if w := lipgloss.Width(ln); w > 80 {
+			t.Errorf("line %d width %d > 80: %q", i, w, clipLine(ln, 60))
+		}
+	}
+}
+
+// --- field semantics (carried from the old suite) ---------------------------------
 
 // Editing a provider's name renames it and rewires models that referenced it.
 func TestEditProviderNameRewiresModels(t *testing.T) {
@@ -118,106 +297,42 @@ func TestEditModelIDRewiresRoles(t *testing.T) {
 	}
 }
 
-// persist writes the working copy to the store.
-func TestPersistWritesFile(t *testing.T) {
-	m := atProvider(newTestSettings(), 0)
-	_ = setField(m, "name", newTextEdit("name", "renamed", false))
-	out, _ := m.persist()
+// A commit that renames the entity updates the reference this view is keyed
+// by, so a follow-up edit still finds the entity.
+func TestCommitRenameUpdatesRef(t *testing.T) {
+	store := &fakeStore{}
+	m := NewSettingsModel(store, SettingsInfo{})
+	m = atProvider(m, 0)
+	m.edit = newTextEdit("name", "renamed-gw", false)
+	m.editIdx = 0
+	m, _ = m.commitField()
+	if m.entityRef != "renamed-gw" {
+		t.Errorf("entityRef = %q, want renamed-gw", m.entityRef)
+	}
+	// The follow-up edit still resolves.
+	m.edit = newTextEdit("base_url", "https://x", false)
+	m.editIdx = 1
+	m, _ = m.commitField()
+	if store.saved == nil {
+		t.Fatal("second commit did not save")
+	}
+	for _, p := range store.saved.Providers {
+		if p.Name == "renamed-gw" && p.BaseURL == "https://x" {
+			return
+		}
+	}
+	t.Error("renamed provider missing or base_url not applied")
+}
+
+// persistRebase writes through the store after validation.
+func TestPersistRebaseWritesFile(t *testing.T) {
+	store := &fakeStore{}
+	m := NewSettingsModel(store, SettingsInfo{})
+	out, _ := m.persistRebase(func(f *config.File) { f.Effort = "low" })
 	if out.saved != "saved" {
 		t.Errorf("saved toast = %q", out.saved)
 	}
-	store := out.store.(*fakeStore)
-	if store.saved == nil || store.saved.Providers[0].Name != "renamed" {
-		t.Errorf("file not written: %+v", store.saved)
-	}
-}
-
-// Deleting a provider a model still uses is refused; otherwise it removes.
-func TestDeleteProvider(t *testing.T) {
-	m := newTestSettings()
-	m.level, m.section, m.cursor = lvlSection, "providers", 0
-
-	// Refused while a model uses it.
-	m.dirty.Models[0].Provider = m.dirty.Providers[0].Name
-	out, _ := m.deleteEntity()
-	if len(out.dirty.Providers) != len(m.dirty.Providers) {
-		t.Error("delete should be refused when a model uses the provider")
-	}
-
-	// Allowed once unreferenced.
-	for i := range m.dirty.Models {
-		m.dirty.Models[i].Provider = "none"
-	}
-	before := len(m.dirty.Providers)
-	out, _ = m.deleteEntity()
-	if len(out.dirty.Providers) != before-1 {
-		t.Errorf("providers = %d, want %d", len(out.dirty.Providers), before-1)
-	}
-}
-
-// Cycling the agentic role never offers a chat-only model.
-func TestCycleAgenticRole(t *testing.T) {
-	m := newTestSettings()
-	m.dirty.Models = []unimatrix.Model{
-		{ID: "big", Provider: m.dirty.Providers[0].Name, Capabilities: []unimatrix.Capability{unimatrix.CapChat, unimatrix.CapTools}},
-		{ID: "dumb", Provider: m.dirty.Providers[0].Name, Capabilities: []unimatrix.Capability{unimatrix.CapChat}},
-	}
-	m.dirty.Roles = map[string]string{unimatrix.RoleChat: "big", unimatrix.RoleAgentic: "big"}
-	out, _ := m.cycleRole(unimatrix.RoleAgentic)
-	if got := out.dirty.Roles[unimatrix.RoleAgentic]; got != "big" {
-		t.Errorf("agentic cycled to %q; chat-only model must never be offered", got)
-	}
-}
-
-// Root → section drill-in sets level + section.
-func TestDrillDownNav(t *testing.T) {
-	m := newTestSettings()
-	m.cursor = sectionIndex("providers")
-	out, _ := m.activate()
-	if out.level != lvlSection || out.section != "providers" {
-		t.Errorf("after drilling into Providers: level=%v section=%q", out.level, out.section)
-	}
-	// back() returns to root.
-	out2, _ := out.back()
-	if out2.level != lvlRoot {
-		t.Errorf("back to root: level=%v", out2.level)
-	}
-}
-
-// addFromList creates a model from a discovered ID.
-func TestAddFromList(t *testing.T) {
-	m := newTestSettings()
-	m.listed, m.listedProv, m.listedSel = []string{"newmodel", "other"}, "vulcan", 0
-	out, _ := m.addFromList()
-	if out.listed != nil {
-		t.Error("picker should close after add")
-	}
-	last := out.dirty.Models[len(out.dirty.Models)-1]
-	if last.ID != "newmodel" || last.Provider != "vulcan" {
-		t.Errorf("added model = %+v", last)
-	}
-	if out.level != lvlEntity || out.entityKind != "model" {
-		t.Errorf("should drill into the new model: level=%v kind=%q", out.level, out.entityKind)
-	}
-}
-
-// An active text field's value must be visible in the rendered screen (the
-// earlier bug: the cyan selected-row background hid the textinput).
-func TestActiveFieldVisible(t *testing.T) {
-	m := newTestSettings()
-	m = atProvider(m, 0)
-	// Open the name field for editing with a known value.
-	m.level = lvlField
-	m.editFieldIdx = 0
-	m.edit = newTextEdit("name", "vulcan-test", false)
-	m.cursor = 0
-	out := m.Resize(90, 26).View()
-	if !strings.Contains(out, "vulcan-test") {
-		t.Error("active field value not visible in the rendered settings screen")
-	}
-	// And the active row must NOT be swallowed by the cyan selected-row style
-	// (it now uses the green ▶ marker instead).
-	if !strings.Contains(out, "\x1b") {
-		return // no styling in this path
+	if store.saved == nil || store.saved.Effort != "low" {
+		t.Error("file not written")
 	}
 }

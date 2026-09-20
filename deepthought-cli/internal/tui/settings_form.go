@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strconv"
 	"strings"
 
 	"charm.land/bubbles/v2/textinput"
@@ -115,11 +114,11 @@ func (e *fieldEdit) update(msg tea.KeyPressMsg) {
 		}
 	case fMulti:
 		switch msg.String() {
-		case "up", "k":
+		case "up", "k", "left", "h":
 			e.cur = (e.cur - 1 + len(e.options)) % len(e.options)
-		case "down", "j":
+		case "down", "j", "right", "l":
 			e.cur = (e.cur + 1) % len(e.options)
-		case " ":
+		case " ", "space": // bubbletea v2 names the key "space" (plain " " never matched)
 			e.on[e.cur] = !e.on[e.cur]
 		}
 	}
@@ -169,13 +168,4 @@ func mask(secret string) string {
 		return secret // env-var reference is safe to show
 	}
 	return strings.Repeat("•", 8)
-}
-
-// atoiOr parses s or returns fallback.
-func atoiOr(s string, fallback int) int {
-	n, err := strconv.Atoi(strings.TrimSpace(s))
-	if err != nil {
-		return fallback
-	}
-	return n
 }

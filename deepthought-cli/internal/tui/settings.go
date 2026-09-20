@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"charm.land/bubbles/v2/viewport"
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
@@ -28,69 +29,69 @@ type ConfigStore interface {
 	ProviderClient(providerName string) (*babel.Client, error)
 }
 
-// SettingsInfo is the slim boot-time snapshot the Overview page shows.
+// SettingsInfo is the slim boot-time snapshot the editor shows in its title.
 type SettingsInfo struct {
 	ConfigPath string
 	Mode       string
 	Addr       string
 }
 
-// navLevel is one step in the settings drill-down.
-type navLevel int
-
-const (
-	lvlRoot    navLevel = iota // section menu (Overview/Providers/Models/Roles/Back)
-	lvlSection                 // a section's list (entities, overview rows, roles)
-	lvlEntity                  // one entity's field list
-	lvlField                   // editing one field inline
-)
-
-// rootSection is a top-level settings entry. live=false marks a section that's
-// in the tree as a roadmap marker but not yet configurable; selecting it toasts
-// "coming soon" instead of drilling in.
-type rootSection struct {
+// settingsTab is one flat section of the editor. The tab row is the only
+// top-level navigation (lazygit-style: peer sections as tabs, ≤2 perceptual
+// levels — tab list → inline editor — underneath).
+type settingsTab struct {
 	key   string
 	label string
-	live  bool
 }
 
-var rootSections = []rootSection{
-	{"overview", "Overview", true},
-	{"general", "General", true}, // profile: language/privacy/name/email/domain/org/notes
-	{"providers", "Providers", true},
-	{"models", "Models", true},
-	{"roles", "Roles", true},
-	{"behavior", "Behavior", true},
-	{"permissions", "Permissions", true},
-	{"shell", "Shell & Env", false}, // default shell, extra env
-	{"memory", "Memory", false},     // memory dir + recall
-	{"skills", "Skills", false},     // enabled skills
-	{"tools", "Tools", false},       // enabled tools + per-tool opts
-	{"clusters", "Clusters", true},
-	{"storage", "Storage", true},
-	{"keybindings", "Keybindings", true},
-	{"appearance", "Appearance", true}, // status line
-	{"privacy", "Privacy", false},      // telemetry opt-out
+var settingsTabs = []settingsTab{
+	{"general", "General"},     // profile + behavior (effort/max-tokens/temperature)
+	{"providers", "Providers"}, // backends
+	{"models", "Models"},       // model catalog (moves to its own screen soon)
+	{"roles", "Roles"},         // role → model assignment
+	{"permissions", "Perms"},
+	{"appearance", "Theme"},
+	{"system", "System"}, // read-only: cluster/storage/keybindings reference
 }
 
-// SettingsModel is the drill-down settings editor. It holds a working copy of
-// config.File and a navigation level; every field commit auto-saves to disk.
+// settingsRoadmap is the dim one-liner under the tab row marking where the
+// not-yet-configurable sections live (they were dead "coming soon" tree rows).
+const settingsRoadmap = "planned: shell & env · memory · skills · tools · privacy"
+
+// settingsView is the level inside the current tab.
+type settingsView int
+
+const (
+	viewList   settingsView = iota // the tab's list (entities, fields, rules)
+	viewEntity                     // one provider/model's field list
+	viewField                      // an inline field editor is open (m.edit != nil)
+)
+
+// SettingsModel is the flat, tabbed settings editor. Every field commit
+// re-bases on a FRESH store snapshot before saving (so edits never silently
+// revert changes made elsewhere — F9 mode, F4 effort, /model…), validates,
+// auto-saves, and re-snapshots. Entities being added are staged as in-memory
+// drafts until they validate (the store refuses invalid files).
 type SettingsModel struct {
 	store ConfigStore
 	info  SettingsInfo
-	dirty config.File
+	dirty config.File // working copy (render cache + draft staging)
 
-	level      navLevel
-	section    string // current section key (lvlSection+)
-	entityKind string // "provider" | "model" (lvlEntity+)
-	entityIdx  int    // index into Providers/Models (lvlEntity+)
-	adding     bool   // entity was just added via "+ Add"; esc cleans up if blank
-	cursor     int    // row cursor in the current list
-	saved      string // transient toast
+	tab    int          // index into settingsTabs
+	view   settingsView // list / entity / field
+	cursor int          // row cursor in the current view
 
-	// field editing (lvlField)
-	edit         *fieldEdit
-	editFieldIdx int
+	edit    *fieldEdit
+	editIdx int // index of the field row being edited
+
+	// entity context (Providers/Models tabs)
+	entityKind string // "provider" | "model"
+	entityRef  string // stable key: provider name / model id AT OPEN TIME
+	adding     bool   // draft entity staged, not yet valid/saved
+
+	// Permissions rule drill-down: "allow" | "ask" | "deny" (empty = top list)
+	permBucket string
+	permAdding bool
 
 	// async: model test, list-models picker
 	testing    string
@@ -99,96 +100,49 @@ type SettingsModel struct {
 	listedProv string
 	listedSel  int
 
-	// Permissions rule list drill-down: "allow" | "ask" | "deny" (empty = top list).
-	permBucket string
-	permAdding bool // lvlField is appending a new rule to permBucket
-
+	saved  string // transient toast
+	vp     viewport.Model
 	width  int
 	height int
 }
 
 // NewSettingsModel builds the editor from the live config store + boot info.
 func NewSettingsModel(store ConfigStore, info SettingsInfo) SettingsModel {
-	m := SettingsModel{store: store, info: info, level: lvlRoot}
+	m := SettingsModel{store: store, info: info, view: viewList, vp: viewport.New()}
 	if store != nil {
 		m.dirty = store.Snapshot()
 	}
 	return m
 }
 
-// NewSettingsModelAt builds the editor opened directly at a section's list. When
-// add is true the cursor lands on the section's "+ Add" row (used by the splash
-// to drop the user at Providers › + add when no model is configured). section is
-// a rootSection key ("providers", "models", ...).
-func NewSettingsModelAt(store ConfigStore, info SettingsInfo, section string, add bool) SettingsModel {
+// NewSettingsModelAt builds the editor opened directly at a tab's list. When
+// add is true the cursor lands on the tab's "+ Add" row (used by the splash to
+// drop the user at Providers › + add when no model is configured). tabKey is a
+// settingsTabs key ("providers", "models", ...).
+func NewSettingsModelAt(store ConfigStore, info SettingsInfo, tabKey string, add bool) SettingsModel {
 	m := NewSettingsModel(store, info)
-	if !sectionLive(section) {
-		return m // unknown/non-live section: stay at root
-	}
-	m.level = lvlSection
-	m.section = section
-	m.cursor = 0
-	if add {
-		kind := "provider"
-		if section == "models" {
-			kind = "model"
+	for i, t := range settingsTabs {
+		if t.key == tabKey {
+			m.tab = i
+			break
 		}
-		m.cursor = m.entityCount(kind) // the "+ Add" row
+	}
+	if add {
+		m.cursor = m.entityCount()
 	}
 	return m
 }
 
-// sectionLive reports whether a section key is configurable (not a "coming
-// soon" placeholder).
-func sectionLive(key string) bool {
-	for _, s := range rootSections {
-		if s.key == key {
-			return s.live
-		}
-	}
-	return false
-}
+// CapturingKeys reports whether the editor is consuming raw keystrokes (an
+// inline text editor is open), so the root must NOT resolve global key
+// bindings — a user-rebound letter would otherwise be swallowed mid-typing.
+func (m SettingsModel) CapturingKeys() bool { return m.edit != nil && m.edit.kind == fText }
 
 func (m SettingsModel) Init() tea.Cmd { return nil }
 
-// breadcrumb renders the current location.
-func (m SettingsModel) breadcrumb() string {
-	parts := []string{"Settings"}
-	if m.level >= lvlSection && m.section != "" {
-		parts = append(parts, sectionLabel(m.section))
-	}
-	if m.level >= lvlEntity {
-		name := m.entityName()
-		if m.adding {
-			name = "(new)"
-		}
-		parts = append(parts, name)
-	}
-	return styleSettingsFoot.Render(strings.Join(parts, " › "))
-}
+// --- update ------------------------------------------------------------------
 
-func sectionLabel(key string) string {
-	for _, s := range rootSections {
-		if s.key == key {
-			return s.label
-		}
-	}
-	return key
-}
-
-func (m SettingsModel) entityName() string {
-	if m.entityKind == "provider" && m.entityIdx >= 0 && m.entityIdx < len(m.dirty.Providers) {
-		return m.dirty.Providers[m.entityIdx].Name
-	}
-	if m.entityKind == "model" && m.entityIdx >= 0 && m.entityIdx < len(m.dirty.Models) {
-		return m.dirty.Models[m.entityIdx].ID
-	}
-	return ""
-}
-
-// Update routes keys by navigation level.
 func (m SettingsModel) Update(msg tea.Msg) (SettingsModel, tea.Cmd) {
-	// Async results from model-test / list-models.
 	switch msg := msg.(type) {
 	case modelTestResultMsg:
 		return m.handleTestResult(msg)
@@ -199,69 +153,72 @@ func (m SettingsModel) Update(msg tea.Msg) (SettingsModel, tea.Cmd) {
 	if len(m.listed) > 0 {
 		return m.updatePicker(msg)
 	}
+	// Non-key messages (cursor-blink ticks) reach an open text editor so the
+	// caret blinks instead of freezing solid.
+	if m.edit != nil && m.edit.kind == fText {
+		if _, ok := msg.(tea.KeyPressMsg); !ok {
+			var cmd tea.Cmd
+			m.edit.input, cmd = m.edit.input.Update(msg)
+			return m, cmd
+		}
+	}
 	key, ok := msg.(tea.KeyPressMsg)
 	if !ok {
 		return m, nil
 	}
 	// Field editing takes all keys until enter/esc.
-	if m.level == lvlField && m.edit != nil {
+	if m.edit != nil {
 		return m.updateField(key)
 	}
-	// Global: esc/left backs out one level (or to menu at root).
 	switch key.String() {
-	case "esc", "left", "h":
-		return m.back()
-	case "q":
-		// At the settings root, q backs out to the previous screen; deeper levels
-		// back out internally.
-		if m.level == lvlRoot {
-			return m, Back()
-		}
-		return m.back()
+	case "esc", "q":
+		return m.escBack()
+	case "pgup", "pgdown", "home", "end":
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(msg)
+		return m, cmd
+	case "left", "h", "[":
+		return m.switchTab(m.tab - 1)
+	case "right", "l", "]":
+		return m.switchTab(m.tab + 1)
 	}
-	// Movement + drill-in are uniform across the list levels.
+	if n, err := strconv.Atoi(key.String()); err == nil && n >= 1 && n <= len(settingsTabs) {
+		return m.gotoTab(n - 1)
+	}
 	return m.updateList(key)
 }
 
-// back moves up one level (field→entity→section→root→menu).
-func (m SettingsModel) back() (SettingsModel, tea.Cmd) {
-	switch m.level {
-	case lvlField:
-		m.cancelField()
-	case lvlEntity:
-		// If we were adding and the entity is still blank, drop it.
-		if m.adding {
-			m.dropIfBlank()
-		}
-		m.level = lvlSection
-	case lvlSection:
-		if m.section == "permissions" && m.permBucket != "" {
-			m.permBucket = ""
-			m.permAdding = false
-			m.cursor = 0
-			m.clampCursor()
-			return m, nil
-		}
-		m.level = lvlRoot
-		m.cursor = sectionIndex(m.section)
-	case lvlRoot:
+// escBack pops one level: entity → list (finishing or dropping a draft),
+// permission bucket → permission list, list → the previous screen.
+func (m SettingsModel) escBack() (SettingsModel, tea.Cmd) {
+	switch {
+	case m.view == viewEntity:
+		m.finishAdd()
+		m.view = viewList
+		m.cursor = 0
+		m.clampCursor()
+	case m.permBucket != "":
+		m.permBucket, m.permAdding, m.cursor = "", false, 0
+	default:
 		return m, Back()
 	}
-	m.clampCursor()
 	return m, nil
 }
 
-func sectionIndex(key string) int {
-	for i, s := range rootSections {
-		if s.key == key {
-			return i
-		}
-	}
-	return 0
+// switchTab wraps around the tab row; gotoTab jumps (digit keys).
+func (m SettingsModel) switchTab(i int) (SettingsModel, tea.Cmd) {
+	return m.gotoTab((i + len(settingsTabs)) % len(settingsTabs))
 }
 
-// updateList handles ↑↓ movement, enter drill-in, and the section action keys
-// (d delete, t test, L list) across the list levels.
+func (m SettingsModel) gotoTab(i int) (SettingsModel, tea.Cmd) {
+	m.finishAdd()
+	m.tab, m.view, m.cursor, m.permBucket, m.permAdding = i, viewList, 0, "", false
+	m.saved = ""
+	return m, nil
+}
+
+// updateList handles ↑↓ movement, enter activation, and the per-tab action
+// keys (d delete, t test, L list) across the list views.
 func (m SettingsModel) updateList(key tea.KeyPressMsg) (SettingsModel, tea.Cmd) {
 	rows := m.rowCount()
 	switch key.String() {
@@ -275,289 +232,130 @@ func (m SettingsModel) updateList(key tea.KeyPressMsg) (SettingsModel, tea.Cmd) 
 			m.cursor = (m.cursor + 1) % rows
 			m.saved = ""
 		}
-	case "enter", "right", "l":
+	case "enter":
 		return m.activate()
-	default:
-		// Section-only action keys (d delete, t test, L list). No-op elsewhere.
-		return m.updateListAction(key)
-	}
-	return m, nil
-}
-
-// updateListAction handles section action keys (d/t/L); no-op for other keys.
-func (m SettingsModel) updateListAction(key tea.KeyPressMsg) (SettingsModel, tea.Cmd) {
-	if m.level != lvlSection {
-		return m, nil
-	}
-	switch key.String() {
 	case "d":
-		return m.deleteEntity()
+		if m.view == viewList && (m.tabKey() == "providers" || m.tabKey() == "models") {
+			return m.deleteEntity()
+		}
 	case "t":
-		return m.testModel()
+		if m.view == viewList && m.tabKey() == "models" {
+			return m.testModel()
+		}
 	case "L":
-		return m.listModels()
+		if m.view == viewList && m.tabKey() == "providers" {
+			return m.listModels()
+		}
 	}
 	return m, nil
 }
 
-// activate drills in / opens an edit / toggles, depending on level + cursor.
+func (m SettingsModel) tabKey() string { return settingsTabs[m.tab].label }
+
+// tabKeyOf returns the settingsTabs key of the current tab.
+func (m SettingsModel) tabKeyOf() string { return settingsTabs[m.tab].key }
+
+// activate interprets enter on the current row, per tab and view.
 func (m SettingsModel) activate() (SettingsModel, tea.Cmd) {
-	switch m.level {
-	case lvlRoot:
-		if m.cursor == len(rootSections) { // Back row
-			return m, Back()
-		}
-		s := rootSections[m.cursor]
-		if !s.live {
-			m.saved = s.label + " — coming soon"
-			return m, nil
-		}
-		m.section = s.key
-		m.level = lvlSection
-		m.cursor = 0
-		return m, nil
-	case lvlSection:
-		return m.activateSection()
-	case lvlEntity:
+	if m.view == viewEntity {
 		return m.openField()
 	}
-	return m, nil
-}
-
-// --- section-level activation ----------------------------------------------
-
-func (m SettingsModel) activateSection() (SettingsModel, tea.Cmd) {
-	switch m.section {
-	case "overview":
-		return m.editOverviewRow()
-	case "general":
-		return m.openGeneralField()
+	switch m.tabKeyOf() {
+	case "general", "appearance":
+		return m.openScalarField()
 	case "providers":
 		return m.enterOrAddEntity("provider")
 	case "models":
 		return m.enterOrAddEntity("model")
 	case "roles":
-		return m.editRole()
-	case "behavior":
-		return m.editBehavior()
+		return m.cycleRole()
 	case "permissions":
-		return m.editPermissions()
-	case "clusters", "storage", "keybindings", "appearance":
-		if m.cursor == m.rowCount()-1 {
-			return m.back()
-		}
-		if m.section == "appearance" {
-			return m.editAppearance()
-		}
+		return m.activatePermissions()
 	}
-	return m, nil
+	return m, nil // System: read-only
 }
 
-func (m SettingsModel) editBehavior() (SettingsModel, tea.Cmd) {
-	switch m.cursor {
-	case 0: // effort (the sole reasoning control: off = no thinking)
-		order := []string{"off", "low", "medium", "high", "max"}
-		at := 0
-		for i, value := range order {
-			if value == m.dirty.Effort {
-				at = i
-			}
-		}
-		m.dirty.Effort = order[(at+1)%len(order)]
-	case 1: // max tokens
-		order := []int{4096, 8192, 16384, 32768}
-		at := 0
-		for i, value := range order {
-			if value == m.dirty.MaxTokens {
-				at = i
-			}
-		}
-		m.dirty.MaxTokens = order[(at+1)%len(order)]
-	case 2: // temperature
-		order := []float64{0.2, 0.4, 0.7, 1.0}
-		at := 0
-		for i, value := range order {
-			if value == m.dirty.Temperature {
-				at = i
-			}
-		}
-		m.dirty.Temperature = order[(at+1)%len(order)]
-	case 3:
-		return m.back()
-	}
-	return m.persist()
-}
+// --- permissions -------------------------------------------------------------
 
-func (m SettingsModel) editAppearance() (SettingsModel, tea.Cmd) {
-	defs := m.appearanceFieldDefs()
-	n := len(defs)
-	if m.cursor >= n { // Back
-		return m.back()
-	}
-	d := defs[m.cursor]
-	var edit *fieldEdit
-	switch d.kind {
-	case fText:
-		edit = newTextEdit(d.label, d.get(), d.password)
-	case fEnum:
-		edit = newEnumEdit(d.label, d.options, d.get())
-	case fMulti:
-		edit = newMultiEdit(d.label, d.options, d.getMulti())
-	}
-	edit.setWidth(m.width)
-	m.edit = edit
-	m.editFieldIdx = m.cursor
-	m.level = lvlField
-	return m, m.focusCmd()
-}
-
-func (m SettingsModel) appearanceFieldDefs() []fieldDef {
-	m.ensureStatusLine()
-	return []fieldDef{
-		{"enabled", fEnum, false, []string{"on", "off"},
-			func() string {
-				if m.dirty.StatusLine != nil && m.dirty.StatusLine.Enabled {
-					return "on"
-				}
-				return "off"
-			}, nil,
-			func(e *fieldEdit) error {
-				m.ensureStatusLine()
-				m.dirty.StatusLine.Enabled = e.value() == "on"
-				return nil
-			}},
-		{"segments", fMulti, false, []string{"cwd", "git", "model", "mode", "tokens", "clock"},
-			func() string { return "" },
-			func() []string {
-				m.ensureStatusLine()
-				if len(m.dirty.StatusLine.Segments) == 0 {
-					return []string{"cwd", "model", "mode", "tokens"}
-				}
-				return append([]string(nil), m.dirty.StatusLine.Segments...)
-			},
-			func(e *fieldEdit) error {
-				m.ensureStatusLine()
-				m.dirty.StatusLine.Segments = e.selected()
-				return nil
-			}},
-		{"command", fText, false, nil,
-			func() string {
-				m.ensureStatusLine()
-				return m.dirty.StatusLine.Command
-			}, nil,
-			func(e *fieldEdit) error {
-				m.ensureStatusLine()
-				m.dirty.StatusLine.Command = strings.TrimSpace(e.value())
-				return nil
-			}},
-		{"top bar legend", fEnum, false, []string{"on", "off"},
-			func() string {
-				if m.dirty.Appearance != nil && m.dirty.Appearance.TopBarLegend != nil {
-					if *m.dirty.Appearance.TopBarLegend {
-						return "on"
-					}
-					return "off"
-				}
-				return "on" // default when unset
-			}, nil,
-			func(e *fieldEdit) error {
-				m.ensureAppearance()
-				v := e.value() == "on"
-				m.dirty.Appearance.TopBarLegend = &v
-				return nil
-			}},
-	}
-}
-
-func (m *SettingsModel) ensureStatusLine() {
-	if m.dirty.StatusLine == nil {
-		m.dirty.StatusLine = &config.StatusLine{
-			Enabled:  true,
-			Segments: []string{"cwd", "model", "mode", "tokens"},
-		}
-	}
-}
-
-func (m *SettingsModel) ensureAppearance() {
-	if m.dirty.Appearance == nil {
-		m.dirty.Appearance = &config.Appearance{}
-	}
-}
-
-func (m SettingsModel) editPermissions() (SettingsModel, tea.Cmd) {
+func (m SettingsModel) activatePermissions() (SettingsModel, tea.Cmd) {
 	if m.permBucket != "" {
-		return m.editPermRules()
+		return m.activatePermRules()
 	}
 	switch m.cursor {
-	case 0: // operation mode
+	case 0: // operation mode cycles safe → safe-auto → auto
 		order := []string{"safe", "safe-auto", "auto"}
-		current := ""
-		if m.dirty.Permissions != nil {
-			current = m.dirty.Permissions.Mode
-		}
-		if current == "" {
-			current = m.dirty.PermissionMode
-		}
-		if current == "" || current == "review" {
-			current = "safe"
-		}
-		if current == "always-proceed" {
-			current = "auto"
-		}
+		current := m.permMode()
 		at := 0
-		for i, value := range order {
-			if value == current {
+		for i, v := range order {
+			if v == current {
 				at = i
 			}
 		}
 		next := order[(at+1)%len(order)]
-		if m.dirty.Permissions == nil {
-			m.dirty.Permissions = &config.Permissions{}
-		}
-		m.dirty.Permissions.Mode = next
-		m.dirty.PermissionMode = next
-		return m.persist()
-	case 1:
-		m.permBucket, m.cursor = "allow", 0
+		return m.persistRebase(func(f *config.File) {
+			if f.Permissions == nil {
+				f.Permissions = &config.Permissions{}
+			}
+			f.Permissions.Mode = next
+			f.PermissionMode = next
+		})
+	case 1, 2, 3:
+		m.permBucket = []string{"allow", "ask", "deny"}[m.cursor-1]
+		m.cursor = 0
 		return m, nil
-	case 2:
-		m.permBucket, m.cursor = "ask", 0
-		return m, nil
-	case 3:
-		m.permBucket, m.cursor = "deny", 0
-		return m, nil
-	case 4:
-		return m.back()
 	}
 	return m, nil
 }
 
-// editPermRules handles the allow/ask/deny rule list: enter on a rule deletes
-// it, on "+ Add" opens a text editor, on Back clears the bucket.
-func (m SettingsModel) editPermRules() (SettingsModel, tea.Cmd) {
+func (m SettingsModel) permMode() string {
+	mode := ""
+	if m.dirty.Permissions != nil {
+		mode = m.dirty.Permissions.Mode
+	}
+	if mode == "" {
+		mode = m.dirty.PermissionMode
+	}
+	if mode == "" || mode == "review" {
+		return "safe"
+	}
+	if mode == "always-proceed" {
+		return "auto"
+	}
+	return mode
+}
+
+// activatePermRules: enter on a rule deletes it; on "+ Add" opens a text
+// editor; the keybar documents both.
+func (m SettingsModel) activatePermRules() (SettingsModel, tea.Cmd) {
 	rules := m.permRules()
-	n := len(rules)
-	switch {
-	case m.cursor == n: // + Add
+	if m.cursor >= len(rules) { // "+ Add rule"
 		m.edit = newTextEdit(m.permBucket+" rule", "", false)
 		m.edit.setWidth(m.width)
-		m.editFieldIdx = -1
+		m.editIdx = -1
 		m.permAdding = true
-		m.level = lvlField
 		return m, m.focusCmd()
-	case m.cursor == n+1: // Back
-		m.permBucket = ""
-		m.cursor = 0
-		return m, nil
-	default: // delete selected rule
-		if m.cursor < 0 || m.cursor >= n {
-			return m, nil
-		}
-		m.setPermRules(append(append([]string{}, rules[:m.cursor]...), rules[m.cursor+1:]...))
-		m.saved = "removed rule"
-		m.clampCursor()
-		return m.persist()
 	}
+	bucket, at := m.permBucket, m.cursor
+	return m.persistRebase(func(f *config.File) {
+		if f.Permissions == nil {
+			return
+		}
+		switch bucket {
+		case "allow":
+			f.Permissions.Allow = dropAt(f.Permissions.Allow, at)
+		case "ask":
+			f.Permissions.Ask = dropAt(f.Permissions.Ask, at)
+		case "deny":
+			f.Permissions.Deny = dropAt(f.Permissions.Deny, at)
+		}
+	})
+}
+
+func dropAt(ss []string, at int) []string {
+	if at < 0 || at >= len(ss) {
+		return ss
+	}
+	return append(append([]string{}, ss[:at]...), ss[at+1:]...)
 }
 
 func (m SettingsModel) permRules() []string {
@@ -575,29 +373,17 @@ func (m SettingsModel) permRules() []string {
 	return nil
 }
 
-func (m *SettingsModel) setPermRules(rules []string) {
-	if m.dirty.Permissions == nil {
-		m.dirty.Permissions = &config.Permissions{Mode: "safe"}
-	}
-	switch m.permBucket {
-	case "allow":
-		m.dirty.Permissions.Allow = rules
-	case "ask":
-		m.dirty.Permissions.Ask = rules
-	case "deny":
-		m.dirty.Permissions.Deny = rules
-	}
-}
+// --- entities (Providers/Models) ----------------------------------------------
 
-// enterOrAddEntity: cursor on an entity row drills into its fields; on the
-// "+ Add" row it stages a new entity.
+// enterOrAddEntity: cursor on an entity row drills into its field list; on
+// the "+ Add" row it stages a DRAFT entity (in-memory only — the store refuses
+// invalid files, so a half-filled provider could never be saved mid-add).
 func (m SettingsModel) enterOrAddEntity(kind string) (SettingsModel, tea.Cmd) {
-	n := m.entityCount(kind)
-	switch {
-	case m.cursor == n: // "+ Add"
+	n := m.entityCount()
+	if m.cursor >= n { // "+ Add"
 		if kind == "provider" {
 			m.dirty.Providers = append(m.dirty.Providers, config.Provider{Name: "", Wire: "openai"})
-			m.entityIdx = len(m.dirty.Providers) - 1
+			m.entityRef = ""
 		} else {
 			if len(m.dirty.Providers) == 0 {
 				m.saved = "add a provider first"
@@ -607,69 +393,103 @@ func (m SettingsModel) enterOrAddEntity(kind string) (SettingsModel, tea.Cmd) {
 				Provider:     m.dirty.Providers[0].Name,
 				Capabilities: []unimatrix.Capability{unimatrix.CapChat},
 			})
-			m.entityIdx = len(m.dirty.Models) - 1
+			m.entityRef = ""
 		}
-		m.entityKind, m.adding, m.level, m.cursor = kind, true, lvlEntity, 0
-		return m, nil
-	case m.cursor == n+1: // Back
-		m.level = lvlRoot
-		m.cursor = sectionIndex(m.section)
-		return m, nil
-	default:
-		m.entityKind, m.entityIdx, m.adding, m.level, m.cursor = kind, m.cursor, false, lvlEntity, 0
+		m.entityKind, m.adding, m.view, m.cursor = kind, true, viewEntity, 0
 		return m, nil
 	}
+	if kind == "provider" {
+		m.entityRef = m.dirty.Providers[m.cursor].Name
+	} else {
+		m.entityRef = m.dirty.Models[m.cursor].ID
+	}
+	m.entityKind, m.adding, m.view, m.cursor = kind, false, viewEntity, 0
+	return m, nil
 }
 
-func (m SettingsModel) entityCount(kind string) int {
-	if kind == "provider" {
+func (m SettingsModel) entityCount() int {
+	if m.tabKeyOf() == "providers" {
 		return len(m.dirty.Providers)
 	}
 	return len(m.dirty.Models)
 }
 
-// dropIfBlank removes a just-added entity if the user backed out without filling
-// the required field.
-func (m *SettingsModel) dropIfBlank() {
-	if m.entityKind == "provider" && m.entityIdx < len(m.dirty.Providers) {
-		if strings.TrimSpace(m.dirty.Providers[m.entityIdx].Name) == "" {
-			m.dirty.Providers = append(m.dirty.Providers[:m.entityIdx], m.dirty.Providers[m.entityIdx+1:]...)
+// finishAdd closes a draft: if the working copy now validates, save it; if
+// not, drop the draft and say why. This makes "+ Add provider" traversable
+// (name → base_url → key → esc) — the old whole-file validation trap is gone.
+func (m *SettingsModel) finishAdd() {
+	if !m.adding {
+		return
+	}
+	m.adding = false
+	if _, err := config.Validate(m.dirty); err != nil {
+		m.dropDraft()
+		m.saved = "add cancelled — " + err.Error()
+		return
+	}
+	if m.store != nil {
+		if err := m.store.Save(m.dirty); err != nil {
+			m.saved = "✗ " + err.Error()
+			return
+		}
+		m.dirty = m.store.Snapshot()
+	}
+	m.saved = "added"
+}
+
+// dropDraft removes the staged (still-invalid) entity from the working copy.
+func (m *SettingsModel) dropDraft() {
+	if m.entityKind == "provider" {
+		for i := len(m.dirty.Providers) - 1; i >= 0; i-- {
+			if strings.TrimSpace(m.dirty.Providers[i].Name) == m.entityRef {
+				m.dirty.Providers = append(m.dirty.Providers[:i], m.dirty.Providers[i+1:]...)
+				return
+			}
 		}
 	}
-	if m.entityKind == "model" && m.entityIdx < len(m.dirty.Models) {
-		if strings.TrimSpace(m.dirty.Models[m.entityIdx].ID) == "" {
-			m.dirty.Models = append(m.dirty.Models[:m.entityIdx], m.dirty.Models[m.entityIdx+1:]...)
+	if m.entityKind == "model" {
+		for i := len(m.dirty.Models) - 1; i >= 0; i-- {
+			if strings.TrimSpace(m.dirty.Models[i].ID) == m.entityRef {
+				m.dirty.Models = append(m.dirty.Models[:i], m.dirty.Models[i+1:]...)
+				return
+			}
 		}
 	}
 }
 
-// --- field editing ----------------------------------------------------------
+// --- field editing -------------------------------------------------------------
 
-// openField opens the selected entity field for inline editing.
+// openField opens the selected entity field (viewEntity) for inline editing.
 func (m SettingsModel) openField() (SettingsModel, tea.Cmd) {
 	defs := m.fieldDefs()
-	if m.cursor >= len(defs) { // Back row
-		if m.adding {
-			m.dropIfBlank()
-		}
-		m.level = lvlSection
-		m.clampCursor()
+	if m.cursor >= len(defs) {
 		return m, nil
 	}
-	d := defs[m.cursor]
+	return m.openEdit(defs[m.cursor], m.cursor)
+}
+
+// openScalarField opens a General/Appearance field from the tab's flat list.
+func (m SettingsModel) openScalarField() (SettingsModel, tea.Cmd) {
+	defs := m.fieldDefs()
+	if m.cursor < 0 || m.cursor >= len(defs) {
+		return m, nil
+	}
+	return m.openEdit(defs[m.cursor], m.cursor)
+}
+
+func (m SettingsModel) openEdit(d fieldDef, idx int) (SettingsModel, tea.Cmd) {
 	var edit *fieldEdit
 	switch d.kind {
 	case fText:
-		edit = newTextEdit(d.label, d.get(), d.password)
+		edit = newTextEdit(d.label, d.get(&m.dirty), d.password)
 	case fEnum:
-		edit = newEnumEdit(d.label, d.options, d.get())
+		edit = newEnumEdit(d.label, d.options, d.get(&m.dirty))
 	case fMulti:
-		edit = newMultiEdit(d.label, d.options, d.getMulti())
+		edit = newMultiEdit(d.label, d.options, d.getMulti(&m.dirty))
 	}
 	edit.setWidth(m.width)
 	m.edit = edit
-	m.editFieldIdx = m.cursor
-	m.level = lvlField
+	m.editIdx = idx
 	return m, m.focusCmd()
 }
 
@@ -686,77 +506,110 @@ func (m SettingsModel) updateField(key tea.KeyPressMsg) (SettingsModel, tea.Cmd)
 	case "enter":
 		return m.commitField()
 	case "esc":
-		m.cancelField()
-		m.level = m.fieldReturnLevel()
-		m.clampCursor()
+		m.edit, m.permAdding = nil, false
 		return m, nil
 	}
 	m.edit.update(key)
 	return m, nil
 }
 
-// fieldReturnLevel is where the inline editor returns to on commit/cancel:
-// lvlSection for the General profile section (which has no entity layer),
-// lvlEntity for provider/model fields.
-func (m SettingsModel) fieldReturnLevel() navLevel {
-	if m.section == "general" || m.section == "appearance" || m.permBucket != "" {
-		return lvlSection
-	}
-	return lvlEntity
-}
-
-// commitField writes the edited value back into the entity, validates, and
-// auto-saves to disk.
+// commitField writes the edited value back. Drafts (adding) apply to the
+// working copy only. Everything else re-bases on a FRESH store snapshot —
+// apply the field, validate, save — so concurrent changes made elsewhere
+// (mode/effort/model switches) always survive.
 func (m SettingsModel) commitField() (SettingsModel, tea.Cmd) {
+	// "+ Add rule" in a permissions bucket.
 	if m.permAdding && m.permBucket != "" {
 		rule := strings.TrimSpace(m.edit.value())
-		m.edit = nil
-		m.permAdding = false
-		m.level = lvlSection
+		bucket := m.permBucket
+		m.edit, m.permAdding = nil, false
 		if rule == "" {
 			m.saved = "empty rule ignored"
 			return m, nil
 		}
-		m.setPermRules(append(append([]string{}, m.permRules()...), rule))
-		m.saved = "added " + m.permBucket + " rule"
-		m.clampCursor()
-		return m.persist()
+		return m.persistRebase(func(f *config.File) {
+			if f.Permissions == nil {
+				f.Permissions = &config.Permissions{Mode: "safe"}
+			}
+			switch bucket {
+			case "allow":
+				f.Permissions.Allow = append(f.Permissions.Allow, rule)
+			case "ask":
+				f.Permissions.Ask = append(f.Permissions.Ask, rule)
+			case "deny":
+				f.Permissions.Deny = append(f.Permissions.Deny, rule)
+			}
+		})
 	}
+
 	defs := m.fieldDefs()
-	if m.editFieldIdx < 0 || m.editFieldIdx >= len(defs) {
+	if m.editIdx < 0 || m.editIdx >= len(defs) {
 		m.edit = nil
-		m.level = m.fieldReturnLevel()
 		return m, nil
 	}
-	d := defs[m.editFieldIdx]
-	if err := d.set(m.edit); err != nil {
+	d := defs[m.editIdx]
+
+	// Draft entity: apply to the working copy only; the store would reject it.
+	if m.adding {
+		if err := d.set(&m.dirty, m.edit); err != nil {
+			m.saved = "✗ " + err.Error()
+			return m, nil
+		}
+		if d.label == "name" || d.label == "id" {
+			m.entityRef = strings.TrimSpace(m.edit.value())
+		}
+		m.edit = nil
+		m.saved = "draft — esc to save (add cancelled if still invalid)"
+		return m, nil
+	}
+
+	fresh := m.dirty
+	if m.store != nil {
+		fresh = m.store.Snapshot() // re-base: never clobber concurrent edits
+	}
+	if err := d.set(&fresh, m.edit); err != nil {
 		m.saved = "✗ " + err.Error()
 		return m, nil // stay in the editor so the user can fix it
 	}
-	// Validate the whole config; if it breaks, stay in the editor.
-	if _, err := config.Validate(m.dirty); err != nil {
+	if _, err := config.Validate(fresh); err != nil {
 		m.saved = "✗ " + err.Error()
 		return m, nil
 	}
+	if m.store != nil {
+		if err := m.store.Save(fresh); err != nil {
+			m.saved = "✗ " + err.Error()
+			return m, nil
+		}
+		m.dirty = m.store.Snapshot()
+	} else {
+		m.dirty = fresh
+	}
+	// Keep the entity reference in step with renames (the set above may have
+	// changed the name/id this view is keyed by).
+	if d.label == "name" || d.label == "id" {
+		m.entityRef = strings.TrimSpace(m.edit.value())
+	}
 	m.edit = nil
-	m.level = m.fieldReturnLevel()
-	m.adding = false
-	m.clampCursor()
-	// Auto-save to disk immediately.
-	return m.persist()
+	m.saved = "saved"
+	return m, nil
 }
 
-func (m *SettingsModel) cancelField() {
-	m.edit = nil
-	m.permAdding = false
-}
-
-// persist writes the working copy to disk + hot-swaps, then reloads the snapshot.
-func (m SettingsModel) persist() (SettingsModel, tea.Cmd) {
+// persistRebase mutates a FRESH snapshot (never the working copy), validates,
+// saves, and re-snapshots — the one safe write path for non-entity edits
+// (roles, permissions, deletes).
+func (m SettingsModel) persistRebase(mut func(f *config.File)) (SettingsModel, tea.Cmd) {
 	if m.store == nil {
+		mut(&m.dirty)
+		m.saved = "saved"
 		return m, nil
 	}
-	if err := m.store.Save(m.dirty); err != nil {
+	fresh := m.store.Snapshot()
+	mut(&fresh)
+	if _, err := config.Validate(fresh); err != nil {
+		m.saved = "✗ " + err.Error()
+		return m, nil
+	}
+	if err := m.store.Save(fresh); err != nil {
 		m.saved = "✗ " + err.Error()
 		return m, nil
 	}
@@ -765,201 +618,14 @@ func (m SettingsModel) persist() (SettingsModel, tea.Cmd) {
 	return m, nil
 }
 
-// fieldDef describes one editable field on an entity.
-type fieldDef struct {
-	label    string
-	kind     fieldKind
-	password bool
-	options  []string
-	get      func() string            // scalar value (text/enum)
-	getMulti func() []string          // multi value
-	set      func(e *fieldEdit) error // write the edit back into the entity
-}
+// --- roles ---------------------------------------------------------------------
 
-// fieldDefs returns the editable fields for the current entity (provider/model),
-// or for the General profile section when that's the active section.
-func (m SettingsModel) fieldDefs() []fieldDef {
-	if m.section == "general" {
-		return m.generalFieldDefs()
-	}
-	if m.section == "appearance" {
-		return m.appearanceFieldDefs()
-	}
-	if m.entityKind == "provider" {
-		return m.providerFieldDefs()
-	}
-	return m.modelFieldDefs()
-}
-
-// openGeneralField opens the inline editor for one General/Profile field. The
-// General section is a flat field list at lvlSection; activating a row jumps
-// straight into lvlField (there is no lvlEntity for it). The Back row backs out.
-func (m SettingsModel) openGeneralField() (SettingsModel, tea.Cmd) {
-	defs := m.generalFieldDefs()
-	if m.cursor < 0 || m.cursor >= len(defs) {
-		return m.back() // Back row
-	}
-	d := defs[m.cursor]
-	var edit *fieldEdit
-	switch d.kind {
-	case fText:
-		edit = newTextEdit(d.label, d.get(), d.password)
-	case fEnum:
-		edit = newEnumEdit(d.label, d.options, d.get())
-	case fMulti:
-		edit = newMultiEdit(d.label, d.options, d.getMulti())
-	}
-	edit.setWidth(m.width)
-	m.edit = edit
-	m.editFieldIdx = m.cursor
-	m.level = lvlField
-	return m, m.focusCmd()
-}
-
-// generalFieldDefs describes the General/Profile scalars (backed by config.File),
-// reused by the row renderer, the editor, and commit.
-func (m SettingsModel) generalFieldDefs() []fieldDef {
-	d := &m.dirty
-	return []fieldDef{
-		{"language", fEnum, false, []string{"en", "fr", "es", "de", "it", "pt", "zh", "ja", "ko", "ar", "hi"},
-			func() string { return orDefault(d.Language, "en") }, nil,
-			func(e *fieldEdit) error { d.Language = e.value(); return nil }},
-		{"privacy", fEnum, false, []string{"standard", "strict", "local-only"},
-			func() string { return orDefault(d.PrivacyLevel, "standard") }, nil,
-			func(e *fieldEdit) error { d.PrivacyLevel = e.value(); return nil }},
-		{"name", fText, false, nil, func() string { return d.Name }, nil,
-			func(e *fieldEdit) error { d.Name = strings.TrimSpace(e.value()); return nil }},
-		{"email", fText, false, nil, func() string { return d.Email }, nil,
-			func(e *fieldEdit) error { d.Email = strings.TrimSpace(e.value()); return nil }},
-		{"domain", fText, false, nil, func() string { return d.Domain }, nil,
-			func(e *fieldEdit) error { d.Domain = strings.TrimSpace(e.value()); return nil }},
-		{"org", fText, false, nil, func() string { return d.Org }, nil,
-			func(e *fieldEdit) error { d.Org = strings.TrimSpace(e.value()); return nil }},
-		{"notes", fText, false, nil, func() string { return d.Notes }, nil,
-			func(e *fieldEdit) error { d.Notes = strings.TrimSpace(e.value()); return nil }},
-	}
-}
-
-func (m SettingsModel) providerFieldDefs() []fieldDef {
-	p := m.dirty.Providers[m.entityIdx]
-	return []fieldDef{
-		{"name", fText, false, nil, func() string { return p.Name }, nil,
-			func(e *fieldEdit) error {
-				n := strings.TrimSpace(e.value())
-				if n == "" {
-					return fmt.Errorf("name is required")
-				}
-				for i, op := range m.dirty.Providers {
-					if i != m.entityIdx && op.Name == n {
-						return fmt.Errorf("name %q already used", n)
-					}
-				}
-				old := m.dirty.Providers[m.entityIdx].Name
-				np := m.dirty.Providers[m.entityIdx]
-				np.Name = n
-				m.dirty.Providers[m.entityIdx] = np
-				if n != old {
-					for j := range m.dirty.Models {
-						if m.dirty.Models[j].Provider == old {
-							m.dirty.Models[j].Provider = n
-						}
-					}
-				}
-				return nil
-			}},
-		{"base_url", fText, false, nil, func() string { return m.dirty.Providers[m.entityIdx].BaseURL }, nil,
-			func(e *fieldEdit) error {
-				m.dirty.Providers[m.entityIdx].BaseURL = strings.TrimSpace(e.value())
-				return nil
-			}},
-		{"api_key", fText, true, nil, func() string { return m.dirty.Providers[m.entityIdx].APIKey }, nil,
-			func(e *fieldEdit) error {
-				m.dirty.Providers[m.entityIdx].APIKey = strings.TrimSpace(e.value())
-				return nil
-			}},
-		{"wire", fEnum, false, []string{"openai", "anthropic"}, func() string { return m.dirty.Providers[m.entityIdx].Wire }, nil,
-			func(e *fieldEdit) error { m.dirty.Providers[m.entityIdx].Wire = e.value(); return nil }},
-		{"tags", fText, false, nil, func() string { return strings.Join(m.dirty.Providers[m.entityIdx].Tags, ", ") }, nil,
-			func(e *fieldEdit) error { m.dirty.Providers[m.entityIdx].Tags = parseTags(e.value()); return nil }},
-	}
-}
-
-func (m SettingsModel) modelFieldDefs() []fieldDef {
-	mo := m.dirty.Models[m.entityIdx]
-	provNames := m.providerNames()
-	caps := capStrings()
-	return []fieldDef{
-		{"id", fText, false, nil, func() string { return mo.ID }, nil,
-			func(e *fieldEdit) error {
-				n := strings.TrimSpace(e.value())
-				if n == "" {
-					return fmt.Errorf("id is required")
-				}
-				for i, om := range m.dirty.Models {
-					if i != m.entityIdx && om.ID == n {
-						return fmt.Errorf("id %q already used", n)
-					}
-				}
-				old := m.dirty.Models[m.entityIdx].ID
-				nm := m.dirty.Models[m.entityIdx]
-				nm.ID = n
-				m.dirty.Models[m.entityIdx] = nm
-				if n != old {
-					for role, rid := range m.dirty.Roles {
-						if rid == old {
-							m.dirty.Roles[role] = n
-						}
-					}
-				}
-				return nil
-			}},
-		{"label", fText, false, nil, func() string { return m.dirty.Models[m.entityIdx].Label }, nil,
-			func(e *fieldEdit) error { m.dirty.Models[m.entityIdx].Label = strings.TrimSpace(e.value()); return nil }},
-		{"provider", fEnum, false, provNames, func() string { return m.dirty.Models[m.entityIdx].Provider }, nil,
-			func(e *fieldEdit) error { m.dirty.Models[m.entityIdx].Provider = e.value(); return nil }},
-		{"capabilities", fMulti, false, caps, func() string { return "" }, func() []string { return m.dirty.Models[m.entityIdx].Caps() },
-			func(e *fieldEdit) error {
-				m.dirty.Models[m.entityIdx].Capabilities = stringsToCaps(e.selected())
-				return nil
-			}},
-		{"context", fText, false, nil, func() string { return strconv.Itoa(m.dirty.Models[m.entityIdx].Context) }, nil,
-			func(e *fieldEdit) error { m.dirty.Models[m.entityIdx].Context = atoiOr(e.value(), 0); return nil }},
-		{"tags", fText, false, nil, func() string { return strings.Join(m.dirty.Models[m.entityIdx].Tags, ", ") }, nil,
-			func(e *fieldEdit) error { m.dirty.Models[m.entityIdx].Tags = parseTags(e.value()); return nil }},
-	}
-}
-
-// --- overview + roles editing ----------------------------------------------
-
-func (m SettingsModel) editOverviewRow() (SettingsModel, tea.Cmd) {
-	// Overview rows: chat model, summary model, back.
-	rows := m.overviewRowCount()
-	if m.cursor == rows-1 { // Back
-		m.level = lvlRoot
-		m.cursor = sectionIndex(m.section)
-		return m, nil
-	}
-	switch m.cursor {
-	case 0:
-		return m.pickRoleModel(unimatrix.RoleChat)
-	case 1:
-		return m.pickRoleModel(unimatrix.RoleSummary)
-	}
-	return m, nil
-}
-
-func (m SettingsModel) editRole() (SettingsModel, tea.Cmd) {
+func (m SettingsModel) cycleRole() (SettingsModel, tea.Cmd) {
 	roles := unimatrix.Roles()
-	if m.cursor == len(roles) { // Back
-		m.level = lvlRoot
-		m.cursor = sectionIndex(m.section)
+	if m.cursor >= len(roles) {
 		return m, nil
 	}
-	return m.cycleRole(roles[m.cursor])
-}
-
-// cycleRole moves the selected role's model by +1 within its candidate set.
-func (m SettingsModel) cycleRole(role string) (SettingsModel, tea.Cmd) {
+	role := roles[m.cursor]
 	cands := m.roleCandidates(role)
 	if len(cands) == 0 {
 		return m, nil
@@ -973,16 +639,12 @@ func (m SettingsModel) cycleRole(role string) (SettingsModel, tea.Cmd) {
 		}
 	}
 	next := cands[(at+1)%len(cands)]
-	if m.dirty.Roles == nil {
-		m.dirty.Roles = map[string]string{}
-	}
-	m.dirty.Roles[role] = next.ID
-	return m.persist()
-}
-
-// pickRoleModel cycles the chat/summary role's model (Overview shortcut).
-func (m SettingsModel) pickRoleModel(role string) (SettingsModel, tea.Cmd) {
-	return m.cycleRole(role)
+	return m.persistRebase(func(f *config.File) {
+		if f.Roles == nil {
+			f.Roles = map[string]string{}
+		}
+		f.Roles[role] = next.ID
+	})
 }
 
 func (m SettingsModel) roleCandidates(role string) []unimatrix.Model {
@@ -998,14 +660,13 @@ func (m SettingsModel) roleCandidates(role string) []unimatrix.Model {
 	return m.dirty.Models
 }
 
-// --- delete ----------------------------------------------------------------
+// --- delete --------------------------------------------------------------------
 
-// deleteEntity removes the selected provider/model (called via a keybar action).
 func (m SettingsModel) deleteEntity() (SettingsModel, tea.Cmd) {
-	if m.level != lvlSection {
+	if m.view != viewList {
 		return m, nil
 	}
-	if m.section == "providers" {
+	if m.tabKeyOf() == "providers" {
 		if m.cursor >= len(m.dirty.Providers) {
 			return m, nil
 		}
@@ -1016,8 +677,16 @@ func (m SettingsModel) deleteEntity() (SettingsModel, tea.Cmd) {
 				return m, nil
 			}
 		}
-		m.dirty.Providers = append(m.dirty.Providers[:m.cursor], m.dirty.Providers[m.cursor+1:]...)
-	} else if m.section == "models" {
+		return m.persistRebase(func(f *config.File) {
+			for i, p := range f.Providers {
+				if p.Name == name {
+					f.Providers = append(f.Providers[:i], f.Providers[i+1:]...)
+					return
+				}
+			}
+		})
+	}
+	if m.tabKeyOf() == "models" {
 		if m.cursor >= len(m.dirty.Models) {
 			return m, nil
 		}
@@ -1028,19 +697,23 @@ func (m SettingsModel) deleteEntity() (SettingsModel, tea.Cmd) {
 				return m, nil
 			}
 		}
-		m.dirty.Models = append(m.dirty.Models[:m.cursor], m.dirty.Models[m.cursor+1:]...)
-	} else {
-		return m, nil
+		return m.persistRebase(func(f *config.File) {
+			for i, mo := range f.Models {
+				if mo.ID == id {
+					f.Models = append(f.Models[:i], f.Models[i+1:]...)
+					return
+				}
+			}
+		})
 	}
-	m.clampCursor()
-	return m.persist()
+	return m, nil
 }
 
-// --- model test + list models ----------------------------------------------
+// --- model test + list models ----------------------------------------------------
 
 // testModel fires a tiny chat to verify the selected model works.
 func (m SettingsModel) testModel() (SettingsModel, tea.Cmd) {
-	if m.section != "models" || m.cursor >= len(m.dirty.Models) {
+	if m.cursor >= len(m.dirty.Models) {
 		return m, nil
 	}
 	id := m.dirty.Models[m.cursor].ID
@@ -1079,7 +752,7 @@ func (m SettingsModel) handleTestResult(r modelTestResultMsg) (SettingsModel, te
 
 // listModels fetches /models from the selected provider.
 func (m SettingsModel) listModels() (SettingsModel, tea.Cmd) {
-	if m.section != "providers" || m.cursor >= len(m.dirty.Providers) {
+	if m.cursor >= len(m.dirty.Providers) {
 		return m, nil
 	}
 	name := m.dirty.Providers[m.cursor].Name
@@ -1134,16 +807,18 @@ func (m SettingsModel) updatePicker(msg tea.Msg) (SettingsModel, tea.Cmd) {
 // addFromList creates a new model from a discovered ID and drills into it.
 func (m SettingsModel) addFromList() (SettingsModel, tea.Cmd) {
 	id := m.listed[m.listedSel]
+	prov := m.listedProv
 	m.listed = nil
-	m.dirty.Models = append(m.dirty.Models, unimatrix.Model{
-		ID: id, Label: id, Provider: m.listedProv,
-		Capabilities: []unimatrix.Capability{unimatrix.CapChat},
+	return m.persistRebase(func(f *config.File) {
+		f.Models = append(f.Models, unimatrix.Model{
+			ID: id, Label: id, Provider: prov,
+			Capabilities: []unimatrix.Capability{unimatrix.CapChat},
+		})
+		m.entityKind, m.entityRef, m.adding, m.view, m.cursor = "model", id, false, viewEntity, 0
 	})
-	m.entityKind, m.entityIdx, m.adding, m.level, m.cursor = "model", len(m.dirty.Models)-1, false, lvlEntity, 0
-	return m.persist()
 }
 
-// --- row model + rendering -------------------------------------------------
+// --- row model -------------------------------------------------------------------
 
 type modelTestResultMsg struct {
 	modelID string
@@ -1158,47 +833,33 @@ type modelsListedMsg struct {
 	err      error
 }
 
-// rowCount is the number of navigable rows at the current level.
+// rowCount is the number of navigable rows in the current view.
 func (m SettingsModel) rowCount() int {
-	switch m.level {
-	case lvlRoot:
-		return len(rootSections) + 1 // + Back
-	case lvlSection:
-		switch m.section {
-		case "overview":
-			return m.overviewRowCount()
-		case "providers":
-			return len(m.dirty.Providers) + 2 // + Add, Back
-		case "models":
-			return len(m.dirty.Models) + 2
-		case "roles":
-			return len(unimatrix.Roles()) + 1 // + Back
-		case "behavior":
-			return 4
-		case "general":
-			return len(m.generalFieldDefs()) + 1 // fields + Back
-		case "permissions":
-			if m.permBucket != "" {
-				return len(m.permRules()) + 2 // rules + Add + Back
-			}
-			return 5 // mode, allow, ask, deny, Back
-		case "clusters":
-			return 6
-		case "storage":
-			return 4
-		case "keybindings":
-			return 13
-		case "appearance":
-			return len(m.appearanceFieldDefs()) + 1 // fields + Back
+	if m.view == viewEntity {
+		return len(m.fieldDefs())
+	}
+	switch m.tabKeyOf() {
+	case "general", "appearance":
+		return len(m.fieldDefs())
+	case "providers":
+		return len(m.dirty.Providers) + 1 // + Add
+	case "models":
+		return len(m.dirty.Models) + 1
+	case "roles":
+		return len(unimatrix.Roles())
+	case "permissions":
+		if m.permBucket != "" {
+			return len(m.permRules()) + 1 // + Add rule
 		}
-	case lvlEntity:
-		return len(m.fieldDefs()) + 1 // + Back
+		return 4 // mode, allow, ask, deny
+	case "system":
+		return m.systemRowCount()
 	}
 	return 0
 }
 
-func (m SettingsModel) overviewRowCount() int {
-	return 3 // chat model, summary model, Back
+func (m SettingsModel) systemRowCount() int {
+	return 8 + 12 // cluster/storage reference + F1-F12
 }
 
 func (m SettingsModel) clampCursor() {
@@ -1214,52 +875,156 @@ func (m SettingsModel) clampCursor() {
 	}
 }
 
-// Resize stores geometry (the inline editor sizes itself).
+// Resize stores geometry and sizes the body viewport + inline editor.
 func (m SettingsModel) Resize(w, h int) SettingsModel {
 	m.width, m.height = w, h
+	inner := w - 4 // inside the frame border + pad
+	m.vp.SetWidth(inner)
+	bh := h - 2 - 1 - 1 - 2 // border, title, keybar, tab row + roadmap line
+	if bh < 1 {
+		bh = 1
+	}
+	m.vp.SetHeight(bh)
 	if m.edit != nil {
-		m.edit.setWidth(w)
+		m.edit.setWidth(inner)
 	}
 	return m
 }
 
-// rows builds the rendered list for the current level. Each level builds its own
-// []string (no shared slice via a closure — that lost the active-editor row to a
-// realloc). The field-editor row is swapped in for the active field.
+// --- rendering --------------------------------------------------------------------
+
+// rows builds the rendered list for the current view; the active field editor
+// row is swapped in where it sits.
 func (m SettingsModel) rows() []string {
-	switch m.level {
-	case lvlRoot:
-		rs := make([]string, 0, len(rootSections)+1)
-		for i, s := range rootSections {
-			rs = append(rs, m.mark(i, s.label))
-		}
-		rs = append(rs, m.mark(len(rootSections), "← Back"))
-		return rs
-	case lvlSection:
-		return m.sectionRows()
-	case lvlEntity, lvlField:
-		if m.permAdding {
-			return m.permAddRows()
-		}
+	if m.view == viewEntity {
 		return m.entityRows()
+	}
+	switch m.tabKeyOf() {
+	case "general", "appearance":
+		return m.fieldRows()
+	case "providers":
+		rs := make([]string, 0, len(m.dirty.Providers)+1)
+		for i, p := range m.dirty.Providers {
+			rs = append(rs, m.mark(i, fmt.Sprintf("%-16s %-7s %s", p.Name, p.Wire, strings.Join(p.Tags, ", "))))
+		}
+		rs = append(rs, m.mark(len(m.dirty.Providers), "+ Add provider"))
+		return rs
+	case "models":
+		rs := make([]string, 0, len(m.dirty.Models)+1)
+		for i, mo := range m.dirty.Models {
+			rs = append(rs, m.mark(i, fmt.Sprintf("%-18s %-12s %s", mo.ID, mo.Provider, strings.Join(mo.Caps(), "+"))))
+		}
+		rs = append(rs, m.mark(len(m.dirty.Models), "+ Add model"))
+		return rs
+	case "roles":
+		cfg, _ := config.Validate(m.dirty)
+		rs := make([]string, 0, len(unimatrix.Roles()))
+		for i, role := range unimatrix.Roles() {
+			assigned := "—"
+			if cfg != nil {
+				if mo, err := cfg.RoleModel(role); err == nil {
+					assigned = modelLabel(mo)
+				}
+			}
+			rs = append(rs, m.mark(i, settingRow(role, assigned)))
+		}
+		return rs
+	case "permissions":
+		return m.permRows()
+	case "system":
+		return m.systemRows()
 	}
 	return nil
 }
 
-// permAddRows paints the rule list with the inline "+ Add" editor active.
-func (m SettingsModel) permAddRows() []string {
-	rules := m.permRules()
-	rs := make([]string, 0, len(rules)+2)
-	for i, r := range rules {
-		rs = append(rs, m.mark(i, settingRow(fmt.Sprintf("%d", i+1), r)))
+// fieldRows paints a flat field list (General/Appearance) with the active
+// editor swapped in.
+func (m SettingsModel) fieldRows() []string {
+	defs := m.fieldDefs()
+	rs := make([]string, 0, len(defs))
+	for i, d := range defs {
+		if m.edit != nil && i == m.editIdx {
+			rs = append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
+			continue
+		}
+		val := d.get(&m.dirty)
+		if d.password {
+			val = mask(val)
+		}
+		if d.kind == fMulti {
+			val = strings.Join(d.getMulti(&m.dirty), "+")
+		}
+		rs = append(rs, m.mark(i, settingRow(d.label, val)))
 	}
-	addIdx := len(rules)
-	if m.edit != nil {
-		rs = append(rs, styleMenuSel.Render("▶ "+m.edit.view(m.width)))
-	} else {
-		rs = append(rs, m.mark(addIdx, "+ Add rule"))
+	return rs
+}
+
+// entityRows paints one provider/model's field list with the active editor
+// swapped in.
+func (m SettingsModel) entityRows() []string {
+	defs := m.fieldDefs()
+	rs := make([]string, 0, len(defs))
+	for i, d := range defs {
+		if m.edit != nil && i == m.editIdx {
+			rs = append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
+			continue
+		}
+		val := d.get(&m.dirty)
+		if d.password {
+			val = mask(val)
+		}
+		if d.kind == fMulti {
+			val = strings.Join(d.getMulti(&m.dirty), "+")
+		}
+		rs = append(rs, m.mark(i, settingRow(d.label, val)))
 	}
-	rs = append(rs, m.mark(addIdx+1, "← Back"))
+	return rs
+}
+
+func (m SettingsModel) permRows() []string {
+	if m.permBucket != "" {
+		rules := m.permRules()
+		rs := make([]string, 0, len(rules)+1)
+		for i, r := range rules {
+			rs = append(rs, m.mark(i, settingRow(fmt.Sprintf("%d", i+1), r)))
+		}
+		if m.edit != nil && m.permAdding {
+			return append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
+		}
+		return append(rs, m.mark(len(rules), "+ Add rule"))
+	}
+	allowN, askN, denyN := 0, 0, 0
+	if m.dirty.Permissions != nil {
+		allowN = len(m.dirty.Permissions.Allow)
+		askN = len(m.dirty.Permissions.Ask)
+		denyN = len(m.dirty.Permissions.Deny)
+	}
+	return []string{
+		m.mark(0, settingRow("operation mode", m.permMode())),
+		m.mark(1, settingRow("allow rules", fmt.Sprintf("%d", allowN))),
+		m.mark(2, settingRow("ask rules", fmt.Sprintf("%d", askN))),
+		m.mark(3, settingRow("deny rules", fmt.Sprintf("%d", denyN))),
+	}
+}
+
+func (m SettingsModel) systemRows() []string {
+	rows := []string{
+		settingRow("scheduler", "Slurm"),
+		settingRow("cluster", envOr("SLURM_CLUSTER_NAME", "local discovery")),
+		settingRow("partitions / GRES", "machine-readable discovery"),
+		settingRow("fairshare", "sshare + sprio"),
+		settingRow("queue", "squeue --json"),
+		settingRow("home", envOr("HOME", "—")+" · backed up"),
+		settingRow("scratch", envOr("SCRATCH", "—")+" · 60-day purge"),
+		settingRow("project", envOr("PROJECT", "—")+" · backed up"),
+	}
+	for i := 1; i <= 12; i++ {
+		rows = append(rows, settingRow(fmt.Sprintf("F%d", i), functionKeyLabel(i)))
+	}
+	rs := make([]string, len(rows))
+	for i, r := range rows {
+		rs[i] = m.mark(i, r)
+	}
 	return rs
 }
 
@@ -1271,280 +1036,61 @@ func (m SettingsModel) mark(i int, text string) string {
 	return styleMenuUnsel.Render("  " + text)
 }
 
-func (m SettingsModel) sectionRows() []string {
-	rs := []string{}
-	switch m.section {
-	case "overview":
-		cfg, _ := config.Validate(m.dirty)
-		chatS, sumS := "—", "—"
-		if cfg != nil {
-			if mo, err := cfg.RoleModel(unimatrix.RoleChat); err == nil {
-				chatS = modelLabel(mo)
-			}
-			if mo, err := cfg.RoleModel(unimatrix.RoleSummary); err == nil {
-				sumS = modelLabel(mo)
-			}
+// tabRow renders the tab strip: the active tab as a solid brand chip, the
+// rest dim. Clipped to the frame width on narrow terminals (digit keys 1-7
+// still reach every tab).
+func (m SettingsModel) tabRow() string {
+	cells := make([]string, 0, len(settingsTabs))
+	for i, t := range settingsTabs {
+		if i == m.tab {
+			cells = append(cells, lipgloss.NewStyle().
+				Foreground(colOnAccent).Background(colPrimary).Bold(true).
+				Render(" "+t.label))
+		} else {
+			cells = append(cells, styleSettingsFoot.Render(" "+t.label))
 		}
-		rs = append(rs, m.mark(0, settingRow("chat model", chatS)))
-		rs = append(rs, m.mark(1, settingRow("summary model", sumS)))
-		rs = append(rs, m.mark(2, "← Back"))
-	case "general":
-		d := m.dirty
-		rs = append(rs,
-			m.mark(0, settingRow("language", orDefault(d.Language, "en"))),
-			m.mark(1, settingRow("privacy", orDefault(d.PrivacyLevel, "standard"))),
-			m.mark(2, settingRow("name", orDefault(d.Name, "—"))),
-			m.mark(3, settingRow("email", orDefault(d.Email, "—"))),
-			m.mark(4, settingRow("domain", orDefault(d.Domain, "—"))),
-			m.mark(5, settingRow("org", orDefault(d.Org, "—"))),
-			m.mark(6, settingRow("notes", orDefault(d.Notes, "—"))),
-			m.mark(7, "← Back"),
-		)
-	case "providers":
-		for i, p := range m.dirty.Providers {
-			rs = append(rs, m.mark(i, fmt.Sprintf("%-16s %-7s %s", p.Name, p.Wire, strings.Join(p.Tags, ", "))))
-		}
-		rs = append(rs, m.mark(len(m.dirty.Providers), "+ Add provider"))
-		rs = append(rs, m.mark(len(m.dirty.Providers)+1, "← Back"))
-	case "models":
-		for i, mo := range m.dirty.Models {
-			rs = append(rs, m.mark(i, fmt.Sprintf("%-18s %-12s %s", mo.ID, mo.Provider, strings.Join(mo.Caps(), "+"))))
-		}
-		rs = append(rs, m.mark(len(m.dirty.Models), "+ Add model"))
-		rs = append(rs, m.mark(len(m.dirty.Models)+1, "← Back"))
-	case "roles":
-		cfg, _ := config.Validate(m.dirty)
-		for i, role := range unimatrix.Roles() {
-			assigned := "—"
-			if cfg != nil {
-				if mo, err := cfg.RoleModel(role); err == nil {
-					assigned = modelLabel(mo)
-				}
-			}
-			rs = append(rs, m.mark(i, settingRow(role, assigned)))
-		}
-		rs = append(rs, m.mark(len(unimatrix.Roles()), "← Back"))
-	case "behavior":
-		effort := m.dirty.Effort
-		if effort == "" {
-			effort = "medium"
-		}
-		maxTokens := m.dirty.MaxTokens
-		if maxTokens == 0 {
-			maxTokens = 8192
-		}
-		temperature := m.dirty.Temperature
-		if temperature == 0 {
-			temperature = 0.7
-		}
-		rs = append(rs,
-			m.mark(0, settingRow("effort", effort+"   (enter cycles)")),
-			m.mark(1, settingRow("max tokens", strconv.Itoa(maxTokens)+"   (enter cycles)")),
-			m.mark(2, settingRow("temperature", fmt.Sprintf("%.1f   (enter cycles)", temperature))),
-			m.mark(3, "← Back"),
-		)
-	case "permissions":
-		if m.permBucket != "" {
-			rules := m.permRules()
-			for i, r := range rules {
-				rs = append(rs, m.mark(i, settingRow(fmt.Sprintf("%d", i+1), r+"   (enter deletes)")))
-			}
-			rs = append(rs,
-				m.mark(len(rules), "+ Add rule"),
-				m.mark(len(rules)+1, "← Back"),
-			)
-			break
-		}
-		mode := ""
-		if m.dirty.Permissions != nil {
-			mode = m.dirty.Permissions.Mode
-		}
-		if mode == "" {
-			mode = m.dirty.PermissionMode
-		}
-		if mode == "" || mode == "review" {
-			mode = "safe"
-		}
-		if mode == "always-proceed" {
-			mode = "auto"
-		}
-		allowN, askN, denyN := 0, 0, 0
-		if m.dirty.Permissions != nil {
-			allowN = len(m.dirty.Permissions.Allow)
-			askN = len(m.dirty.Permissions.Ask)
-			denyN = len(m.dirty.Permissions.Deny)
-		}
-		rs = append(rs,
-			m.mark(0, settingRow("operation mode", mode+"   (enter cycles: safe → safe-auto → auto)")),
-			m.mark(1, settingRow("allow rules", fmt.Sprintf("%d   (enter to edit)", allowN))),
-			m.mark(2, settingRow("ask rules", fmt.Sprintf("%d   (enter to edit)", askN))),
-			m.mark(3, settingRow("deny rules", fmt.Sprintf("%d   (enter to edit)", denyN))),
-			m.mark(4, "← Back"),
-		)
-	case "clusters":
-		rs = append(rs,
-			m.mark(0, settingRow("scheduler", "Slurm")),
-			m.mark(1, settingRow("cluster", envOr("SLURM_CLUSTER_NAME", "local discovery"))),
-			m.mark(2, settingRow("partitions / GRES", "machine-readable discovery")),
-			m.mark(3, settingRow("fairshare", "sshare + sprio")),
-			m.mark(4, settingRow("queue", "squeue --json")),
-			m.mark(5, "← Back"),
-		)
-	case "storage":
-		rs = append(rs,
-			m.mark(0, settingRow("home", envOr("HOME", "—")+" · backed up")),
-			m.mark(1, settingRow("scratch", envOr("SCRATCH", "—")+" · 60-day purge")),
-			m.mark(2, settingRow("project", envOr("PROJECT", "—")+" · backed up")),
-			m.mark(3, "← Back"),
-		)
-	case "keybindings":
-		for i := 1; i <= 12; i++ {
-			rs = append(rs, m.mark(i-1, fmt.Sprintf("F%-2d  %s", i, functionKeyLabel(i))))
-		}
-		rs = append(rs, m.mark(12, "← Back"))
-	case "appearance":
-		defs := m.appearanceFieldDefs()
-		for i, d := range defs {
-			val := ""
-			switch d.kind {
-			case fMulti:
-				val = strings.Join(d.getMulti(), ",")
-			default:
-				val = d.get()
-			}
-			if d.label == "command" && val == "" {
-				val = "(none)"
-			}
-			rs = append(rs, m.mark(i, settingRow(d.label, val)))
-		}
-		rs = append(rs, m.mark(len(defs), "← Back"))
 	}
-	return rs
+	return clipLine(strings.Join(cells, "  "), m.width-4)
 }
 
-func envOr(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
-}
-
-func functionKeyLabel(n int) string {
-	labels := []string{"help", "settings", "model", "effort", "new chat", "resume", "context", "stats", "permissions", "", "", "status"}
-	if n < 1 || n > len(labels) {
-		return ""
-	}
-	return labels[n-1]
-}
-
-func (m SettingsModel) entityRows() []string {
-	defs := m.fieldDefs()
-	rs := make([]string, 0, len(defs)+1)
-	for i, d := range defs {
-		if m.level == lvlField && i == m.editFieldIdx && m.edit != nil {
-			// Active field: the editor renders distinctly (NOT inside the cyan
-			// selected-row style — that made the textinput invisible). Green ▶
-			// marker + the editor's own label/value styling on the default bg.
-			rs = append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
-			continue
-		}
-		val := d.get()
-		if d.password {
-			val = mask(val)
-		}
-		if d.kind == fMulti {
-			val = strings.Join(d.getMulti(), "+")
-		}
-		rs = append(rs, m.mark(i, settingRow(d.label, val)))
-	}
-	rs = append(rs, m.mark(len(defs), "← Back"))
-	return rs
-}
-
-// View renders the drill-down as two panes: a read-only section/entity tree on
-// the left (a "you are here" map) and the current level's actionable list on the
-// right. The level state machine + keys are unchanged; only the layout changes.
+// View renders the editor: title (+ toast) / tab row / roadmap line / the
+// current list in a viewport / keybar — one full-width pane, no split.
 func (m SettingsModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	header := m.breadcrumb()
+	rows := m.rows()
+	m.vp.SetContent(strings.Join(rows, "\n"))
+	m.keepCursorVisible()
+
+	title := screenTitle("Settings")
 	if m.saved != "" {
-		// Toast right-aligned on the header line.
-		gap := m.width - 6 - lipgloss.Width(header) - lipgloss.Width(styleToast.Render(m.saved))
+		gap := m.width - 6 - lipgloss.Width(title) - lipgloss.Width(styleToast.Render(m.saved))
 		if gap < 1 {
 			gap = 1
 		}
-		header += strings.Repeat(" ", gap) + styleToast.Render(m.saved)
+		title += strings.Repeat(" ", gap) + styleToast.Render(m.saved)
 	}
-	out := TwoPane(m.width, m.height, header, m.treeView(), strings.Join(m.rows(), "\n"), KeyBar(m.keybar()))
+	body := m.tabRow() + "\n" + styleSettingsFoot.Render(settingsRoadmap) + "\n" + m.vp.View()
+	out := AppScreenScroll(m.width, m.height, title, body, m.vp.Height()+2, KeyBar(m.keybar()))
 	if len(m.listed) > 0 {
-		return overlay(m.width, m.height, out, m.pickerView())
+		return overlayCenter(out, m.pickerView())
 	}
 	return out
 }
 
-// treeView renders the left pane: the section list, with the current section
-// expanded to show its entities, and the current node marked with ◀. Read-only
-// context — navigation happens in the right pane.
-func (m SettingsModel) treeView() string {
-	var rows []string
-	for i, s := range rootSections {
-		expanded := m.level >= lvlSection && m.section == s.key
-		here := m.level == lvlRoot && m.cursor == i
-		glyph := "▸"
-		if expanded {
-			glyph = "▾"
-		}
-		if here {
-			rows = append(rows, styleMenuSel.Render("◀"+glyph+" "+s.label))
-		} else if expanded {
-			rows = append(rows, styleSettingsVal.Render(" "+glyph+" "+s.label))
-		} else {
-			rows = append(rows, styleMenuUnsel.Render(" "+glyph+" "+s.label))
-		}
-		if expanded {
-			for j, name := range m.treeEntities(s.key) {
-				cur := m.level >= lvlEntity && m.entityKind == entityKindFor(s.key) && m.entityIdx == j
-				if cur {
-					rows = append(rows, styleMenuSel.Render("◀  ● "+name))
-				} else {
-					rows = append(rows, styleMenuUnsel.Render("   ● "+name))
-				}
-			}
-		}
+// keepCursorVisible scrolls the viewport so the cursor row is on screen.
+func (m *SettingsModel) keepCursorVisible() {
+	h := m.vp.Height()
+	if h <= 0 {
+		return
 	}
-	return strings.Join(rows, "\n")
-}
-
-// treeEntities returns the entity names to list under a section when expanded.
-func (m SettingsModel) treeEntities(section string) []string {
-	switch section {
-	case "providers":
-		out := make([]string, len(m.dirty.Providers))
-		for i, p := range m.dirty.Providers {
-			out[i] = p.Name
-		}
-		return out
-	case "models":
-		out := make([]string, len(m.dirty.Models))
-		for i, mo := range m.dirty.Models {
-			out[i] = mo.ID
-		}
-		return out
+	y := m.vp.YOffset()
+	if m.cursor < y {
+		m.vp.SetYOffset(m.cursor)
+	} else if m.cursor >= y+h {
+		m.vp.SetYOffset(m.cursor - h + 1)
 	}
-	return nil
-}
-
-// entityKindFor maps a section key to its entity kind.
-func entityKindFor(section string) string {
-	switch section {
-	case "providers":
-		return "provider"
-	case "models":
-		return "model"
-	}
-	return ""
 }
 
 func (m SettingsModel) pickerView() string {
@@ -1562,35 +1108,439 @@ func (m SettingsModel) pickerView() string {
 		}
 		rows = append(rows, line)
 	}
-	rows = append(rows, "", styleSettingsFoot.Render("↑↓ select · enter add · esc close"))
+	rows = append(rows, "")
 	return styleFormBox.Render(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
-// keybar returns the per-level keybinding hints.
+// keybar returns the per-state keybinding hints.
 func (m SettingsModel) keybar() []KeyHint {
 	if len(m.listed) > 0 {
-		return []KeyHint{{"↑↓", "select"}, {"enter", "add"}, {"esc", "close"}}
+		return []KeyHint{{"↑↓", "select"}, {"enter", "add"}, {"esc", "cancel"}}
 	}
-	if m.level == lvlField {
-		if m.edit != nil && m.edit.kind == fMulti {
+	if m.edit != nil {
+		if m.edit.kind == fMulti {
 			return []KeyHint{{"↑↓", "move"}, {"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}}
 		}
 		return []KeyHint{{"enter", "save"}, {"esc", "cancel"}}
 	}
-	hints := []KeyHint{{"↑↓", "move"}, {"enter", "open"}}
-	if m.level == lvlSection {
-		switch m.section {
-		case "providers":
-			hints = append(hints, KeyHint{"d", "delete"}, KeyHint{"L", "list models"})
-		case "models":
-			hints = append(hints, KeyHint{"d", "delete"}, KeyHint{"t", "test"})
-		}
+	if m.view == viewEntity {
+		return []KeyHint{{"↑↓", "move"}, {"enter", "edit"}, {"esc", "back"}}
 	}
-	hints = append(hints, KeyHint{"esc", "back"})
-	return hints
+	hints := []KeyHint{{"↑↓", "move"}, {"enter", "open"}, {"←/→", "tab"}}
+	switch m.tabKeyOf() {
+	case "providers":
+		hints = append(hints, KeyHint{"d", "delete"}, KeyHint{"L", "list"})
+	case "models":
+		hints = append(hints, KeyHint{"d", "delete"}, KeyHint{"t", "test"})
+	}
+	return append(hints, KeyHint{"esc", "back"})
 }
 
-// --- helpers ----------------------------------------------------------------
+// --- field definitions -------------------------------------------------------------
+
+// fieldDef describes one editable field. get/set take the target config.File
+// explicitly, so commits can apply to a FRESH snapshot instead of a stale
+// working copy (the old API captured m.dirty and silently reverted concurrent
+// edits — see commitField).
+type fieldDef struct {
+	label    string
+	kind     fieldKind
+	password bool
+	options  []string
+	get      func(f *config.File) string
+	getMulti func(f *config.File) []string
+	set      func(f *config.File, e *fieldEdit) error
+}
+
+// fieldDefs returns the editable fields for the current context: the
+// General/Appearance tab's flat list, or the open entity's fields.
+func (m SettingsModel) fieldDefs() []fieldDef {
+	switch {
+	case m.view == viewEntity && m.entityKind == "provider":
+		return m.providerFieldDefs()
+	case m.view == viewEntity:
+		return m.modelFieldDefs()
+	case m.tabKeyOf() == "appearance":
+		return m.appearanceFieldDefs()
+	default: // general
+		return m.generalFieldDefs()
+	}
+}
+
+// providerIndex finds a provider by name (the entity's stable reference).
+func providerIndex(f *config.File, ref string) int {
+	for i := range f.Providers {
+		if f.Providers[i].Name == ref {
+			return i
+		}
+	}
+	return -1
+}
+
+// modelIndex finds a model by id (the entity's stable reference).
+func modelIndex(f *config.File, ref string) int {
+	for i := range f.Models {
+		if f.Models[i].ID == ref {
+			return i
+		}
+	}
+	return -1
+}
+
+// generalFieldDefs: the profile scalars plus the behavior dials (effort is
+// the sole reasoning control; the old "(enter cycles)" baked hints are gone —
+// these are real enum fields).
+func (m SettingsModel) generalFieldDefs() []fieldDef {
+	return []fieldDef{
+		{"effort", fEnum, false, []string{"off", "low", "medium", "high", "max"},
+			func(f *config.File) string { return orDefault(f.Effort, "medium") }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Effort = e.value(); return nil }},
+		{"max tokens", fEnum, false, []string{"4096", "8192", "16384", "32768"},
+			func(f *config.File) string {
+				if f.MaxTokens == 0 {
+					return "8192"
+				}
+				return strconv.Itoa(f.MaxTokens)
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				n, err := strconv.Atoi(e.value())
+				if err != nil {
+					return fmt.Errorf("max tokens must be a number")
+				}
+				f.MaxTokens = n
+				return nil
+			}},
+		{"temperature", fEnum, false, []string{"0.2", "0.4", "0.7", "1.0"},
+			func(f *config.File) string {
+				if f.Temperature == 0 {
+					return "0.7"
+				}
+				return fmt.Sprintf("%.1f", f.Temperature)
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				v, err := strconv.ParseFloat(e.value(), 64)
+				if err != nil {
+					return fmt.Errorf("temperature must be a number")
+				}
+				f.Temperature = v
+				return nil
+			}},
+		{"language", fEnum, false, []string{"en", "fr", "es", "de", "it", "pt", "zh", "ja", "ko", "ar", "hi"},
+			func(f *config.File) string { return orDefault(f.Language, "en") }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Language = e.value(); return nil }},
+		{"privacy", fEnum, false, []string{"standard", "strict", "local-only"},
+			func(f *config.File) string { return orDefault(f.PrivacyLevel, "standard") }, nil,
+			func(f *config.File, e *fieldEdit) error { f.PrivacyLevel = e.value(); return nil }},
+		{"name", fText, false, nil, func(f *config.File) string { return f.Name }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Name = strings.TrimSpace(e.value()); return nil }},
+		{"email", fText, false, nil, func(f *config.File) string { return f.Email }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Email = strings.TrimSpace(e.value()); return nil }},
+		{"domain", fText, false, nil, func(f *config.File) string { return f.Domain }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Domain = strings.TrimSpace(e.value()); return nil }},
+		{"org", fText, false, nil, func(f *config.File) string { return f.Org }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Org = strings.TrimSpace(e.value()); return nil }},
+		{"notes", fText, false, nil, func(f *config.File) string { return f.Notes }, nil,
+			func(f *config.File, e *fieldEdit) error { f.Notes = strings.TrimSpace(e.value()); return nil }},
+	}
+}
+
+func (m SettingsModel) providerFieldDefs() []fieldDef {
+	ref := m.entityRef
+	find := func(f *config.File) int { return providerIndex(f, ref) }
+	return []fieldDef{
+		{"name", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Providers[i].Name
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				n := strings.TrimSpace(e.value())
+				if n == "" {
+					return fmt.Errorf("name is required")
+				}
+				for j, op := range f.Providers {
+					if j != i && op.Name == n {
+						return fmt.Errorf("name %q already used", n)
+					}
+				}
+				old := f.Providers[i].Name
+				np := f.Providers[i]
+				np.Name = n
+				f.Providers[i] = np
+				if n != old {
+					for j := range f.Models {
+						if f.Models[j].Provider == old {
+							f.Models[j].Provider = n
+						}
+					}
+				}
+				return nil
+			}},
+		{"base_url", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Providers[i].BaseURL
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				f.Providers[i].BaseURL = strings.TrimSpace(e.value())
+				return nil
+			}},
+		{"api_key", fText, true, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Providers[i].APIKey
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				f.Providers[i].APIKey = strings.TrimSpace(e.value())
+				return nil
+			}},
+		{"wire", fEnum, false, []string{"openai", "anthropic"},
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Providers[i].Wire
+				}
+				return "openai"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				f.Providers[i].Wire = e.value()
+				return nil
+			}},
+		{"tags", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return strings.Join(f.Providers[i].Tags, ", ")
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				f.Providers[i].Tags = parseTags(e.value())
+				return nil
+			}},
+	}
+}
+
+func (m SettingsModel) modelFieldDefs() []fieldDef {
+	ref := m.entityRef
+	find := func(f *config.File) int { return modelIndex(f, ref) }
+	provNames := m.providerNames()
+	caps := capStrings()
+	return []fieldDef{
+		{"id", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].ID
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				n := strings.TrimSpace(e.value())
+				if n == "" {
+					return fmt.Errorf("id is required")
+				}
+				for j, om := range f.Models {
+					if j != i && om.ID == n {
+						return fmt.Errorf("id %q already used", n)
+					}
+				}
+				old := f.Models[i].ID
+				nm := f.Models[i]
+				nm.ID = n
+				f.Models[i] = nm
+				if n != old {
+					for role, rid := range f.Roles {
+						if rid == old {
+							f.Roles[role] = n
+						}
+					}
+				}
+				return nil
+			}},
+		{"label", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].Label
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				f.Models[i].Label = strings.TrimSpace(e.value())
+				return nil
+			}},
+		{"provider", fEnum, false, provNames,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].Provider
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				f.Models[i].Provider = e.value()
+				return nil
+			}},
+		{"capabilities", fMulti, false, caps, func(f *config.File) string { return "" },
+			func(f *config.File) []string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].Caps()
+				}
+				return nil
+			},
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				f.Models[i].Capabilities = stringsToCaps(e.selected())
+				return nil
+			}},
+		{"context", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return strconv.Itoa(f.Models[i].Context)
+				}
+				return "0"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				n, err := strconv.Atoi(strings.TrimSpace(e.value()))
+				if err != nil {
+					return fmt.Errorf("context must be a whole number of tokens")
+				}
+				f.Models[i].Context = n
+				return nil
+			}},
+		{"tags", fText, false, nil,
+			func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return strings.Join(f.Models[i].Tags, ", ")
+				}
+				return ""
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				f.Models[i].Tags = parseTags(e.value())
+				return nil
+			}},
+	}
+}
+
+func (m SettingsModel) appearanceFieldDefs() []fieldDef {
+	return []fieldDef{
+		{"enabled", fEnum, false, []string{"on", "off"},
+			func(f *config.File) string {
+				ensureStatusLine(f)
+				if f.StatusLine.Enabled {
+					return "on"
+				}
+				return "off"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				ensureStatusLine(f)
+				f.StatusLine.Enabled = e.value() == "on"
+				return nil
+			}},
+		{"segments", fMulti, false, []string{"cwd", "git", "model", "mode", "tokens", "clock"},
+			func(f *config.File) string { return "" },
+			func(f *config.File) []string {
+				ensureStatusLine(f)
+				if len(f.StatusLine.Segments) == 0 {
+					return []string{"cwd", "model", "mode", "tokens"}
+				}
+				return append([]string(nil), f.StatusLine.Segments...)
+			},
+			func(f *config.File, e *fieldEdit) error {
+				ensureStatusLine(f)
+				f.StatusLine.Segments = e.selected()
+				return nil
+			}},
+		{"command", fText, false, nil,
+			func(f *config.File) string {
+				ensureStatusLine(f)
+				return f.StatusLine.Command
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				ensureStatusLine(f)
+				f.StatusLine.Command = strings.TrimSpace(e.value())
+				return nil
+			}},
+		{"top bar legend", fEnum, false, []string{"on", "off"},
+			func(f *config.File) string {
+				if f.Appearance != nil && f.Appearance.TopBarLegend != nil {
+					if *f.Appearance.TopBarLegend {
+						return "on"
+					}
+					return "off"
+				}
+				return "on" // default when unset
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				ensureAppearance(f)
+				v := e.value() == "on"
+				f.Appearance.TopBarLegend = &v
+				return nil
+			}},
+	}
+}
+
+func ensureStatusLine(f *config.File) {
+	if f.StatusLine == nil {
+		f.StatusLine = &config.StatusLine{
+			Enabled:  true,
+			Segments: []string{"cwd", "model", "mode", "tokens"},
+		}
+	}
+}
+
+func ensureAppearance(f *config.File) {
+	if f.Appearance == nil {
+		f.Appearance = &config.Appearance{}
+	}
+}
+
+// --- helpers -----------------------------------------------------------------------
 
 func (m SettingsModel) providerNames() []string {
 	out := make([]string, len(m.dirty.Providers))
@@ -1598,15 +1548,6 @@ func (m SettingsModel) providerNames() []string {
 		out[i] = p.Name
 	}
 	return out
-}
-
-func (m SettingsModel) providerExists(name string) bool {
-	for _, p := range m.dirty.Providers {
-		if p.Name == name {
-			return true
-		}
-	}
-	return false
 }
 
 func (m SettingsModel) modelExists(id string) bool {
@@ -1646,16 +1587,22 @@ func parseTags(s string) []string {
 	return out
 }
 
-func onOff(b *bool) string {
-	if b == nil || *b {
-		return "on"
+func envOr(key, fallback string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
 	}
-	return "off"
+	return fallback
 }
 
-// overlay centers child over the parent block.
-func overlay(w, h int, parent, child string) string {
-	return lipgloss.Place(w, h, lipgloss.Center, lipgloss.Center, child)
+func functionKeyLabel(n int) string {
+	labels := []string{"help", "settings", "model", "effort", "new chat", "resume", "context", "", "mode", "", "models", "status"}
+	if n < 1 || n > len(labels) {
+		return ""
+	}
+	if labels[n-1] == "" {
+		return "(free)"
+	}
+	return labels[n-1]
 }
 
 // settingRow renders one "key: value" line.

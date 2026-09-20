@@ -18,6 +18,48 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — Settings redesigned: flat tabs, all seven bugs fixed
+
+The cramped two-pane 4-level drill-down is replaced by a full-width **tabbed editor**
+(lazygit/NN-g-style: peer sections as tabs, ≤2 perceptual levels), and every confirmed bug
+is fixed.
+- **New shape:** tab row (General · Providers · Models · Roles · Perms · Theme · System) +
+  one dim roadmap line (the dead "coming soon" sections die; Overview dies — Roles covers
+  it) + a scrollable body (viewport) + KeyBar. Tabs switch on ←/→/[/]/digits; General
+  absorbs Behavior (effort/max-tokens/temperature as real enum fields — the "(enter
+  cycles)" baked hints are gone); System is read-only reference (cluster/storage/F-keys).
+- **Bug 1 (dead space-toggle):** fMulti now matches `"space"` (bubbletea v2's name) as well
+  as `" "`, and gains left/right nav parity with fEnum — model capabilities were literally
+  unchangeable before.
+- **Bug 2 (add-provider impossible):** "+ Add" stages an in-memory **draft**; draft commits
+  skip whole-file validation; leaving the entity view validates — valid ⇒ save, invalid ⇒
+  drop with an explanatory toast. The flow name → base_url → key → esc now works.
+- **Bug 3 (stale snapshot clobbering):** field defs take the target `*config.File`
+  explicitly; every commit re-bases on a FRESH `store.Snapshot()` before validate+save, so
+  concurrent changes (F9 mode, F4 effort, /model) always survive. Non-entity edits go
+  through the same `persistRebase` path. Renames update the entity reference atomically.
+- **Bug 4 (picker wiped the screen):** the list-models picker composites via the real
+  `overlayCenter` splicer.
+- **Bug 5 (F2 double-push):** new `pushScreenOnce` guard for screen-push actions.
+- **Bug 6 (frozen caret):** blink ticks reach the open text editor.
+- **Bug 7 (overflow + nits):** the frame fix below clips/pads correctly; the `context`
+  setter rejects non-numeric instead of zeroing; the root skips global keybinding
+  resolution while a screen reports `CapturingKeys()` (typing can't be swallowed by
+  user-rebound letter keys).
+- **Frame fix (all screens):** lipgloss v2 `Width(n)` is TOTAL width — the frames boxed at
+  `Width(inner)` leaving 4 cells of headroom that word-wrap silently split words into.
+  Boxes now render at `Width(w)`, making content capacity exactly the padded `inner`. This
+  kills the latent wrap class on every framed screen.
+- Files: settings.go (rewritten ~1,670→~1,180), settings_form.go, frame.go (box widths),
+  app/model.go (pushScreenOnce, screenCapturesKeys), settings_test.go (rewritten),
+  splash onboarding path unchanged (`NewSettingsModelAt(..., "providers", true)`).
+- Verified: new regression tests — space toggle, add-provider draft flow (traverse + early
+  drop), out-of-band-write survives a commit, esc ladder, tab switch/wrap, 80-col fit —
+  plus the carried field-semantics tests (provider rename rewires models, caps, model id
+  rename rewires roles, rename updates the ref, persistRebase). Full build/vet/test green
+  (18 pkgs); eyeballed Providers + General tabs at 80×24 and 120×30 (no wraps, keybar on
+  one line). Live pty still needed for the caret + onboarding feel.
+
 ## 2026-09-20 · deepthought-cli — shared design-system primitives (frame kit)
 
 The groundwork commit for the unification sweep: one title convention, one empty-state
