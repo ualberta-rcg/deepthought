@@ -115,8 +115,10 @@ func AppScreenScroll(w, h int, title, body string, bodyH int, keybar string) str
 	return box.Render(out)
 }
 
-// padLines right-pads each line of s to width cells (truncating none), so a
-// block renders as a clean rectangle inside a fixed-width border.
+// padLines right-pads each line of s to width cells, CLIPPING any line wider
+// than width (the safety net that keeps a bordered frame rectangular even when
+// a row overflows — better a clipped cell than a wrapped frame), so a block
+// renders as a clean rectangle inside a fixed-width border.
 func padLines(s string, width int) string {
 	var b strings.Builder
 	for i, ln := range strings.Split(s, "\n") {
@@ -128,15 +130,15 @@ func padLines(s string, width int) string {
 			b.WriteString(ln)
 			b.WriteString(strings.Repeat(" ", width-w))
 		} else {
-			b.WriteString(ln)
+			b.WriteString(clipLine(ln, width))
 		}
 	}
 	return b.String()
 }
 
 // padBlock pads a block to exactly width cells per line AND exactly n lines
-// (truncating neither, padding both), so two blocks can be joined side by side
-// at equal height.
+// (clipping overwide lines — see padLines), so two blocks can be joined side
+// by side at equal height.
 func padBlock(s string, width, nLines int) string {
 	lines := strings.Split(s, "\n")
 	for len(lines) < nLines {
@@ -146,9 +148,128 @@ func padBlock(s string, width, nLines int) string {
 		w := lipgloss.Width(ln)
 		if w < width {
 			lines[i] = ln + strings.Repeat(" ", width-w)
+		} else {
+			lines[i] = clipLine(ln, width)
 		}
 	}
 	return strings.Join(lines[:nLines], "\n")
+}
+
+// clipLine truncates s to at most width visible cells, ANSI-aware (escape
+// sequences carry no width and survive).
+func clipLine(s string, width int) string {
+	if width < 1 {
+		return ""
+	}
+	if lipgloss.Width(s) <= width {
+		return s
+	}
+	return lipgloss.NewStyle().MaxWidth(width).Render(s)
+}
+
+// screenTitle is the one title convention for every framed screen:
+// "DeepThought › Name".
+func screenTitle(name string) string {
+	return "DeepThought › " + name
+}
+
+// emptyRow is the one empty-state vocabulary for framed screens: a dim
+// "(no <noun> yet)" line. Pickers keep their "(nothing to choose)".
+func emptyRow(noun string) string {
+	return styleSettingsFoot.Render("(no " + noun + " yet)")
+}
+
+// truncatePad pads s to exactly n cells, truncating with an ellipsis when
+// longer. (Data-column helper shared by Status/Cluster/Continue/Model chooser.)
+func truncatePad(s string, n int) string {
+	r := []rune(s)
+	if len(r) > n {
+		return string(r[:n-1]) + "…"
+	}
+	return s + strings.Repeat(" ", n-len(r))
+}
+
+// overlayCenter composites child over parent's canvas, both centered, by
+// splicing each child row into the parent lines at the target column — a real
+// in-screen modal (replaces the old picker that painted over a blank canvas).
+// Parent escape sequences before the child survive; cells under the child are
+// dropped (the child carries its own styling).
+func overlayCenter(parent, child string) string {
+	pl := strings.Split(parent, "\n")
+	cl := strings.Split(child, "\n")
+	pw := 0
+	for _, ln := range pl {
+		if w := lipgloss.Width(ln); w > pw {
+			pw = w
+		}
+	}
+	cw := 0
+	for _, ln := range cl {
+		if w := lipgloss.Width(ln); w > cw {
+			cw = w
+		}
+	}
+	top := max(0, (len(pl)-len(cl))/2)
+	left := max(0, (pw-cw)/2)
+
+	out := make([]string, len(pl))
+	for i := range pl {
+		if i >= top && i < top+len(cl) {
+			out[i] = spliceAt(pl[i], left, padLines(cl[i-top], cw))
+		} else {
+			out[i] = pl[i]
+		}
+	}
+	return strings.Join(out, "\n")
+}
+
+// spliceAt returns line with cover inserted at visible column col: the line's
+// cells before col, then cover, then the line's remainder after col+cover.
+func spliceAt(line string, col int, cover string) string {
+	cw := lipgloss.Width(cover)
+	var pre strings.Builder
+	vis := 0
+	rs := []rune(line)
+	for i := 0; i < len(rs); {
+		r := rs[i]
+		if r == 0x1b {
+			// Consume the escape sequence (ESC [ params… final, or ESC x).
+			j := i + 1
+			if j < len(rs) && rs[j] == '[' {
+				j++
+				for j < len(rs) && !(rs[j] >= 0x40 && rs[j] <= 0x7E) {
+					j++
+				}
+				if j < len(rs) {
+					j++
+				}
+			} else if j < len(rs) {
+				j++
+			}
+			if vis < col {
+				pre.WriteString(string(rs[i:j]))
+			}
+			i = j
+			continue
+		}
+		w := lipgloss.Width(string(r))
+		if vis >= col+cw {
+			// Past the cover: keep the raw remainder (escapes included).
+			return pre.String() + cover + string(rs[i:])
+		}
+		if vis < col {
+			pre.WriteRune(r)
+		}
+		// Cells within the cover zone are dropped (covered).
+		vis += w
+		i++
+	}
+	// Parent line ended inside/before the cover.
+	left := pre.String()
+	if lw := lipgloss.Width(left); lw < col {
+		left += strings.Repeat(" ", col-lw)
+	}
+	return left + cover
 }
 
 // TwoPane renders a full-screen frame split into a narrow left nav pane and a

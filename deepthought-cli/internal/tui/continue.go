@@ -2,7 +2,6 @@ package tui
 
 import (
 	"fmt"
-	"strings"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -115,12 +114,4 @@ func (m ContinueModel) View() string {
 // header renders a column header aligned with the list rows.
 func (m ContinueModel) header() string {
 	return styleSettingsKey.Render(fmt.Sprintf("%-50s %-16s %s", "prompt", "when", "turns"))
-}
-
-func truncatePad(s string, n int) string {
-	r := []rune(s)
-	if len(r) > n {
-		return string(r[:n-1]) + "…"
-	}
-	return s + strings.Repeat(" ", n-len(r))
 }

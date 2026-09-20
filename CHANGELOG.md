@@ -18,6 +18,24 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — shared design-system primitives (frame kit)
+
+The groundwork commit for the unification sweep: one title convention, one empty-state
+vocabulary, ANSI-safe clipping everywhere, and a real overlay compositor.
+- **`screenTitle(name)`** — every framed screen titles as `DeepThought › Name` (migrations
+  land in the sweep commit).
+- **`emptyRow(noun)`** — the one dim `(no <noun> yet)` empty-state wording.
+- **`clipLine(s, w)`** — ANSI-aware truncate (lipgloss MaxWidth); **`padLines`/`padBlock`
+  now CLIP overwide lines** instead of letting rows blow out a bordered frame — the fix for
+  the Settings overflow class and the safety net for the coming sidebar.
+- **`overlayCenter(parent, child)`** — a real per-line splice compositor (child centered
+  over the parent's canvas; escapes survive) replacing the broken picker `overlay()` that
+  composited over an empty canvas. Wired into Settings in the redesign commit.
+- `truncatePad` moved to frame.go (shared by Status/Cluster/Continue/model chooser).
+- Files: frame.go, continue.go (truncatePad removed), frame_test.go (new).
+- Verified: TestScreenTitle/EmptyRow/TruncatePad/ClipLine/PadBlockClips/OverlayCenter(+ANSI)
+  pass; full build/vet/test green (18 pkgs).
+
 ## 2026-09-20 · deepthought-cli — remove the F11 Software screen + internal/cvmfs
 
 The Software screen (module search/load helper) is gone per the once-over decision: its
