@@ -18,6 +18,66 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — the deepthought-server skeleton + live editing (server groundwork starts)
+
+The server side of the roadmap now has a real front door. Deploys as a container on the
+Vulcan kube cluster (TLS terminates upstream at deepthought.vulcan.alliancecan.ca; binds
+plaintext); Go `internal/` can't cross modules, so it lives at `cmd/deepthought-server`
+with helpers in `internal/server` (promotion to the repo-root product dir is deferred —
+documented in SERVER.md).
+- **Endpoints:** `GET /healthz` + `GET /readyz` (open, for probes — aleph's startup/
+  readiness/liveness trio), `GET /api/v1/version`, `GET /api/v1/crons` (the local cron
+  tracking registry — the first fleet-aggregation endpoint, real), 501 placeholders for
+  jobs/experiments/chats. **Auth:** shared bearer token (`$DEEPTHOUGHT_SERVER_TOKEN` or
+  `--token-file`) on every /api route; **no token → 503, never silently open**. Graceful
+  SIGINT/SIGTERM drain (the pattern the resident daemon lacks).
+- **Live editing (start the server, edit it live):** `POST /api/v1/admin/reload`
+  genuinely re-reads config + skills and reports what it found; SIGHUP is the signal
+  form; the Transwarp daemon's `refresh_config`/`refresh_skills` verbs now invoke a real
+  reload hook (`Manager.OnRefresh`, wired in resident.go) instead of acknowledging and
+  dropping.
+- **Ops:** `Dockerfile` (multi-stage → distroless/static), `k8s/{deployment,service}.yaml`
+  reference copies mirroring aleph's conventions (never-:latest pins, probes, secrets),
+  `configs/deepthought-server.service` systemd user unit, `make deploy-server`.
+- Files: cmd/deepthought-server/main.go, internal/server/{server,http,http_test}.go,
+  internal/transwarp/server.go, cmd/deepthought-cli/resident.go, Dockerfile, k8s/,
+  configs/, Makefile.
+- Verified: TestHealthOpen / AuthGatesAPI (401 wrong+none, 200 right) / NoTokenRefusesAPI
+  (503) / Placeholders501 / CronsEndpointServesRegistry — plus the full suite green (20
+  pkgs). Live pty/kube checks: run `./deepthought-server --addr 127.0.0.1:7990` and curl
+  the trio; SIGTERM drains.
+## 2026-09-20 · deepthought-cli — docs/SERVER.md + roadmap/CLAUDE refresh
+
+- **New `docs/SERVER.md`:** the server architecture — where the skeleton lives (and why
+  the module boundary defers the product-dir promotion), deployment (kube container +
+  endpoint + TLS assumption, CI, dev/bare-metal, the pod-state-is-ephemeral PVC note),
+  auth model (shared bearer now, per-user later, 503-never-open), the v1 API table, live
+  editing (admin/reload + SIGHUP + the Transwarp refresh hooks), **the seam migration
+  path** (state done via the shared SQLiteStore; the chat loop's TurnRunner seam with
+  `unimatrix.Session` as the server-side runner; OnEvent as the event source; the
+  Transwarp daemon as the control plane), and the cron fleet-aggregation design.
+- **ROADMAP.md:** the MCP note + reference links (Claude Code MCP docs, Slurm arrays,
+  Nextflow resume, NERSC long-running jobs), the endpoint, and a "groundwork started"
+  marker pointing at SERVER.md.
+- **CLAUDE.md (product):** the Status narrative catches up with the once-over — flat-tab
+  Settings, the Section kit, Cron/Models/sidebar screens, the DON'T PANIC splash, the
+  current F-key map, solid brand colors, the environment brief. Root CLAUDE.md's
+  two-product table notes where the skeleton actually starts.
+- Files: docs/SERVER.md (new), docs/ROADMAP.md, CLAUDE.md, ../CLAUDE.md.
+- Verified: docs render; cross-references resolve.
+## 2026-09-20 · repo — GitHub Actions: build deepthought-server (aleph pattern)
+
+- **New `.github/workflows/build-server.yml`** (repo root): path-filtered push to main
+  (`deepthought-cli/**` + the workflow) + `workflow_dispatch`. Jobs: `go vet` + `go test`
+  (go-version-file pinned to our go.mod) → `CGO_ENABLED=0` static build of
+  `./cmd/deepthought-server` (smoke-run `--help`) → upload-artifact
+  `deepthought-server-<sha>`. The **optional image publish** follows aleph's exact
+  conventions (`DOCKER_HUB_USER`/`DOCKER_HUB_TOKEN` secrets, `DOCKER_HUB_REPO` var
+  override, immutable `server-<shortsha>` + moving `latest` tags) and is skipped when the
+  secrets are absent — the build+artifact path needs zero secrets.
+- Verified: YAML parses; mirrors the working aleph workflow's structure (its deploy-gateway
+  runs the same job shape for the gateway image). First real run happens on the next push
+  to main.
 ## 2026-09-20 · deepthought-cli — live info sidebar (F10) + the environment brief
 
 **Sidebar:** on very wide terminals the chat screen grows a compact live info column on

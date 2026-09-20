@@ -1,0 +1,59 @@
+# deepthought-server Deployment — reference copy mirroring aleph's conventions
+# (gateway/k8s/deployment.yaml). The deployed source of truth will live in the
+# ww-overlays control-plane manifests, carrying the real immutable image pin
+# (…:server-<sha>@sha256:…); keep this file aligned with it — the image below
+# is a placeholder, never :latest.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepthought-server
+  namespace: deepthought
+  labels:
+    app: deepthought-server
+spec:
+  replicas: 1
+  minReadySeconds: 10
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+  selector:
+    matchLabels:
+      app: deepthought-server
+  template:
+    metadata:
+      labels:
+        app: deepthought-server
+    spec:
+      containers:
+        - name: server
+          image: rkhoja/deepthought:server-<sha>
+          imagePullPolicy: IfNotPresent
+          ports:
+            - containerPort: 8080
+          env:
+            - name: DEEPTHOUGHT_SERVER_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: deepthought-server-token
+                  key: token
+                  optional: true
+          resources:
+            requests:
+              cpu: 100m
+              memory: 64Mi
+            limits:
+              cpu: 500m
+              memory: 256Mi
+          startupProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 5
+            failureThreshold: 12
+          readinessProbe:
+            httpGet: { path: /readyz, port: 8080 }
+            periodSeconds: 10
+          livenessProbe:
+            httpGet: { path: /healthz, port: 8080 }
+            periodSeconds: 15
+            failureThreshold: 5

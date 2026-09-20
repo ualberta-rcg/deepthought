@@ -1,0 +1,15 @@
+# deepthought-server — systemd USER unit (bare-metal/dev alternative to the
+# kube deployment). Example install:
+#   systemctl --user enable --now deepthought-server
+[Unit]
+Description=DeepThought server (skeleton)
+After=network.target
+
+[Service]
+ExecStart=%h/bin/deepthought-server --addr 127.0.0.1:8080
+Environment=DEEPTHOUGHT_SERVER_TOKEN=%h/.config/deepthought/server.token
+Restart=on-failure
+RestartSec=5
+
+[Install]
+WantedBy=default.target

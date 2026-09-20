@@ -31,3 +31,10 @@ vet:
 	$(GO) vet ./...
 
 check: vet test
+
+DEPLOY_SERVER = $(DEPLOY_DIR)/deepthought-server
+
+deploy-server: ## Build + atomically deploy the server binary to DEPLOY_DIR.
+	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$(DEPLOY_SERVER).new" ./cmd/deepthought-server
+	mv "$(DEPLOY_SERVER).new" "$(DEPLOY_SERVER)"
+	@echo "deployed $(DEPLOY_SERVER)"

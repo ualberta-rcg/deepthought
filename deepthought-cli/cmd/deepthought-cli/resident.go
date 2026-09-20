@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -13,6 +14,7 @@ import (
 	"deepthought-cli/internal/alcove"
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/skills"
 	"deepthought-cli/internal/transwarp"
 )
 
@@ -113,11 +115,40 @@ func startResident() error {
 func runResidentDaemon() {
 	manager := transwarp.NewManager()
 	manager.Audit = auditDirective
+	manager.OnRefresh = reloadLiveState
 	ctx, cancel := signalContext()
 	defer cancel()
 	if err := manager.Serve(ctx, transwarp.SocketPath()); err != nil {
 		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 	}
+}
+
+// reloadLiveState re-reads the config or the skills packs on demand — the
+// live-editing path behind the daemon's refresh_config/refresh_skills verbs
+// and the server's SIGHUP / admin/reload. Edits land via git pull or SSH and
+// apply without a restart.
+func reloadLiveState(operation string) error {
+	path, err := config.DefaultPath()
+	if err != nil {
+		return err
+	}
+	switch operation {
+	case "refresh_config":
+		cfg, err := config.Load(path)
+		if err != nil {
+			return fmt.Errorf("reload config: %w", err)
+		}
+		log.Printf("daemon: config reloaded (%d providers, %d models)", len(cfg.File.Providers), len(cfg.File.Models))
+		return nil
+	case "refresh_skills":
+		list, err := skills.NewLoader().Load(".")
+		if err != nil {
+			return fmt.Errorf("reload skills: %w", err)
+		}
+		log.Printf("daemon: skills reloaded (%d packs)", len(list))
+		return nil
+	}
+	return fmt.Errorf("unknown refresh op %q", operation)
 }
 
 func signalContext() (context.Context, context.CancelFunc) {

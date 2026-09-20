@@ -26,6 +26,9 @@ type Manager struct {
 	stop     chan struct{}
 	once     sync.Once
 	Audit    func(Request)
+	// OnRefresh is the live-editing hook: re-read config (refresh_config) or
+	// skills (refresh_skills) without a restart. Wired by the host process.
+	OnRefresh func(operation string) error
 }
 
 func NewManager() *Manager {
@@ -120,7 +123,16 @@ func (m *Manager) Handle(request Request) Response {
 		}
 		m.once.Do(func() { close(m.stop) })
 		return Response{OK: true, Message: "daemon stopping"}
-	case RefreshConfig, RefreshSkills, RunSchedule:
+	case RefreshConfig, RefreshSkills:
+		// Live editing: the daemon re-reads config/skills through the hook
+		// its host wires at construction (nil = nothing to reload yet).
+		if m.OnRefresh != nil {
+			if err := m.OnRefresh(string(request.Operation)); err != nil {
+				return Response{Error: err.Error()}
+			}
+		}
+		return Response{OK: true, Message: string(request.Operation) + " reloaded"}
+	case RunSchedule:
 		return Response{OK: true, Message: string(request.Operation) + " accepted"}
 	default:
 		return Response{Error: "unsupported operation"}

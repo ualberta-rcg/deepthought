@@ -431,11 +431,10 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
 	case keybindings.Sidebar:
-		// F10 — cycle the live info column: auto → on → off.
+		// F10 — cycle the live info column: auto → on → off (persisted; a bad
+		// write surfaces via the next config read like the other toggles).
 		next := map[string]string{"auto": "on", "on": "off", "off": "auto"}[m.deps.Live.SidebarMode()]
-		if err := m.deps.Live.SetSidebar(next); err != nil {
-			m.status = m.status // no toast plumbing here; silent like other toggles
-		}
+		_ = m.deps.Live.SetSidebar(next)
 		return m, nil
 	case keybindings.Cron:
 		// F8 — manage + track the user's crontab.
