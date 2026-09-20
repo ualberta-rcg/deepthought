@@ -740,7 +740,7 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 
 // newRequest builds the ChatRequest for the current incursion: the model, the full message
 // history (system prompt + incursions incl. any tool calls/results), the advertised tools,
-// and sampling. Effort is the SOLE reasoning control: off (Autopilot) means no thinking;
+// and sampling. Effort is the SOLE reasoning control: off means no thinking;
 // any other level means thinking on at that level. Built fresh per incursion so the latest
 // history is always sent.
 func (m ChatModel) newRequest(model unimatrix.Model) babel.ChatRequest {

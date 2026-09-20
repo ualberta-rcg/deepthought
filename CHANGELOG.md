@@ -18,6 +18,16 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — use neutral thinking-level labels
+
+The effort (thinking-level) labels were HHGTTG-flavored (Autopilot → Common Sense → Pondering →
+Deep Thought → Infinite Improbability). Per the move away from themed naming, they're now plain.
+- `effort_overlay.go` effortLevels → Off / Low / Medium / High / Max; flows through `EffortLabel`
+  to the top bar, the Status Session row, and the F4 picker automatically.
+- Files: `effort_overlay.go`, `effort_overlay_test.go` (new `TestEffortLabelsNeutral`),
+  `chat.go` (comment). (The CLAUDE.md label wording lands with the docs commit.)
+- Verified: `TestEffortLabelsNeutral` passes; full `go build`/`vet`/`test` green.
+
 ## 2026-09-20 · deepthought-cli — standardize the F12 Status page on one Section kit + meters/chips
 
 The Status page rendered in two visual languages: the six plain sections used

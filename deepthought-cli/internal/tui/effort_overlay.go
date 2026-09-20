@@ -6,17 +6,17 @@ import (
 	"deepthought-cli/internal/babel"
 )
 
-// effortLevels maps the Effort ladder to the HHGTTG-flavored labels shown in the
-// picker. Order MUST match babel's off→max ladder so ←/→ cycles naturally.
+// effortLevels maps the Effort ladder to its plain labels shown in the picker.
+// Order MUST match babel's off→max ladder so ←/→ cycles naturally.
 var effortLevels = []struct {
 	val   babel.Effort
 	label string
 }{
-	{babel.EffortOff, "Autopilot"},
-	{babel.EffortLow, "Common Sense"},
-	{babel.EffortMedium, "Pondering"},
-	{babel.EffortHigh, "Deep Thought"},
-	{babel.EffortMax, "Infinite Improbability"},
+	{babel.EffortOff, "Off"},
+	{babel.EffortLow, "Low"},
+	{babel.EffortMedium, "Medium"},
+	{babel.EffortHigh, "High"},
+	{babel.EffortMax, "Max"},
 }
 
 // EffortLabel returns the display label for an effort value (used by the top bar
