@@ -26,6 +26,11 @@ spec:
       labels:
         app: deepthought-server
     spec:
+      # Control-planes only: the aleph workers are GPU/KServe nodes — never
+      # schedule the server there (control-planes carry no taints, so a
+      # nodeSelector suffices; no tolerations needed).
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: server
           image: rkhoja/deepthought:server-<sha>

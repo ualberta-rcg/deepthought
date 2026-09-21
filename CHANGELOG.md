@@ -1,5 +1,10 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — pin server Deployment to control-plane nodes
+- Add `nodeSelector: node-role.kubernetes.io/control-plane: "true"` to the reference server Deployment (k8s/deployment.yaml): on the aleph RKE2 cluster the worker nodes are GPU/KServe model hosts and the server must land only on the aleph1-3 control-planes, which carry no taints.
+- Files: deepthought-cli/k8s/deployment.yaml; this entry.
+- Verification: manifest not yet cluster-applied; nodeSelector keys checked live against `kubectl get nodes -o custom-columns=TAINTS` (no taints on control-planes). The push itself triggers the CI image build.
+
 ## 2026-09-20 · deepthought-cli — resident sessions and durable scientific workflows
 - Run standalone and detached sessions through the same runtime. Add authenticated local attach streams, stale-approval rejection, paste/cursor forwarding, restart recovery and shared skill/config refresh. Settings preserve local overrides and record built-in/server/local/session provenance; no server login or transport is enabled.
 - Journal Slurm intent before submission, stage script hashes on scratch, reconcile uncertain outcomes without duplicate submissions, enforce explicit resources/account discovery and approval, and add /jobs. Persist sequential workflow objectives, linked attempts, validation evidence and artifact staleness with /plan and optimistic revisions.
