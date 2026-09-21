@@ -133,7 +133,10 @@ func NewRootModel(d Deps) RootModel {
 		cronScr:   tui.NewCronModel(cronDataDir()),
 		bindings:  d.Bindings,
 	}
-	m.settings = m.settings.SetEnv(env)
+	m.settings = m.settings.SetEnv(env).SetSkills(skillPacks(d.Skills))
+	if d.Registry != nil {
+		m.settings = m.settings.SetTools(d.Registry.Names())
+	}
 	return m
 }
 
@@ -917,10 +920,21 @@ func newSessionID() string {
 // "name: description" per line).
 func skillNames(listing string) []string {
 	var out []string
+	for _, sk := range skillPacks(listing) {
+		out = append(out, sk.Name)
+	}
+	return out
+}
+
+// skillPacks parses the listing into name+description pairs.
+func skillPacks(listing string) []tui.SkillPack {
+	var out []tui.SkillPack
 	for _, line := range strings.Split(listing, "\n") {
-		if name, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(name) != "" {
-			out = append(out, strings.TrimSpace(name))
+		name, desc, ok := strings.Cut(line, ":")
+		if !ok || strings.TrimSpace(name) == "" {
+			continue
 		}
+		out = append(out, tui.SkillPack{Name: strings.TrimSpace(name), Desc: strings.TrimSpace(desc)})
 	}
 	return out
 }

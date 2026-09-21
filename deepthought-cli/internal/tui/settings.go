@@ -51,13 +51,15 @@ var settingsTabs = []settingsTab{
 	{"roles", "Roles"},         // role → model assignment
 	{"routing", "Routing"},     // declarative routes (capability/cost/prefer)
 	{"permissions", "Perms"},
+	{"skills", "Skills"}, // discovered skill packs (read-only)
+	{"tools", "Tools"},   // the tool registry (read-only)
 	{"appearance", "Theme"},
 	{"system", "System"}, // read-only: host descriptor + storage + keybindings
 }
 
 // settingsRoadmap is the dim one-liner under the tab row marking where the
 // not-yet-configurable sections live (they were dead "coming soon" tree rows).
-const settingsRoadmap = "planned: shell & env · memory · skills · tools · privacy"
+const settingsRoadmap = "planned: shell & env · memory · privacy"
 
 // settingsView is the level inside the current tab.
 type settingsView int
@@ -74,10 +76,12 @@ const (
 // auto-saves, and re-snapshots. Entities being added are staged as in-memory
 // drafts until they validate (the store refuses invalid files).
 type SettingsModel struct {
-	store ConfigStore
-	info  SettingsInfo
-	env   EnvInfo     // host descriptor → the System tab
-	dirty config.File // working copy (render cache + draft staging)
+	store  ConfigStore
+	info   SettingsInfo
+	env    EnvInfo     // host descriptor → the System tab
+	skills []SkillPack // discovered packs → the Skills tab
+	tools  []string    // registry tool names → the Tools tab
+	dirty  config.File // working copy (render cache + draft staging)
 
 	tab    int          // index into settingsTabs
 	view   settingsView // list / entity / field
@@ -131,6 +135,24 @@ func NewSettingsModelAt(store ConfigStore, info SettingsInfo, tabKey string, add
 // SetEnv stamps the host descriptor (drives the System tab).
 func (m SettingsModel) SetEnv(e EnvInfo) SettingsModel {
 	m.env = e
+	return m
+}
+
+// SkillPack is one discovered skill pack (name + one-line description) —
+// fed to the Settings Skills tab by the root.
+type SkillPack struct {
+	Name, Desc string
+}
+
+// SetSkills feeds the discovered packs (Skills tab).
+func (m SettingsModel) SetSkills(packs []SkillPack) SettingsModel {
+	m.skills = packs
+	return m
+}
+
+// SetTools feeds the registry tool names (Tools tab).
+func (m SettingsModel) SetTools(names []string) SettingsModel {
+	m.tools = names
 	return m
 }
 
@@ -243,7 +265,7 @@ func (m SettingsModel) activate() (SettingsModel, tea.Cmd) {
 		return m.openField()
 	}
 	switch m.tabKeyOf() {
-	case "overview", "system":
+	case "overview", "system", "skills", "tools":
 		return m, nil // read-only tabs
 	case "routing":
 		return m.enterOrAddRoute()
@@ -671,6 +693,10 @@ func (m SettingsModel) rowCount() int {
 		return len(m.overviewRows())
 	case "routing":
 		return len(m.routeKeys()) + 1 // + Add
+	case "skills":
+		return len(m.skillsRows())
+	case "tools":
+		return len(m.toolsRows())
 	case "system":
 		return len(m.systemRows())
 	case "general", "appearance":
@@ -730,6 +756,10 @@ func (m SettingsModel) rows() []string {
 		return m.overviewRows()
 	case "routing":
 		return m.routingRows()
+	case "skills":
+		return m.skillsRows()
+	case "tools":
+		return m.toolsRows()
 	case "system":
 		return m.systemRows()
 	case "general", "appearance":
@@ -992,6 +1022,30 @@ func (m SettingsModel) routingRows() []string {
 		rs = append(rs, m.mark(i, settingRow(k, spec)))
 	}
 	return append(rs, m.mark(len(m.routeKeys()), "+ Add route"))
+}
+
+// skillsRows: the discovered packs (name + dim description).
+func (m SettingsModel) skillsRows() []string {
+	if len(m.skills) == 0 {
+		return []string{"  " + emptyRow("skills")}
+	}
+	rs := make([]string, 0, len(m.skills))
+	for i, sk := range m.skills {
+		rs = append(rs, m.mark(i, settingRow(sk.Name, sk.Desc)))
+	}
+	return rs
+}
+
+// toolsRows: the registered tools.
+func (m SettingsModel) toolsRows() []string {
+	if len(m.tools) == 0 {
+		return []string{"  " + emptyRow("tools")}
+	}
+	rs := make([]string, 0, len(m.tools))
+	for i, name := range m.tools {
+		rs = append(rs, m.mark(i, settingRow(name, "")))
+	}
+	return rs
 }
 
 // enterOrAddRoute: enter on a route opens its field editor; "+ Add" stages a

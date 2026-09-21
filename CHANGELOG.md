@@ -18,6 +18,20 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — Settings Skills + Tools tabs (answering "did we drop too much")
+
+Two of the sections the old tree listed as dead placeholders are now real (read-only)
+tabs, fed live from the actual runtime: **Skills** (each discovered pack — name + dim
+description — from the same listing the chat model receives) and **Tools** (the tool
+registry's names, the same list the Status page shows). Both with empty states. The dim
+roadmap line shrinks to `planned: shell & env · memory · privacy` — everything else that
+used to be listed is either live or never had config backing.
+- `SettingsModel.SetSkills([]tui.SkillPack)` / `SetTools([]string)`; root feeds both at
+  construction (`skillPacks` parses the listing; `Registry.Names()` for tools).
+- Files: internal/tui/settings.go + settings_test.go, internal/app/model.go.
+- Verified: TestSettingsSkillsToolsTabs (fed data renders on both tabs + empty state);
+  full suite green (20 pkgs).
+
 ## 2026-09-20 · deepthought-cli — sidebar v2: host always, fairshare + dirs + skills sections
 
 The live column now carries the full picture, not just cluster+context:

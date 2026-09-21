@@ -354,3 +354,31 @@ func TestProviderAdvancedFields(t *testing.T) {
 		}
 	}
 }
+
+// Skills + Tools tabs render the fed data (read-only, empty states included).
+func TestSettingsSkillsToolsTabs(t *testing.T) {
+	m := newTestSettings().
+		SetSkills([]SkillPack{{Name: "alliance-slurm", Desc: "job submission"}, {Name: "alliance-cvmfs", Desc: "software + modules"}}).
+		SetTools([]string{"bash", "read", "skill"})
+	m = m.Resize(84, 24)
+	m, _ = m.gotoTab(tabIndex("skills"))
+	plain := stripTestANSI.ReplaceAllString(m.View(), "")
+	for _, want := range []string{"Skills", "alliance-slurm", "job submission", "alliance-cvmfs"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("skills tab missing %q", want)
+		}
+	}
+	m, _ = m.gotoTab(tabIndex("tools"))
+	plain = stripTestANSI.ReplaceAllString(m.View(), "")
+	for _, want := range []string{"Tools", "bash", "read", "skill"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("tools tab missing %q", want)
+		}
+	}
+	// Empty states.
+	empty := newTestSettings().Resize(84, 24)
+	e, _ := empty.gotoTab(tabIndex("skills"))
+	if !strings.Contains(stripTestANSI.ReplaceAllString(e.View(), ""), "(no skills yet)") {
+		t.Error("skills tab lost its empty state")
+	}
+}
