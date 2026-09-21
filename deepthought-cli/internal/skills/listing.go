@@ -16,6 +16,10 @@ func Listing(sk []*Skill) string {
 	b.WriteString("Available skills — call the `skill` tool with a skill's name to load its full " +
 		"instructions before acting on a task it covers:\n")
 	for _, s := range sk {
+		if b.Len() > 12000 {
+			b.WriteString("  [index truncated; use the Skills settings tab for the complete list]\n")
+			break
+		}
 		line := "  - " + s.Name + ": " + s.Description
 		if w := oneLine(s.WhenToUse); w != "" {
 			line += " (use when: " + w + ")"

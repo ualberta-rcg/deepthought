@@ -14,10 +14,12 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 
+	"deepthought-cli/internal/assimilation"
 	"deepthought-cli/internal/babel"
 	commandpkg "deepthought-cli/internal/commands"
 	"deepthought-cli/internal/history"
 	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/skills"
 	"deepthought-cli/internal/slurm"
 	"deepthought-cli/internal/tools"
 	"deepthought-cli/internal/unimatrix"
@@ -191,6 +193,7 @@ type ChatModel struct {
 	// currentProducer is the model driving the in-flight turn; stamped onto each
 	// Transmission/Incursion as Producer (provenance) at commit time.
 	currentProducer *history.Producer
+	manifest        assimilation.Manifest
 
 	// input history for bash-style up/down recall. histPos == len(history) is the
 	// "fresh line" position; up moves older, down moves newer, down-at-end clears.
@@ -210,6 +213,13 @@ func NewChatModel(src InferenceSource, reg *tools.Registry, gate *queen.Gate, se
 	prompt := chatSystemPrompt("")
 	if src != nil {
 		prompt = chatSystemPrompt(src.Path())
+	}
+	if cwd, err := os.Getwd(); err == nil {
+		if instructions, err := skills.ProjectInstructions(cwd); err == nil {
+			prompt += instructions
+		} else {
+			prompt += "\n[Project instructions unavailable: " + err.Error() + "]"
+		}
 	}
 	return buildChat(src, reg, gate, func() (history.Store, *history.Collective) {
 		store := source()
@@ -610,6 +620,56 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		return m, Goto(ScreenCron)
 	case val == "/context":
 		return m, Goto(ScreenGrid)
+	case val == "/compact":
+		if m.busy {
+			m.systemLine("Interrupt the active turn before compacting.")
+			return m, nil
+		}
+		count := 0
+		for i, inc := range m.coll.Incursions {
+			if i >= len(m.coll.Incursions)-1 {
+				break
+			}
+			for _, tx := range inc.Transmissions {
+				for _, p := range tx.Probes {
+					if len(p.Result.Content) < 2048 {
+						continue
+					}
+					p.Result.Summaries.Condensed = history.Condense(p.Result.Content, 16, 1536) + "\n[Shortened; expand history ID " + p.ID + " for full output.]"
+					p.State = history.StateDigest
+					if err := m.store.SaveObject(p); err != nil {
+						m.systemLine(err.Error())
+						return m, nil
+					}
+					count++
+				}
+			}
+		}
+		m.systemLine(fmt.Sprintf("Compacted %d older tool results; full bodies remain available through expand.", count))
+		return m, nil
+	case val == "/doctor":
+		m.systemLine(fmt.Sprintf("Standalone · workspace tools: %d · estimated context: %d/%d · server login: coming soon", len(m.reg.Names()), m.manifest.Estimated, m.manifest.Budget))
+		if m.src != nil {
+			if _, model, err := m.src.RoleClient(unimatrix.RoleAgentic); err != nil {
+				m.systemLine("Model configuration: " + err.Error())
+			} else {
+				m.systemLine("Agentic model: " + model.ID)
+			}
+		}
+		return m, nil
+	case strings.HasPrefix(val, "/export "):
+		if exporter, ok := m.store.(interface{ Export(string) error }); ok {
+			if err := exporter.Export(strings.TrimSpace(strings.TrimPrefix(val, "/export "))); err != nil {
+				m.systemLine(err.Error())
+			} else {
+				m.systemLine("History exported.")
+			}
+		} else {
+			m.systemLine("Export requires the SQLite store.")
+		}
+		return m, nil
+	case val == "/memory" || strings.HasPrefix(val, "/memory "):
+		return m.memoryCommand(val), nil
 	case val == "/model":
 		return m, func() tea.Msg { return OpenModelChooserMsg{} }
 	case val == "/resume":
@@ -779,8 +839,51 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 	if m.ctx == nil {
 		m.ctx, m.cancel = context.WithCancel(context.Background())
 	}
-	return m, tea.Batch(m.own(startStream(m.ctx, client, m.newRequest(model))), tea.Cmd(m.spin.Tick))
+	req := m.newRequest(model)
+	if resolver, ok := m.src.(interface {
+		ResolveRequest(string, history.Sensitivity, int) (*babel.Client, unimatrix.Model, error)
+	}); ok {
+		sensitivity := m.coll.Sensitivity
+		for _, inc := range m.coll.Incursions {
+			if inc.Sensitivity > sensitivity {
+				sensitivity = inc.Sensitivity
+			}
+			for _, tx := range inc.Transmissions {
+				for _, p := range tx.Probes {
+					if p.Sensitivity > sensitivity {
+						sensitivity = p.Sensitivity
+					}
+				}
+			}
+		}
+		client, model, err = resolver.ResolveRequest(unimatrix.RoleAgentic, sensitivity, estimateUsage(req.Messages, "", "").PromptTokens+req.MaxTokens)
+		if err != nil {
+			m.busy = false
+			m.cancel()
+			m.systemLine(err.Error())
+			return m, nil
+		}
+		req = m.newRequest(model)
+	}
+	refs := map[string]string{}
+	for _, inc := range m.coll.Incursions {
+		for _, tx := range inc.Transmissions {
+			for _, p := range tx.Probes {
+				refs[p.WireID] = p.ID
+			}
+		}
+	}
+	req.Messages, m.manifest, err = assimilation.Wire(req.Messages, req.Tools, model.Context, req.MaxTokens, refs)
+	if err != nil {
+		m.busy = false
+		m.cancel()
+		m.systemLine(err.Error())
+		return m, nil
+	}
+	return m, tea.Batch(m.own(startStream(m.ctx, client, req)), tea.Cmd(m.spin.Tick))
 }
+
+func (m ChatModel) Manifest() assimilation.Manifest { return m.manifest }
 
 // newRequest builds the ChatRequest for the current incursion: the model, the full message
 // history (system prompt + incursions incl. any tool calls/results), the advertised tools,
@@ -838,6 +941,9 @@ func (m ChatModel) SetSkills(s string) ChatModel {
 // collective.
 func (m ChatModel) requestMessages() []babel.Message {
 	msgs := m.coll.MessagesByState()
+	if facts := m.memoryContext(); facts != "" {
+		msgs = append(msgs, babel.Message{Role: "system", Content: facts})
+	}
 	if m.skills != "" {
 		msgs = append(msgs, babel.Message{Role: "system", Content: m.skills})
 	}
@@ -1068,7 +1174,7 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 		// After the first real exchange, ask the summary model for a pretty title
 		// (best-effort; failures are swallowed). Only real chats with a reply.
 		if m.coll.Title == "" && tx.Text != "" && len(m.coll.Incursions) == 1 {
-			cmds = append(cmds, m.own(generateTitleCmd(m.src, inc.Prompt, tx.Text)))
+			cmds = append(cmds, m.own(generateTitleCmd(m.src, inc.Prompt, tx.Text, m.coll.Sensitivity)))
 		}
 		if next := m.drainQueue(); next != nil {
 			cmds = append(cmds, next)
@@ -1160,6 +1266,19 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 	if err := tools.Validate(tool, args); err != nil {
 		return m, m.own(deniedResultCmd(probe, err.Error()))
 	}
+	if preview, ok := tool.(interface {
+		Preview(context.Context, map[string]any) (string, error)
+	}); ok {
+		ctx := m.ctx
+		if ctx == nil {
+			ctx = context.Background()
+		}
+		diff, err := preview.Preview(ctx, args)
+		if err != nil {
+			return m, m.own(deniedResultCmd(probe, err.Error()))
+		}
+		m.appendTurn(styleTool.Render(diff))
+	}
 
 	switch m.gate.Decide(context.Background(), tool, args) {
 	case queen.Allow:
@@ -1183,7 +1302,7 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 	default: // Ask
 		probe.Decision = queen.Ask
 		m.awaiting = &pendingApproval{probe: probe, tool: tool, args: args}
-		m.appendTurn(styleToolAsk.Render("  ⚠ allow " + probe.Name + "? [y] once  [a] task  [A] always  [n]/[d]"))
+		m.appendTurn(styleToolAsk.Render("  ⚠ allow " + probe.Name + " with these exact arguments? [y] once  [a] task  [A] always  [n]/[d]"))
 		return m, nil
 	}
 }
@@ -1522,9 +1641,14 @@ func startStream(ctx context.Context, client *babel.Client, req babel.ChatReques
 // generateTitleCmd asks the summary model for a short, human-friendly title for
 // the chat (run after the first exchange). Best-effort: any error is swallowed
 // by the handler. Titles are capped at 64 runes.
-func generateTitleCmd(src InferenceSource, prompt, reply string) tea.Cmd {
+func generateTitleCmd(src InferenceSource, prompt, reply string, sensitivity history.Sensitivity) tea.Cmd {
 	return func() tea.Msg {
 		client, model, err := src.RoleClient(unimatrix.RoleSummary)
+		if resolver, ok := src.(interface {
+			ResolveRequest(string, history.Sensitivity, int) (*babel.Client, unimatrix.Model, error)
+		}); ok {
+			client, model, err = resolver.ResolveRequest(unimatrix.RoleSummary, sensitivity, 512)
+		}
 		if err != nil {
 			return titleGeneratedMsg{err: err}
 		}

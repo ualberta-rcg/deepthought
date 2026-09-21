@@ -69,10 +69,19 @@ func (r *Registry) Fork() *Registry {
 		return NewRegistry()
 	}
 	var ts []Tool
+	files := map[*Files]*Files{}
 	for _, name := range r.order {
 		t := r.byName[name]
 		if _, ok := t.(*Bash); ok {
 			t = NewGuardedBash()
+		}
+		if ft, ok := t.(*FileTool); ok {
+			f := files[ft.files]
+			if f == nil {
+				f = &Files{root: ft.files.root, seen: map[string]string{}}
+				files[ft.files] = f
+			}
+			t = &FileTool{files: f, name: ft.name}
 		}
 		ts = append(ts, t)
 	}

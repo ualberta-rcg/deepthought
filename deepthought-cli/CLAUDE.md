@@ -19,6 +19,17 @@ running tools, and executing shell commands under a permission gate.
 
 ### Reliability release (2026-09-20)
 
+- Workspace file tools now provide read receipts, bounded literal search, previewed
+  edits and atomic replacement. Their root is the launch directory; Bash remains
+  separately permission-gated. `/compact`, `/doctor`, `/export <directory>` and
+  `/memory [add <fact>|forget <id>]` are implemented locally.
+- Live requests include root-to-directory project instructions and a bounded
+  skill index. Grid displays the actual context manifest. Token counts are
+  estimates, with reserved output capacity; overflowing required instructions
+  cause a visible refusal instead of silent truncation.
+- Privacy and clearance apply to role requests and configured routes; unknown
+  pricing cannot satisfy a configured USD limit. Server settings remain future work.
+
 - Welcome requires Enter on **Run standalone**. **Log in to server — coming soon**
   is informational. No model health request is made at startup.
 - F1 opens Settings; F2 shows Help. Models is initialized with the live store.

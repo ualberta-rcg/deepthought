@@ -387,6 +387,9 @@ func classify(tool tools.Tool, args map[string]any) Category {
 	if tool.ReadOnly() || name == "read" {
 		return CatRead
 	}
+	if name == "write" || name == "edit" {
+		return CatWrite
+	}
 	if name == "bash" {
 		cmd, _ := args["command"].(string)
 		cmd = strings.TrimSpace(cmd)

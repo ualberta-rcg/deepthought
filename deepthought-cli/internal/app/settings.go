@@ -431,6 +431,16 @@ func (s *Settings) RoleClient(role string) (*babel.Client, unimatrix.Model, erro
 	if err != nil {
 		return nil, unimatrix.Model{}, err
 	}
+	p, err := s.cfg.ProviderFor(m)
+	if err != nil {
+		return nil, unimatrix.Model{}, err
+	}
+	if !privacyEligible(s.cfg.PrivacyLevel, p) {
+		return nil, unimatrix.Model{}, fmt.Errorf("provider %s is excluded by %s privacy", p.Name, s.cfg.PrivacyLevel)
+	}
+	if breaker := s.breakers[p.Name]; breaker != nil && time.Now().Before(breaker.openUntil) {
+		return nil, unimatrix.Model{}, fmt.Errorf("provider %s is cooling down after failures", p.Name)
+	}
 	c, err := s.clientForModel(m)
 	return c, m, err
 }
@@ -499,6 +509,18 @@ func (s *Settings) RouteClient(routeName string, sensitivity history.Sensitivity
 		if err != nil || providerClearance(provider.Clearance) < sensitivity {
 			continue
 		}
+		if !privacyEligible(s.cfg.PrivacyLevel, provider) {
+			continue
+		}
+		if (provider.MaxUSD > 0 || route.MaxCost > 0) && estimatedUSD < 0 {
+			continue
+		}
+		if route.MaxCost > 0 && estimatedUSD > route.MaxCost {
+			continue
+		}
+		if route.MaxLatencyMS > 0 {
+			continue
+		} // no measured latency distribution yet
 		if provider.MaxTokens > 0 && estimatedTokens > provider.MaxTokens {
 			continue
 		}
@@ -520,6 +542,54 @@ func (s *Settings) RouteClient(routeName string, sensitivity history.Sensitivity
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].rank < candidates[j].rank })
 	chosen := candidates[0]
 	return s.pool.ClientFor(chosen.provider.Name, chosen.provider.BaseURL, chosen.provider.ExpandedKey(), chosen.provider.Wire, chosen.provider.Anonymous, providerTimeout(chosen.provider)), chosen.model, nil
+}
+
+func privacyEligible(level string, p config.Provider) bool {
+	local := p.Kind == "local"
+	for _, tag := range p.Tags {
+		if tag == "local" {
+			local = true
+		}
+	}
+	switch level {
+	case "local-only":
+		return local
+	case "strict":
+		return local || p.Clearance == "restricted" || p.Clearance == "secret"
+	default:
+		return true
+	}
+}
+
+// ResolveRequest applies capability, privacy, clearance, and budget policy to
+// all request kinds. Unknown pricing cannot satisfy an explicit USD ceiling.
+func (s *Settings) ResolveRequest(role string, sensitivity history.Sensitivity, tokens int) (*babel.Client, unimatrix.Model, error) {
+	s.mu.RLock()
+	_, routed := s.cfg.Routes[role]
+	s.mu.RUnlock()
+	if routed {
+		return s.RouteClient(role, sensitivity, tokens, -1)
+	}
+	c, m, err := s.RoleClient(role)
+	if err != nil {
+		return nil, m, err
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	p, err := s.cfg.ProviderFor(m)
+	if err != nil {
+		return nil, m, err
+	}
+	if providerClearance(p.Clearance) < sensitivity {
+		return nil, m, fmt.Errorf("provider clearance is below conversation sensitivity")
+	}
+	if p.MaxTokens > 0 && tokens > p.MaxTokens {
+		return nil, m, fmt.Errorf("request exceeds provider token budget")
+	}
+	if p.MaxUSD > 0 {
+		return nil, m, fmt.Errorf("cannot enforce USD budget: provider pricing is unknown")
+	}
+	return c, m, nil
 }
 
 func providerClearance(value string) history.Sensitivity {

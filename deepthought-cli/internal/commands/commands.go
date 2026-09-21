@@ -39,6 +39,10 @@ func Builtins() *Registry {
 		kind              Kind
 	}{
 		{"help", "show commands and keys", Local},
+		{"doctor", "check local configuration and context", Local},
+		{"compact", "shorten older tool output while preserving originals", Local},
+		{"memory", "manage explicitly approved reference facts", Local},
+		{"export", "export histories to a directory", Local},
 		{"model", "switch the active model", Local},
 		{"effort", "show or set reasoning effort", Local},
 		{"settings", "open settings", Screen},

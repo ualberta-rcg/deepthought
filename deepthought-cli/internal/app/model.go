@@ -289,6 +289,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if tui.IsChatEvent(msg) {
 		var cmd tea.Cmd
 		m.chat, cmd = m.chat.Update(msg)
+		m.grid = m.grid.SetManifest(m.chat.Manifest())
 		return m, cmd
 	}
 	if tui.IsModelsEvent(msg) {

@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-20 · deepthought-cli — workspace tools and live context inspection
+- Add session-local workspace read/search/write/edit tools using os.Root confinement, sensitive-path restrictions, read receipts, stale-file checks, atomic writes and approval previews.
+- Budget live chat requests with tool schemas and output reserve, preserve tool-call pairing and required instructions, populate Grid from actual requests, and add /compact, /doctor, /export and explicit /memory management.
+- Load project instructions with provenance, bound skill indexes, tolerate malformed skill packs, synchronize lazy skill bodies, and enforce request privacy/clearance/budget policy with honest unknown-price failures.
+- Files: tools/files and tests, assimilation/wire and tests, skills instructions/loader/listing, history records, TUI chat/grid/memory, commands, app settings and CLI wiring.
+- Verification: Slurm CPU job 1083674; full go vet and tests, targeted race checks, and static CLI/server builds all passed. Workspace regression tests cover stale edits, path escape, sensitive files and session isolation; context tests preserve tool/result IDs and reject overflowing required instructions.
+
 ## 2026-09-20 · deepthought-cli — standalone reliability and welcome choices
 - Replace ambiguous splash advance with readable branding and explicit standalone/server-placeholder choices; initialize Models and align F1/F2. Route background results by screen and chat turn, cancel tool contexts, invalidate approvals, and preserve queued turns.
 - Isolate SSH shell/permission state, recover cancelled shells, bound unbroken output, enforce tool JSON Schema, make denies override grants, and persist exact argument approvals with Bash syntax checks.

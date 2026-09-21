@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"deepthought-cli/internal/assimilation"
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -22,6 +24,13 @@ func NewGridModel() GridModel {
 }
 
 func (m GridModel) Init() tea.Cmd { return nil }
+func (m GridModel) SetManifest(manifest assimilation.Manifest) GridModel {
+	m.lines = []string{fmt.Sprintf("Estimated input %d / %d tokens (output reserve excluded)", manifest.Estimated, manifest.Budget), ""}
+	for _, entry := range manifest.Entries {
+		m.lines = append(m.lines, fmt.Sprintf("%s · %s · %d tokens · %s", entry.ID, entry.State, entry.Tokens, entry.Reason))
+	}
+	return m
+}
 func (m GridModel) Resize(w, h int) GridModel {
 	m.width, m.height = w, h
 	return m

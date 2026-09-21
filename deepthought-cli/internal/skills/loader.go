@@ -3,6 +3,7 @@ package skills
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -29,9 +30,12 @@ type Skill struct {
 	Path  string
 	Layer string
 	body  []byte
+	mu    sync.Mutex
 }
 
 func (s *Skill) Body() (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
 	if s.body == nil {
 		raw, err := os.ReadFile(s.Path)
 		if err != nil {
@@ -134,13 +138,15 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 	}
 	seenName, seenPath := map[string]bool{}, map[string]bool{}
 	var out []*Skill
+	var warnings []error
 	for _, root := range roots {
 		entries, err := os.ReadDir(root.path)
 		if os.IsNotExist(err) {
 			continue
 		}
 		if err != nil {
-			return nil, err
+			warnings = append(warnings, err)
+			continue
 		}
 		for _, entry := range entries {
 			path := filepath.Join(root.path, entry.Name())
@@ -163,7 +169,8 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 			}
 			skill, err := readDescriptor(real, root.layer)
 			if err != nil {
-				return nil, err
+				warnings = append(warnings, err)
+				continue
 			}
 			seenPath[real] = true
 			if seenName[skill.Name] {
@@ -176,11 +183,20 @@ func (l *Loader) Load(cwd string) ([]*Skill, error) {
 	l.mu.Lock()
 	l.cache[realCWD] = append([]*Skill(nil), out...)
 	l.mu.Unlock()
-	return out, nil
+	return out, errors.Join(warnings...)
 }
 
 func locateProject(cwd string) string {
 	for dir := cwd; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
+			return dir
+		}
+		if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
+			return dir
+		}
 		if _, err := os.Stat(filepath.Join(dir, "DEEPTHOUGHT_CLI.md")); err == nil {
 			return dir
 		}

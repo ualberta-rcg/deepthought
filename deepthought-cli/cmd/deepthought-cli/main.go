@@ -77,7 +77,14 @@ func main() {
 		os.Exit(1)
 	}
 	defer droneStore.Close()
-	nativeTools := []tools.Tool{tools.NewGuardedBash(), tools.NewRead(), historytools.NewExpand(droneStore)}
+	workDir, _ := os.Getwd()
+	fileTools, err := tools.NewWorkspaceTools(workDir)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "deepthought-cli: workspace:", err)
+		return
+	}
+	nativeTools := []tools.Tool{tools.NewGuardedBash(), historytools.NewExpand(droneStore)}
+	nativeTools = append(nativeTools, fileTools...)
 	nativeTools = append(nativeTools, (slurm.ToolSet{Client: slurm.NewClient(nil)}).Tools()...)
 
 	// Load skills from every install location (user, project codex/claude dirs,
@@ -85,7 +92,6 @@ func main() {
 	// in the system prompt plus a read-only `skill` tool to load bodies on demand
 	// (progressive disclosure). Best-effort — a load failure just means no skills
 	// surface.
-	workDir, _ := os.Getwd()
 	skillList, _ := skills.NewLoader().Load(workDir)
 	if len(skillList) > 0 {
 		skillByName := make(map[string]*skills.Skill, len(skillList))
