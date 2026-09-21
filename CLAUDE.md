@@ -38,9 +38,16 @@ identifiers must not reintroduce them.
 
 ## Environment (Vulcan HPC login node)
 
-- Builds, tests, and race checks run in Slurm CPU jobs, never on the shared
-  login node. Discover the account and toolchain first; set account, CPUs,
-  memory, and time explicitly. Keep job outputs and Go caches on scratch.
+- **CI/CD is the build system** (`.github/workflows/build-cli.yml` vets, tests —
+  including the MySQL store tests against a service container — race-checks, and
+  publishes the static CLI binary as an artifact; `build-server.yml` builds and
+  pushes the server image to Docker Hub). Never build on the shared login node,
+  and **never use Slurm or CVMFS/modules** — the compute is kube-backed and has
+  no CVMFS.
+- **The only manual deploy step is applying the server-side YAML**: the numbered
+  manifests on the aleph1 control-plane (`57-deepthought.yaml`,
+  `58-deepthought-mysql.yaml`), bumping the image tag to the CI-built one.
+  Everything inside the `deepthought` namespace only.
 - Job I/O on `$SCRATCH`, not `$HOME` (50 GB quota). The CLI's deploy dir is
   `$SCRATCH/deepthought-cli/`; its SSH host key (`host_ed25519`) never gets
   committed.

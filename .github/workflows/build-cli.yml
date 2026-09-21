@@ -1,0 +1,92 @@
+name: Build DeepThought CLI
+
+# The CLI's CI/CD lane: vet + full test suite (with the MySQL store tests
+# against a service container), then the static binary as a downloadable
+# artifact. Builds happen HERE, never on the login node and never via Slurm.
+# Server-side deploys stay manual-by-design: apply the numbered manifests on
+# the aleph1 control-plane (57/58-*.yaml) with the CI-built image tag.
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'deepthought-cli/**'
+      - '.github/workflows/build-cli.yml'
+  workflow_dispatch:
+
+jobs:
+  test-and-build:
+    name: Test + Build CLI
+    runs-on: ubuntu-24.04
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: deepthought
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: deepthought-cli/go.mod
+
+      - name: Vet
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          go vet ./...
+
+      - name: Test (MySQL store tests included)
+        env:
+          DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought
+        run: |
+          set -uo pipefail
+          cd deepthought-cli
+          go test ./... -count=1 2>&1 | tee /tmp/test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "## Test failures"
+              echo '```'
+              grep -E "FAIL|--- FAIL|Error|error|panic" /tmp/test.log | head -60
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
+
+      - name: Race checks
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history ./internal/server
+
+      - name: Build static binary
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          mkdir -p ../out
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags="-s -w -X main.buildVersion=${GITHUB_SHA}" \
+            -o ../out/deepthought-cli ./cmd/deepthought-cli
+          ../out/deepthought-cli --version
+          sha256sum ../out/deepthought-cli > ../out/SHA256SUMS
+
+      - name: Upload binary artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: deepthought-cli-${{ github.sha }}
+          path: out/
+          if-no-files-found: error

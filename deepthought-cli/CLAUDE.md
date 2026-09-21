@@ -197,14 +197,16 @@ running tools, and executing shell commands under a permission gate.
 
 ## Running environment (Vulcan login node)
 
-This is a shared HPC login node. Builds, tests, and race checks must run in
-Slurm CPU jobs. Discover available accounts and software first, set account,
-CPU, memory and time explicitly, and keep build caches and job output on
-scratch. The current user instruction supersedes historical build exceptions.
+This is a shared HPC login node. **CI/CD is the build system**: the workflows
+vet, test (MySQL store tests run against a service container), race-check, and
+build the artifacts. Never build on the login node, and **never use Slurm or
+CVMFS/modules** — the compute is kube-backed and has no CVMFS. The dev loop is
+edit → push → CI.
 
 - Editing source and `go mod`/`go get`/`go mod tidy` are always fine.
-- Caches: `GOCACHE=$SCRATCH/deepthought-cli/gocache`,
-  `GOMODCACHE=$SCRATCH/deepthought-cli/gomodcache` (set persistently via `go env -w`).
+- The **only manual deploy step** is applying the server-side manifests on the
+  aleph1 control-plane (namespace `deepthought` only), bumping the image tag to
+  the CI-built one.
 - Job I/O on `$SCRATCH`, not `$HOME` (50 GB home quota fills fast). SSH host key at
   `$SCRATCH/deepthought-cli/host_ed25519` — never commit it.
 - Don't guess module versions or GPU types; don't scan the filesystem from root.

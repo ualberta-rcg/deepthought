@@ -1,4 +1,4 @@
-.PHONY: build test vet deploy snapshot check compute
+.PHONY: build test vet deploy snapshot check deploy-server
 
 GO ?= go
 SCRATCH ?= /scratch/$(USER)
@@ -7,11 +7,12 @@ SNAPSHOT_DIR ?= $(SCRATCH)/deepthought-cli-snapshots
 BIN := $(DEPLOY_DIR)/deepthought-cli
 VERSION := $(shell git rev-parse HEAD)
 
-# Compile and test in a Slurm allocation on Vulcan. CI is an isolated runner.
-compute:
-	@test -n "$$SLURM_JOB_ID$$CI" || { echo "Run this target in a Slurm CPU allocation (or CI)." >&2; exit 1; }
+# Builds and tests run in CI (.github/workflows/) — never on the shared login
+# node and never via Slurm/CVMFS. These targets are thin local conveniences for
+# a machine that already has the Go toolchain; the authoritative artifacts come
+# out of CI.
 
-build: compute
+build:
 	mkdir -p "$(DEPLOY_DIR)"
 	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.buildVersion=$(VERSION)" -o "$(BIN).new" ./cmd/deepthought-cli
 
@@ -31,17 +32,17 @@ snapshot:
 	rsync -a --exclude='.tmp/' ./ "$$dest/"; \
 	echo "snapshot $$dest"
 
-test: compute
+test:
 	$(GO) test ./...
 
-vet: compute
+vet:
 	$(GO) vet ./...
 
 check: vet test
 
 DEPLOY_SERVER = $(DEPLOY_DIR)/deepthought-server
 
-deploy-server: compute ## Build + atomically deploy the server binary to DEPLOY_DIR.
+deploy-server: ## Build + atomically deploy the server binary to DEPLOY_DIR (dev only; the cluster runs the CI image).
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$(DEPLOY_SERVER).new" ./cmd/deepthought-server
 	mv "$(DEPLOY_SERVER).new" "$(DEPLOY_SERVER)"
 	@echo "deployed $(DEPLOY_SERVER)"
