@@ -3,9 +3,9 @@ name: Build DeepThought CLI and server
 # Builds + tests the DeepThought server and publishes its container image.
 # Mirrors the aleph house pattern (deploy-gateway.yml): path-filtered push to
 # main + workflow_dispatch; Docker publish uses the same secret names
-# (DOCKER_HUB_USER / DOCKER_HUB_TOKEN, optional DOCKER_HUB_REPO override) so
-# enabling it is adding the secrets — the build + artifact path below needs
-# zero secrets and always runs.
+# (DOCKER_HUB_USER / DOCKER_HUB_TOKEN) with an optional DOCKER_HUB_REPO
+# secret/Variable override (default: rkhoja/deepthought-server). Login and
+# push run unconditionally — missing credentials fail the job loudly.
 
 on:
   push:
@@ -65,8 +65,11 @@ jobs:
           path: out/
           if-no-files-found: error
 
-      # --- Optional image publish (aleph secret conventions) ------------------
-      # Runs only when DOCKER_HUB_USER/DOCKER_HUB_TOKEN exist; skipped otherwise.
+      # --- Docker publish (aleph house pattern: deploy-gateway.yml) -----------
+      # Login and Push run unconditionally with the secrets inline; missing
+      # credentials fail the job loudly rather than skipping the push. (The
+      # previous env.HAS_DOCKER_CREDS gate never worked: a step-level `if`
+      # cannot see the step's own `env:` block.)
       - name: Resolve image repository
         id: repo
         env:
@@ -75,8 +78,12 @@ jobs:
         run: |
           set -euo pipefail
           REPO="${SECRET_REPO}"
-          [ -z "${REPO}" ] && REPO="${VAR_REPO}"
-          [ -z "${REPO}" ] && REPO="rkhoja/deepthought"
+          if [ -z "${REPO}" ]; then
+            REPO="${VAR_REPO}"
+          fi
+          if [ -z "${REPO}" ]; then
+            REPO="rkhoja/deepthought-server"
+          fi
           echo "IMAGE_REPO=${REPO}" >> "$GITHUB_OUTPUT"
           echo "Using IMAGE_REPO=${REPO}"
 
@@ -85,31 +92,44 @@ jobs:
         env:
           INPUT_IMAGE_TAG: ${{ github.event.inputs.IMAGE_TAG }}
           INPUT_STABLE_TAG: ${{ github.event.inputs.STABLE_TAG }}
+          VAR_STABLE_TAG: ${{ vars.STABLE_TAG }}
         run: |
           set -euo pipefail
-          SHA="${GITHUB_SHA::7}"
-          TAG="${INPUT_IMAGE_TAG}"
-          [ -z "${TAG}" ] && TAG="server-${SHA}"
-          STABLE="${INPUT_STABLE_TAG}"
-          [ -z "${STABLE}" ] && STABLE="latest"
-          echo "IMAGE_TAG=${TAG}" >> "$GITHUB_OUTPUT"
-          echo "STABLE_TAG=${STABLE}" >> "$GITHUB_OUTPUT"
+          SHORT_SHA="${GITHUB_SHA::7}"
 
-      - name: Build image (local)
+          IMAGE_TAG="${INPUT_IMAGE_TAG}"
+          if [ -z "${IMAGE_TAG}" ]; then
+            IMAGE_TAG="server-${SHORT_SHA}"
+          fi
+
+          STABLE_TAG="${INPUT_STABLE_TAG}"
+          if [ -z "${STABLE_TAG}" ]; then
+            STABLE_TAG="${VAR_STABLE_TAG}"
+          fi
+          if [ -z "${STABLE_TAG}" ]; then
+            STABLE_TAG="latest"
+          fi
+
+          echo "IMAGE_TAG=${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "STABLE_TAG=${STABLE_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Using IMAGE_TAG=${IMAGE_TAG}"
+          echo "Using STABLE_TAG=${STABLE_TAG}"
+
+      - name: Login to DockerHub
         run: |
           set -euo pipefail
-          docker build -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" \
+          echo "${{ secrets.DOCKER_HUB_TOKEN }}" | docker login -u "${{ secrets.DOCKER_HUB_USER }}" --password-stdin
+
+      - name: Build Docker image
+        run: |
+          set -euo pipefail
+          docker build \
+            -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" \
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}" \
             deepthought-cli
 
-      - name: Push image
-        if: ${{ env.HAS_DOCKER_CREDS == 'true' }}
-        env:
-          DOCKER_HUB_USER: ${{ secrets.DOCKER_HUB_USER }}
-          DOCKER_HUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
-          HAS_DOCKER_CREDS: ${{ secrets.DOCKER_HUB_USER != '' && secrets.DOCKER_HUB_TOKEN != '' }}
+      - name: Push image to DockerHub
         run: |
           set -euo pipefail
-          echo "${DOCKER_HUB_TOKEN}" | docker login -u "${DOCKER_HUB_USER}" --password-stdin
           docker push "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}"
           docker push "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}"

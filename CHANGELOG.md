@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — adopt aleph publish pattern in server CI
+- The Docker publish never ran: the Push step gated on `env.HAS_DOCKER_CREDS`, but a step-level `if` cannot see the step's own `env:` block, so the gate was always false and the push skipped silently on green builds. Replace the gated publish with the aleph house pattern (deploy-gateway.yml): unconditional Login to DockerHub and Push steps with the secrets referenced inline, so missing credentials fail loudly instead of skipping.
+- Default the image repository to rkhoja/deepthought-server (the actual Docker Hub repo; still overridable via DOCKER_HUB_REPO secret/Variable) and support a STABLE_TAG repo Variable, both matching aleph.
+- Files: .github/workflows/build-server.yml; this entry.
+- Verification: previous run 35643696967 shows Push image "skipped" with all secrets present, confirming the gate bug; this push re-triggers the workflow — success criteria are the Login/Push steps executing and `rkhoja/deepthought-server:server-<shortsha>` appearing on Docker Hub.
+
 ## 2026-09-21 · deepthought-cli — pin server Deployment to control-plane nodes
 - Add `nodeSelector: node-role.kubernetes.io/control-plane: "true"` to the reference server Deployment (k8s/deployment.yaml): on the aleph RKE2 cluster the worker nodes are GPU/KServe model hosts and the server must land only on the aleph1-3 control-planes, which carry no taints.
 - Files: deepthought-cli/k8s/deployment.yaml; this entry.
