@@ -88,6 +88,7 @@ type RootModel struct {
 	lastCluster       slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
 	clusterGeneration uint64
 	splash            tui.SplashModel
+	server            *ServerSession // non-nil after a successful splash server login
 	chat              tui.ChatModel
 	continue_         tui.ContinueModel
 	settings          tui.SettingsModel
@@ -276,6 +277,26 @@ func commandExists(name string) bool {
 	return err == nil
 }
 
+// advanceFromSplash is the shared splash→app transition: a working agentic
+// model goes straight into a new chat (the navigation root — clear the
+// stack); otherwise land in Settings at the add-provider area.
+func (m RootModel) advanceFromSplash() (RootModel, tea.Cmd) {
+	m.screenStack = nil
+	if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
+		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetParentContext(m.deps.Context).SetEnv(m.env).
+			SetCluster(m.lastCluster).
+			SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing).
+			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
+		m.screen = tui.ScreenChat
+		m.chatResize()
+		return m, m.chat.Init()
+	}
+	m.settings = tui.NewSettingsModelAt(m.deps.Live, m.deps.Settings, "providers", true).
+		Resize(m.width, m.height)
+	m.screen = tui.ScreenSettings
+	return m, m.settings.Init()
+}
+
 // splashBoot resolves the chat role's model + provider for the splash status
 // line, and reports whether the provider has a key (ready vs. not-ready hint).
 func splashBoot(live *Settings) tui.BootInfo {
@@ -453,20 +474,19 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Splash any-key: a working agentic model goes straight into a new chat
 		// (the navigation root — clear the stack); otherwise land in Settings at
 		// the add-provider area.
-		m.screenStack = nil
-		if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
-			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetParentContext(m.deps.Context).SetEnv(m.env).
-				SetCluster(m.lastCluster).
-				SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing).
-				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
-			m.screen = tui.ScreenChat
-			m.chatResize()
-			return m, m.chat.Init()
+		return m.advanceFromSplash()
+	case tui.SplashServerLoginMsg:
+		// "Log in to server": async shared-password login; the result arrives
+		// as ServerLoginResultMsg.
+		return m, serverLoginCmd(m.deps.Live)
+	case ServerLoginResultMsg:
+		if msg.Err != "" {
+			m.splash = m.splash.WithNotice("⚠ " + msg.Err)
+			return m, nil
 		}
-		m.settings = tui.NewSettingsModelAt(m.deps.Live, m.deps.Settings, "providers", true).
-			Resize(m.width, m.height)
-		m.screen = tui.ScreenSettings
-		return m, m.settings.Init()
+		m.server = msg.Session
+		m.splash = m.splash.WithNotice("")
+		return m.advanceFromSplash()
 	case tui.BackMsg:
 		// esc = back: pop the screen history. At the root (chat) it's a no-op.
 		if n := len(m.screenStack); n > 0 {

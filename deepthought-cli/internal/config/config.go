@@ -66,6 +66,19 @@ type Route struct {
 // keep the "$VAR" form rather than baking in the resolved secret.
 func (p Provider) ExpandedKey() string { return os.ExpandEnv(p.APIKey) }
 
+// ServerConfig is the optional server connection: where the settings-defaults
+// server lives and how this client logs in (phase-1 shared password). The
+// password follows the provider convention — a literal or a "$ENV_VAR"
+// reference expanded at use time.
+type ServerConfig struct {
+	URL      string `json:"url,omitempty"`
+	User     string `json:"user,omitempty"`
+	Password string `json:"password,omitempty"`
+}
+
+// ExpandedPassword resolves "$ENV_VAR" password references.
+func (s *ServerConfig) ExpandedPassword() string { return os.ExpandEnv(s.Password) }
+
 // File is the on-disk JSON shape, v2 (the lowercase struct tags map to
 // config.json).
 type File struct {
@@ -80,6 +93,9 @@ type File struct {
 	PermissionMode string            `json:"permission_mode,omitempty"`
 	Permissions    *Permissions      `json:"permissions,omitempty"` // v2 op-modes + rule lists
 	Routes         map[string]Route  `json:"routes,omitempty"`
+
+	// Server configures the optional settings-defaults server login.
+	Server *ServerConfig `json:"server,omitempty"`
 
 	// StatusLine configures the bottom chrome band.
 	StatusLine *StatusLine `json:"status_line,omitempty"`

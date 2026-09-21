@@ -44,17 +44,29 @@ deferred until the internals it needs earn extraction into a shared package.
 
 ## Auth
 
-A shared bearer token now (`$DEEPTHOUGHT_SERVER_TOKEN` or `--token-file`): every `/api/*`
-route requires it; health endpoints stay open for probes; **no token configured → /api
-answers 503, never silently open**. Per-user tokens (SSH-key-derived or site SSO) are the
-documented next step — the auth middleware is the single place to change.
+Phase-1 shared password (`$DEEPTHOUGHT_SERVER_PASSWORD` or `--password-file`): the client
+(the splash's "Log in to server", or the web UI's login form) POSTs its username + the
+shared password to `/api/v1/auth/login` and receives an opaque session token (in-memory,
+24h expiry; a restart logs everyone out). Every other `/api/*` route requires the session
+token; health endpoints stay open for probes; **no password configured → /api answers
+503, never silently open**. The password literal lives only in the cluster secret and the
+user's local config — never in this public repo. Per-user auth (SSH-key-derived or site
+SSO) remains the documented next step — the login handler is the single place to change.
+
+## Web UI
+
+An embedded single page (no framework, no build step) served at `/`: login form →
+dashboard with service info and the settings-defaults editor. It grows into the real
+client over time; a JS framework arrives when it earns one.
 
 ## API surface (v1)
 
 | Route | Status | Notes |
 |---|---|---|
 | `GET /healthz`, `GET /readyz` | live | open; status/version/uptime |
+| `POST /api/v1/auth/login` | live | shared password → session token |
 | `GET /api/v1/version` | live | build + data dir |
+| `GET/PUT /api/v1/settings/defaults` | live | the server settings layer (credential keys rejected on PUT) |
 | `GET /api/v1/crons` | live | the local cron tracking registry — the first fleet-aggregation endpoint (each system's registry is host-scoped + versioned JSON) |
 | `POST /api/v1/admin/reload` | live | re-reads config + skills; returns what it found |
 | `GET /api/v1/jobs` | 501 | roadmap: job lifecycle (#8) |

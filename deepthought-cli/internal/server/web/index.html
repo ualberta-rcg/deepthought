@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DeepThought</title>
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<main id="app" class="card">
+
+  <!-- Login -->
+  <section id="login" hidden>
+    <h1 class="wordmark">DeepThought</h1>
+    <p class="sub">DON'T PANIC</p>
+    <form id="login-form">
+      <label>User<input id="login-user" autocomplete="username" required></label>
+      <label>Password<input id="login-pass" type="password" autocomplete="current-password" required></label>
+      <button type="submit">Log in</button>
+      <p id="login-error" class="error" hidden></p>
+    </form>
+  </section>
+
+  <!-- Dashboard -->
+  <section id="dash" hidden>
+    <header>
+      <h1 class="wordmark">DeepThought</h1>
+      <span id="dash-user" class="chip"></span>
+      <button id="logout" class="ghost">Log out</button>
+    </header>
+
+    <h2>Service</h2>
+    <dl id="service-info" class="grid"></dl>
+
+    <h2>Settings defaults <span class="hint">(served to clients as the “server” layer)</span></h2>
+    <textarea id="defaults" rows="14" spellcheck="false"></textarea>
+    <div class="row">
+      <button id="save-defaults">Save defaults</button>
+      <span id="defaults-status" class="hint"></span>
+    </div>
+
+    <footer class="hint">Phase-1 UI — the execution plane grows in behind this door.</footer>
+  </section>
+
+</main>
+<script src="/app.js"></script>
+</body>
+</html>

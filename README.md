@@ -12,7 +12,9 @@ Two products, one repo:
 The CLI runs standalone. `--towel` keeps a local session running across terminal
 disconnects; `ls` and `attach <id>` reconnect. `/jobs` tracks durable Slurm
 submissions and `/plan` shows scientific objectives and validation evidence.
-Server login remains a future feature. See [local operations](deepthought-cli/docs/LOCAL-OPERATIONS.md)
+The server answers at deepthought.vulcan.alliancecan.ca with a login (shared
+password phase) and a starter web UI; the CLI's splash has a working "Log in to
+server" that fetches the server's settings defaults. See [local operations](deepthought-cli/docs/LOCAL-OPERATIONS.md)
 for settings layers, resident recovery, workflows, manifests and releases.
 
 Start with [`CLAUDE.md`](CLAUDE.md) for the repo rules (including the

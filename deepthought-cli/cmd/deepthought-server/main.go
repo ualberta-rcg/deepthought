@@ -22,9 +22,9 @@ import (
 )
 
 var (
-	addrFlag  = flag.String("addr", "127.0.0.1:8080", "listen address (the container overrides to 0.0.0.0:8080)")
-	dataFlag  = flag.String("data", "", "data directory (default: the DeepThought data dir)")
-	tokenFlag = flag.String("token-file", "", "file containing the bearer token (overrides $DEEPTHOUGHT_SERVER_TOKEN)")
+	addrFlag     = flag.String("addr", "127.0.0.1:8080", "listen address (the container overrides to 0.0.0.0:8080)")
+	dataFlag     = flag.String("data", "", "data directory (default: the DeepThought data dir)")
+	passwordFlag = flag.String("password-file", "", "file containing the shared login password (overrides $DEEPTHOUGHT_SERVER_PASSWORD)")
 )
 
 func main() {
@@ -41,13 +41,14 @@ func main() {
 	if err := dserver.EnsureDirs(dataDir); err != nil {
 		log.Fatalf("data dirs: %v", err)
 	}
-	token := loadToken()
+	password := loadPassword()
 
 	api := &dserver.API{
-		Start:   time.Now(),
-		DataDir: dataDir,
-		Token:   token,
-		Version: version(),
+		Start:    time.Now(),
+		DataDir:  dataDir,
+		Password: password,
+		Sessions: dserver.NewSessionStore(24 * time.Hour),
+		Version:  version(),
 	}
 	httpSrv := &http.Server{
 		Addr:              *addrFlag,
@@ -63,7 +64,7 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("deepthought-server listening on %s (data: %s, auth: %s)",
-			*addrFlag, dataDir, authState(token))
+			*addrFlag, dataDir, authState(password))
 		errCh <- httpSrv.ListenAndServe()
 	}()
 
@@ -95,22 +96,22 @@ func init() {
 	}()
 }
 
-func loadToken() string {
-	if *tokenFlag != "" {
-		b, err := os.ReadFile(*tokenFlag)
+func loadPassword() string {
+	if *passwordFlag != "" {
+		b, err := os.ReadFile(*passwordFlag)
 		if err != nil {
-			log.Fatalf("token file: %v", err)
+			log.Fatalf("password file: %v", err)
 		}
 		return strings.TrimSpace(string(b))
 	}
-	return os.Getenv("DEEPTHOUGHT_SERVER_TOKEN")
+	return os.Getenv("DEEPTHOUGHT_SERVER_PASSWORD")
 }
 
-func authState(token string) string {
-	if token == "" {
-		return "OFF (all /api endpoints 503 — set DEEPTHOUGHT_SERVER_TOKEN or --token-file)"
+func authState(password string) string {
+	if password == "" {
+		return "OFF (all /api endpoints 503 — set DEEPTHOUGHT_SERVER_PASSWORD or --password-file)"
 	}
-	return "bearer token"
+	return "shared password + session tokens"
 }
 
 func logRequests(next http.Handler) http.Handler {

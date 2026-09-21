@@ -21,8 +21,11 @@ func TestSplashRequiresExplicitChoice(t *testing.T) {
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
 	m, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if cmd != nil || m.notice == "" {
-		t.Fatal("server choice should explain availability")
+	if cmd == nil {
+		t.Fatal("server choice should emit a login command")
+	}
+	if splashANSI.ReplaceAllString(m.View(), "") != "" && strings.Contains(splashANSI.ReplaceAllString(m.View(), ""), "coming soon") {
+		t.Fatal("server choice should be functional, not 'coming soon'")
 	}
 	m, _ = m.Update(tea.KeyPressMsg{Code: tea.KeyUp})
 	_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})

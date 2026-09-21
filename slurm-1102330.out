@@ -1,0 +1,26 @@
+?   	deepthought-cli/cmd/deepthought-cli	[no test files]
+?   	deepthought-cli/cmd/deepthought-server	[no test files]
+ok  	deepthought-cli/internal/alcove	(cached)
+ok  	deepthought-cli/internal/app	(cached)
+ok  	deepthought-cli/internal/assimilation	(cached)
+ok  	deepthought-cli/internal/babel	(cached)
+ok  	deepthought-cli/internal/commands	(cached)
+ok  	deepthought-cli/internal/config	(cached)
+ok  	deepthought-cli/internal/cron	(cached)
+ok  	deepthought-cli/internal/history	3.056s
+ok  	deepthought-cli/internal/historytools	(cached)
+ok  	deepthought-cli/internal/keybindings	(cached)
+ok  	deepthought-cli/internal/queen	(cached)
+ok  	deepthought-cli/internal/residency	(cached)
+ok  	deepthought-cli/internal/science	(cached)
+ok  	deepthought-cli/internal/server	(cached)
+ok  	deepthought-cli/internal/skills	(cached)
+ok  	deepthought-cli/internal/slurm	(cached)
+ok  	deepthought-cli/internal/tools	(cached)
+ok  	deepthought-cli/internal/transwarp	(cached)
+ok  	deepthought-cli/internal/tui	0.138s
+ok  	deepthought-cli/internal/unimatrix	(cached)
+ok  	deepthought-cli/internal/workflow	0.562s
+ok  	deepthought-cli/internal/server	1.188s
+ok  	deepthought-cli/internal/app	2.906s
+ok  	deepthought-cli/internal/tui	1.956s

@@ -38,11 +38,11 @@ spec:
           ports:
             - containerPort: 8080
           env:
-            - name: DEEPTHOUGHT_SERVER_TOKEN
+            - name: DEEPTHOUGHT_SERVER_PASSWORD
               valueFrom:
                 secretKeyRef:
-                  name: deepthought-server-token
-                  key: token
+                  name: deepthought-server-auth
+                  key: password
                   optional: true
           resources:
             requests:

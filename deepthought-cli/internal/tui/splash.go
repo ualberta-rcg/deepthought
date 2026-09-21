@@ -102,7 +102,7 @@ func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 			if m.selected == 0 {
 				return m, func() tea.Msg { return SplashAdvanceMsg{} }
 			}
-			m.notice = "Server login is coming soon. Run standalone to begin."
+			return m, func() tea.Msg { return SplashServerLoginMsg{} }
 		}
 	}
 	return m, nil
@@ -111,6 +111,13 @@ func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 // Resize stores geometry for View. Splash owns no size-sensitive components.
 func (m SplashModel) Resize(w, h int) SplashModel {
 	m.width, m.height = w, h
+	return m
+}
+
+// WithNotice sets the inline notice line (used by the app to surface login
+// results while staying on the splash).
+func (m SplashModel) WithNotice(text string) SplashModel {
+	m.notice = text
 	return m
 }
 
@@ -123,7 +130,7 @@ func (m SplashModel) View() string {
 		return ""
 	}
 	header := dontPanicHeader(m.width, m.height-footerRows-4)
-	choices := []string{"  Run standalone", "  Log in to server — coming soon"}
+	choices := []string{"  Run standalone", "  Log in to server"}
 	choices[m.selected] = "› " + strings.TrimSpace(choices[m.selected])
 
 	block := lipgloss.JoinVertical(lipgloss.Center,

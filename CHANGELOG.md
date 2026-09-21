@@ -1,5 +1,13 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — client↔server link: login, web UI, settings defaults, deploy loop
+- Server: phase-1 auth replaces the static bearer token — POST /api/v1/auth/login takes the client-supplied username + shared password ($DEEPTHOUGHT_SERVER_PASSWORD / --password-file) and issues an in-memory session token (24h; restart clears); every /api route requires it; health stays open; no password configured → /api 503, never silently open. The password literal lives only in the cluster secret and the user's local config — never in this public repo.
+- Server: embedded web UI at / (go:embed, no framework): login form → dashboard with service info and the settings-defaults editor. New GET/PUT /api/v1/settings/defaults store the server settings layer at <dataDir>/settings-defaults.json with credential keys rejected on PUT (mirrors config.containsCredential).
+- CLI: new optional "server" {url, user, password} config section (password supports "$ENV_VAR" indirection like provider keys); the splash's "Log in to server" is functional — async login via app/server_login.go, session held on the root model, server defaults fetched (consumption into the live layered resolver follows as its own change). Standalone mode unchanged.
+- Ops: scripts/deploy-server.sh rolls the cluster to a built tag by editing 57-deepthought.yaml on aleph1 (Docker Hub tag existence checked first; deepthought namespace only); k8s/deployment.yaml reference copy now sources DEEPTHOUGHT_SERVER_PASSWORD from a deepthought-server-auth secret.
+- Files: internal/server/{http,auth,settings,web/*} + tests; cmd/deepthought-server/main.go; internal/config/config.go (ServerConfig); internal/app/{model.go,server_login.go}; internal/tui/{splash.go,nav.go,reliability_test.go}; k8s/deployment.yaml; scripts/deploy-server.sh; docs/SERVER.md, README.md; this entry.
+- Verification: Slurm CPU jobs 1102322/1102330 (def-rahimk): go vet ./... clean, go test ./... green (one splash test updated to the new functional-login contract), race checks on server/app/tui/config. End-to-end (login round-trip, UI, settings PUT rejection, 401/503 gates) covered by the new server tests; cluster verification follows the deploy.
+
 ## 2026-09-21 · deepthought-cli — accept Docker username from vars or secrets
 - The login failure was configuration, not code: DOCKER_HUB_USER was set as a repository Variable while the workflow read secrets.DOCKER_HUB_USER (empty on the runner). Read the username from vars.DOCKER_HUB_USER falling back to secrets.DOCKER_HUB_USER; DOCKER_HUB_TOKEN remains strictly a secret (variables are plaintext).
 - Files: .github/workflows/build-server.yml; this entry.

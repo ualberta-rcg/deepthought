@@ -28,6 +28,10 @@ const (
 // Settings at the add-provider area. The splash itself stays dumb.
 type SplashAdvanceMsg struct{}
 
+// SplashServerLoginMsg is emitted when the user picks "Log in to server" on
+// the splash. The root runs the async login (app.ServerLoginResultMsg).
+type SplashServerLoginMsg struct{}
+
 // ScreenChangeMsg requests a screen transition. Produced by Goto; consumed by
 // the root.
 type ScreenChangeMsg struct{ To Screen }
