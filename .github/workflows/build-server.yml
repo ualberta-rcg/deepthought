@@ -29,6 +29,41 @@ on:
         default: 'latest'
 
 jobs:
+  test-store:
+    name: Store tests (MySQL)
+    runs-on: ubuntu-24.04
+
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: root
+          MYSQL_DATABASE: deepthought
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -proot"
+          --health-interval=10s
+          --health-timeout=5s
+          --health-retries=10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: deepthought-cli/go.mod
+
+      - name: Run MySQL store tests
+        env:
+          DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought?multiStatements=true
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          go test ./internal/history -run TestMySQL -v -count=1
+
   build-and-push:
     name: Build & Push Server
     runs-on: ubuntu-24.04

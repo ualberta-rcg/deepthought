@@ -44,6 +44,12 @@ spec:
                   name: deepthought-server-auth
                   key: password
                   optional: true
+            - name: DEEPTHOUGHT_MYSQL_DSN
+              valueFrom:
+                secretKeyRef:
+                  name: deepthought-mysql
+                  key: dsn
+                  optional: true
           resources:
             requests:
               cpu: 100m

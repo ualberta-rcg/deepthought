@@ -1,0 +1,106 @@
+# deepthought MySQL — multi-user server database (reference copy; the deployed
+# source of truth is 57-deepthought.yaml's sibling manifest 58-deepthought-mysql.yaml
+# on the aleph1 control-plane). Follows the house PVC pattern
+# (aleph/models/qwen38-27b/pvc.yaml): the nfs-models provisioner carves a fresh
+# subdirectory for this claim — no existing PVC or the models export is touched.
+#
+# Secrets are created imperatively on the cluster, never committed:
+#   kubectl -n deepthought create secret generic deepthought-mysql-root \
+#     --from-literal=password='<root password>'
+#   kubectl -n deepthought create secret generic deepthought-mysql \
+#     --from-literal=password='<app password>' \
+#     --from-literal=dsn='deepthought:<app password>@tcp(deepthought-mysql:3306)/deepthought?multiStatements=true'
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: deepthought-mysql
+  namespace: deepthought
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: nfs-models
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deepthought-mysql
+  namespace: deepthought
+  labels:
+    app: deepthought-mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: deepthought-mysql
+  template:
+    metadata:
+      labels:
+        app: deepthought-mysql
+    spec:
+      # Control-planes only (same rule as the server; no taints on aleph1-3).
+      nodeSelector:
+        node-role.kubernetes.io/control-plane: "true"
+      containers:
+        - name: mysql
+          image: mysql:8.4
+          env:
+            - name: MYSQL_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: deepthought-mysql-root
+                  key: password
+            - name: MYSQL_DATABASE
+              value: deepthought
+            - name: MYSQL_USER
+              value: deepthought
+            - name: MYSQL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: deepthought-mysql
+                  key: password
+          ports:
+            - containerPort: 3306
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/mysql
+          resources:
+            requests:
+              cpu: 250m
+              memory: 512Mi
+            limits:
+              cpu: "2"
+              memory: 2Gi
+          readinessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-proot", "-h", "127.0.0.1"]
+            periodSeconds: 10
+            failureThreshold: 12
+          livenessProbe:
+            exec:
+              command: ["mysqladmin", "ping", "-proot", "-h", "127.0.0.1"]
+            initialDelaySeconds: 120
+            periodSeconds: 15
+            failureThreshold: 6
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: deepthought-mysql
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deepthought-mysql
+  namespace: deepthought
+  labels:
+    app: deepthought-mysql
+spec:
+  type: ClusterIP
+  selector:
+    app: deepthought-mysql
+  ports:
+    - port: 3306
+      targetPort: 3306
+      protocol: TCP

@@ -32,6 +32,11 @@ type Settings struct {
 	breakers map[string]*providerBreaker
 	revision uint64
 	diskHash [32]byte
+
+	// OnSave, when set, fires (async, goroutine) after a successful local
+	// persist — the server-login hook that pushes edits to the roving
+	// settings document.
+	OnSave func(config.File)
 }
 
 type providerBreaker struct {
@@ -107,7 +112,17 @@ func cloneFile(f config.File) config.File {
 func (s *Settings) Save(f config.File) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return s.saveLocked(f)
+	if err := s.saveLocked(f); err != nil {
+		return err
+	}
+	// OnSave (set after a server login) lets the root push local edits to the
+	// roving settings document. Invoked outside the lock semantics above but
+	// synchronously after a successful persist; implementations must not call
+	// back into Save.
+	if s.OnSave != nil {
+		go s.OnSave(f)
+	}
+	return nil
 }
 
 func (s *Settings) saveLocked(f config.File) error {

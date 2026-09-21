@@ -4,8 +4,11 @@
 package server
 
 import (
+	"context"
+	"database/sql"
 	"embed"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"io/fs"
@@ -14,6 +17,7 @@ import (
 	"time"
 
 	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/history"
 	"deepthought-cli/internal/skills"
 )
 
@@ -31,6 +35,10 @@ type API struct {
 	// Sessions issues and validates login tokens.
 	Sessions *SessionStore
 	Version  string
+	// DB is the shared MySQL pool; nil disables the DB-backed endpoints
+	// (user settings, chats) with a 503.
+	DB   *sql.DB
+	Users *history.UserStore
 }
 
 // NewMux builds the full route table.
@@ -43,9 +51,13 @@ func NewMux(a *API) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/crons", a.auth(a.crons))
 	mux.HandleFunc("GET /api/v1/settings/defaults", a.auth(a.getDefaults))
 	mux.HandleFunc("PUT /api/v1/settings/defaults", a.auth(a.putDefaults))
+	mux.HandleFunc("GET /api/v1/user/settings", a.auth(a.getUserSettings))
+	mux.HandleFunc("PUT /api/v1/user/settings", a.auth(a.putUserSettings))
+	mux.HandleFunc("GET /api/v1/chats", a.auth(a.listChats))
+	mux.HandleFunc("GET /api/v1/chats/{id}", a.auth(a.getChat))
+	mux.HandleFunc("PUT /api/v1/chats/{id}", a.auth(a.putChat))
 	mux.HandleFunc("GET /api/v1/jobs", a.placeholder("jobs"))
 	mux.HandleFunc("GET /api/v1/experiments", a.placeholder("experiments"))
-	mux.HandleFunc("GET /api/v1/chats", a.placeholder("chats"))
 	mux.HandleFunc("POST /api/v1/admin/reload", a.auth(a.reload))
 	a.serveUI(mux)
 	return mux
@@ -115,10 +127,134 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "session issue failed"})
 		return
 	}
+	// Record the login (first login creates the user row — the roving
+	// settings and chats key off this identity).
+	if a.Users != nil {
+		if err := a.Users.UpsertLogin(sanitizeUserID(req.User), req.User); err != nil {
+			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "user record: " + err.Error()})
+			return
+		}
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"token": token,
 		"user":  req.User,
 	})
+}
+
+// getUserSettings returns the caller's roving settings document.
+func (a *API) getUserSettings(w http.ResponseWriter, r *http.Request) {
+	if a.Users == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": errDBNotConfigured.Error()})
+		return
+	}
+	got, err := a.Users.GetSettings(sanitizeUserID(SessionUser(r)))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusOK, map[string]any{"settings": nil, "revision": 0})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, got)
+}
+
+// putUserSettings stores the caller's settings with optimistic concurrency:
+// the body carries the revision it was based on; a mismatch is a 409.
+func (a *API) putUserSettings(w http.ResponseWriter, r *http.Request) {
+	if a.Users == nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": errDBNotConfigured.Error()})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request"})
+		return
+	}
+	var req struct {
+		Settings map[string]any `json:"settings"`
+		Revision int64          `json:"revision"`
+	}
+	if err := json.Unmarshal(body, &req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "body must be {settings, revision}"})
+		return
+	}
+	rev, err := a.Users.SetSettings(sanitizeUserID(SessionUser(r)), req.Settings, req.Revision)
+	if errors.Is(err, history.ErrSettingsRevision) {
+		writeJSON(w, http.StatusConflict, map[string]any{"error": "settings changed on the server; pull before push"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "revision": rev})
+}
+
+// listChats enumerates the caller's collectives (the Continue-screen feed).
+func (a *API) listChats(w http.ResponseWriter, r *http.Request) {
+	store, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	sums, err := store.ListCollectives()
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, sums)
+}
+
+// getChat returns one full collective graph.
+func (a *API) getChat(w http.ResponseWriter, r *http.Request) {
+	store, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	coll, err := store.GetCollective(r.PathValue("id"))
+	if errors.Is(err, sql.ErrNoRows) {
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "no such chat"})
+		return
+	}
+	if err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, coll)
+}
+
+// putChat upserts a full collective graph (per-turn coarse sync; the
+// app-generated IDs make this idempotent).
+func (a *API) putChat(w http.ResponseWriter, r *http.Request) {
+	store, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	if r.PathValue("id") == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "chat id required"})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 64<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request"})
+		return
+	}
+	var coll history.Collective
+	if err := json.Unmarshal(body, &coll); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "body must be a collective graph"})
+		return
+	}
+	if coll.ID == "" {
+		coll.ID = r.PathValue("id")
+	}
+	if err := store.SaveCollective(&coll); err != nil {
+		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "id": coll.ID})
 }
 
 // crons serves the local cron tracking registry — the one real data endpoint
@@ -192,9 +328,10 @@ func (a *API) placeholder(name string) http.HandlerFunc {
 	}
 }
 
-// auth enforces the session token. Health endpoints stay open (probes inside
-// the cluster); everything under /api requires a session. No password
-// configured → 503, never silently open.
+// auth enforces the session token and injects the session (user identity)
+// into the request context. Health endpoints stay open (probes inside the
+// cluster); everything under /api requires a session. No password configured
+// → 503, never silently open.
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if a.Password == "" {
@@ -209,12 +346,13 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return
 		}
-		if _, ok := a.Sessions.Valid(got); !ok {
+		sess, ok := a.Sessions.Valid(got)
+		if !ok {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="deepthought"`)
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
 			return
 		}
-		next(w, r)
+		next(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess)))
 	}
 }
 

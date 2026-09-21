@@ -50,6 +50,17 @@ func main() {
 		Sessions: dserver.NewSessionStore(24 * time.Hour),
 		Version:  version(),
 	}
+	if dsn := os.Getenv("DEEPTHOUGHT_MYSQL_DSN"); dsn != "" {
+		db, users, err := dserver.OpenDB(dsn)
+		if err != nil {
+			log.Fatalf("%v", err)
+		}
+		defer db.Close()
+		api.DB, api.Users = db, users
+		log.Print("database: connected (schema ensured)")
+	} else {
+		log.Print("database: not configured (user settings + chats endpoints 503 — set DEEPTHOUGHT_MYSQL_DSN)")
+	}
 	httpSrv := &http.Server{
 		Addr:              *addrFlag,
 		Handler:           logRequests(dserver.NewMux(api)),

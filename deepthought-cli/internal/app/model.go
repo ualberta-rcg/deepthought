@@ -89,6 +89,7 @@ type RootModel struct {
 	clusterGeneration uint64
 	splash            tui.SplashModel
 	server            *ServerSession // non-nil after a successful splash server login
+	wasBusy           bool           // last observed chat busy state (turn-end push edge)
 	chat              tui.ChatModel
 	continue_         tui.ContinueModel
 	settings          tui.SettingsModel
@@ -341,6 +342,18 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	next, cmd := m.update(msg)
 	root := next.(RootModel)
+	// Turn-end server sync: on the busy→idle edge, push the finished
+	// collective to the logged-in server (async; failures arrive as
+	// serverSyncResultMsg and surface as a chat notice, never a block).
+	if root.server != nil {
+		busy := root.chat.Busy()
+		if root.wasBusy && !busy {
+			if id := root.chat.CollectiveID(); id != "" {
+				cmd = tea.Batch(cmd, pushChatCmd(root.deps.ChatSource, root.server, id))
+			}
+		}
+		root.wasBusy = busy
+	}
 	if root.deps.Publish != nil {
 		view := root.View()
 		frame := RunnerFrame{View: view.Content, CollectiveID: root.chat.CollectiveID(), Busy: root.chat.Busy(), ApprovalID: root.chat.ApprovalID()}
@@ -486,7 +499,22 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.server = msg.Session
 		m.splash = m.splash.WithNotice("")
-		return m.advanceFromSplash()
+		// Local settings edits push back to the roving document (fire-and-
+		// forget; chat-sync errors surface via serverSyncResultMsg).
+		if m.deps.Live != nil {
+			sess := m.server
+			m.deps.Live.OnSave = func(config.File) { _, _ = sess.pushUserSettings(fileToMap(m.deps.Live.Snapshot()), sess.Revision) }
+		}
+		next, cmd := m.advanceFromSplash()
+		if s := msg.Session.SyncNotice; s != "" && next.screen == tui.ScreenChat {
+			next.chat = next.chat.Notice(s)
+		}
+		return next, cmd
+	case serverSyncResultMsg:
+		if msg.Err != "" {
+			m.chat = m.chat.Notice("⚠ " + msg.Err)
+		}
+		return m, nil
 	case tui.BackMsg:
 		// esc = back: pop the screen history. At the root (chat) it's a no-op.
 		if n := len(m.screenStack); n > 0 {
