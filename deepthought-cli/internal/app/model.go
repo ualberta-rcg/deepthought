@@ -123,7 +123,7 @@ func NewRootModel(d Deps) RootModel {
 		clock:     time.Now(),
 		sessionID: sid,
 		env:       env,
-		sidebar:   tui.SidebarData{Env: env},
+		sidebar:   tui.SidebarData{Env: env, Skills: skillNames(d.Skills)},
 		splash:    tui.NewSplashModel(splashBoot(d.Live), sid),
 		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills).SetEnv(env),
 		continue_: tui.NewContinueModel(d.ChatSource),
@@ -911,6 +911,18 @@ func newSessionID() string {
 		return fmt.Sprintf("sess_%d", time.Now().UnixNano())
 	}
 	return fmt.Sprintf("sess_%s", hex.EncodeToString(b))
+}
+
+// skillNames pulls the pack names out of the compact skills listing (one
+// "name: description" per line).
+func skillNames(listing string) []string {
+	var out []string
+	for _, line := range strings.Split(listing, "\n") {
+		if name, _, ok := strings.Cut(line, ":"); ok && strings.TrimSpace(name) != "" {
+			out = append(out, strings.TrimSpace(name))
+		}
+	}
+	return out
 }
 
 // activeModelOf resolves the running (agentic, falling back to chat) model

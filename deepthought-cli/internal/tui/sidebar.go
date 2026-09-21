@@ -30,13 +30,14 @@ func RenderSidebarGutter(h int) string {
 type SidebarData struct {
 	Clock         time.Time
 	Cluster       slurm.ClusterSnapshot
-	ClusterOK     bool    // false → render the Host section instead
-	Env           EnvInfo // host facts for non-Slurm hosts
+	ClusterOK     bool    // Slurm snapshot gathered?
+	Env           EnvInfo // host descriptor (always rendered)
 	SessionIn     int
 	SessionOut    int
 	LastContext   int
 	ContextWindow int
 	Providers     []ProviderRow
+	Skills        []string // discovered skill pack names
 }
 
 // RenderSidebar paints the compact live column: cluster one-liner + GPU bar,
@@ -49,25 +50,52 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	}
 	var secs []string
 
-	// » Cluster (live when polled) or » Host (no Slurm here)
+	// » Host — always (the descriptor's compact render).
+	e := d.Env
+	hostRows := []string{clipLine(" "+orDefault(e.ShortName, e.Host), w)}
+	if e.OSName != "" {
+		hostRows = append(hostRows, clipLine(" "+e.OSName, w))
+	}
+	if e.Kernel != "" {
+		spec := e.Kernel
+		if e.Arch != "" {
+			spec += " " + e.Arch
+		}
+		if e.CPUs > 0 {
+			spec += fmt.Sprintf(" · %dc", e.CPUs)
+		}
+		hostRows = append(hostRows, clipLine(" "+spec, w))
+	}
+	secs = append(secs, Section{Title: "Host", Rows: hostRows}.Render()...)
+
+	// » Cluster — live when polled.
 	if d.ClusterOK && d.Cluster.GPUs > 0 {
 		frac := frac01(float64(d.Cluster.GPUsUsed), float64(d.Cluster.GPUs))
 		gpu := fmt.Sprintf(" gpus  %s %d%%", healthBar(frac, w-14), fracPct(frac))
+		rows := []string{clipLine(gpu, w)}
+		if typ := d.Cluster.GPUType; typ != "" {
+			rows = append(rows, clipLine(fmt.Sprintf(" %s · %d run", typ, d.Cluster.JobsRunning), w))
+		}
 		secs = append(secs, Section{
 			Title: "Cluster",
 			Extra: fmt.Sprintf("%d run", d.Cluster.JobsRunning),
-			Rows:  []string{clipLine(gpu, w)},
+			Rows:  rows,
 		}.Render()...)
-	} else if e := d.Env; e.OSName != "" || e.Kernel != "" {
-		secs = append(secs, Section{
-			Title: "Host",
-			Rows:  []string{clipLine(" "+orDefault(e.OSName, e.ShortName), w)},
-		}.Render()...)
-	} else {
-		secs = append(secs, Section{
-			Title: "Cluster",
-			Rows:  []string{dimNote("  (cluster n/a)")},
-		}.Render()...)
+	}
+
+	// » Fairshare — when Slurm reports rows.
+	if len(d.Cluster.FairshareRows) > 0 {
+		rows := []string{}
+		for _, r := range d.Cluster.FairshareRows {
+			label, p := slurm.FairshareTier(r.Fairshare)
+			col, bold := tierColor(label)
+			rows = append(rows, clipLine(fmt.Sprintf(" %s %s %s %s",
+				truncatePad(r.Account, 10),
+				barFill(p, 10, col, bold),
+				lipgloss.NewStyle().Foreground(col).Bold(bold).Render(truncatePad(label, 9)),
+				fmt.Sprintf("%.2f", r.Fairshare)), w))
+		}
+		secs = append(secs, Section{Title: "Fairshare", Rows: rows}.Render()...)
 	}
 
 	// » Your jobs
@@ -80,8 +108,17 @@ func RenderSidebar(d SidebarData, w, h int) string {
 			np++
 		}
 	}
-	jobsRow := fmt.Sprintf("  %d running · %d pending", nr, np)
+	jobsRow := fmt.Sprintf(" %d running · %d pending", nr, np)
 	secs = append(secs, Section{Title: "Your jobs", Rows: []string{clipLine(jobsRow, w)}}.Render()...)
+
+	// » Your dirs — one compact line per filesystem when known.
+	if len(d.Cluster.StorageRows) > 0 {
+		rows := []string{}
+		for _, r := range d.Cluster.StorageRows {
+			rows = append(rows, clipLine(fmt.Sprintf(" %s %s/%s %d%%", truncatePad(r.Label, 8), r.Used, r.Size, r.Pct), w))
+		}
+		secs = append(secs, Section{Title: "Your dirs", Rows: rows}.Render()...)
+	}
 
 	// » Context
 	ctx := "  " + contextMeter(d.LastContext, d.ContextWindow)
@@ -96,6 +133,15 @@ func RenderSidebar(d SidebarData, w, h int) string {
 		prow += p.Name + " " + stateChip(p.State)
 	}
 	secs = append(secs, Section{Title: "Providers", Rows: []string{clipLine(prow, w)}}.Render()...)
+
+	// » Skills — the discovered packs.
+	if len(d.Skills) > 0 {
+		rows := []string{}
+		for _, name := range d.Skills {
+			rows = append(rows, clipLine(" "+name, w))
+		}
+		secs = append(secs, Section{Title: "Skills", Extra: fmt.Sprintf("%d packs", len(d.Skills)), Rows: rows}.Render()...)
+	}
 
 	secs = append(secs, styleSettingsFoot.Render("  F12 for detail"))
 	// Exactly w wide (the caller budgets w + a 1-col gutter — the old extra

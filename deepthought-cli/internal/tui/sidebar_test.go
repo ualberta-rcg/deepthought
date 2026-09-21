@@ -33,9 +33,12 @@ func TestSidebarRender(t *testing.T) {
 		}
 	}
 
+	// The bare degrade: no cluster data — Host renders with placeholders and
+	// the cluster-only sections are absent (TestSidebarV2Sections covers that
+	// split; here just confirm it renders without the cluster bar).
 	na := RenderSidebar(SidebarData{}, SidebarWidth, 30)
-	if !strings.Contains(stripTestANSI.ReplaceAllString(na, ""), "(cluster n/a)") {
-		t.Error("no-cluster degrade missing")
+	if plain := stripTestANSI.ReplaceAllString(na, ""); strings.Contains(plain, "gpus") {
+		t.Errorf("bare sidebar should not render a cluster bar: %q", plain[:80])
 	}
 }
 
@@ -114,6 +117,35 @@ func TestSidebarJoinExactRectangle(t *testing.T) {
 	for i, ln := range lines {
 		if got := lipgloss.Width(ln); got != w {
 			t.Errorf("join line %d width %d, want exactly %d", i, got, w)
+		}
+	}
+}
+
+// Sidebar v2: host always, fairshare gated on rows, dirs, and skills sections.
+func TestSidebarV2Sections(t *testing.T) {
+	snap := testSnapshot()
+	d := SidebarData{
+		Cluster: snap, ClusterOK: true,
+		Env:         EnvInfo{ShortName: "login1", OSName: "Ubuntu 22.04", Kernel: "5.15", Arch: "amd64", CPUs: 8},
+		LastContext: 128000, ContextWindow: 310000,
+		Providers: []ProviderRow{{Name: "ks", State: "ok"}},
+		Skills:    []string{"alliance-slurm", "alliance-cvmfs"},
+	}
+	v := RenderSidebar(d, SidebarWidth, 60)
+	plain := stripTestANSI.ReplaceAllString(v, "")
+	for _, want := range []string{"Host", "login1", "Ubuntu 22.04", "Cluster", "Fairshare", "ahead", "Your jobs", "Your dirs", "scratch", "Context", "Providers", "Skills", "alliance-slurm"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("sidebar v2 missing %q:\n%s", want, plain)
+		}
+	}
+	// No Slurm, no skills: Host still renders; fairshare/dirs/skills absent.
+	plain2 := stripTestANSI.ReplaceAllString(RenderSidebar(SidebarData{Env: d.Env}, SidebarWidth, 60), "")
+	if !strings.Contains(plain2, "login1") {
+		t.Error("bare sidebar lost the Host section")
+	}
+	for _, absent := range []string{"Fairshare", "Your dirs", "Skills"} {
+		if strings.Contains(plain2, absent) {
+			t.Errorf("bare sidebar should not show %q", absent)
 		}
 	}
 }

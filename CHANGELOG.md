@@ -18,6 +18,21 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — sidebar v2: host always, fairshare + dirs + skills sections
+
+The live column now carries the full picture, not just cluster+context:
+- **Host (always):** short name, OS pretty name, kernel · arch · cpu-count — the host
+  descriptor's compact render (no more "(cluster n/a)" placeholder; the Host section is
+  the floor).
+- **Cluster** (gpus bar + GPU type when polled), **Fairshare** (per-account tier bar +
+  value, when rows exist — gated like the Status page), **Your jobs**, **Your dirs**
+  (compact per-filesystem line), **Context** meter, **Providers** chips, and a new
+  **Skills** section (the discovered pack names + count), footer "F12 for detail".
+- Root feeds Skills once from the skills listing (`skillNames` parses the pack names).
+- Files: internal/tui/sidebar.go + sidebar_test.go, internal/app/model.go.
+- Verified: TestSidebarV2Sections (full set renders; bare mode shows Host only, no
+  fairshare/dirs/skills), the exact-rectangle join test still green; full suite (20 pkgs).
+
 ## 2026-09-20 · deepthought-cli — the one-line sidebar fixed (vertical gutter); F1 = Settings
 
 - **The sidebar bug:** `RenderSidebarGutter` repeated "│" *horizontally* — one giant row
