@@ -60,9 +60,21 @@ jobs:
         env:
           DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd deepthought-cli
-          go test ./internal/history -run TestMySQL -v -count=1
+          # Failures are echoed into the job summary, which is publicly
+          # viewable (the run log requires auth).
+          go test ./internal/history -run TestMySQL -v -count=1 2>&1 | tee /tmp/test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            {
+              echo "## MySQL test failures"
+              echo '```'
+              grep -E "FAIL|--- FAIL|Error|error|panic" /tmp/test.log | head -40
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit "$status"
+          fi
 
   build-and-push:
     name: Build & Push Server
