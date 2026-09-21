@@ -6,8 +6,9 @@ Two products, one repo:
   over SSH. `ssh` in, land on a splash, and drive an LLM agent that can write and
   run code, operate HPC clusters (Slurm, modules, schedulers), and help with
   scientific work — every fs/shell/network action gated by a permission model.
-- **`deepthought-server/`** — product scaffold; the HTTP skeleton lives under
-  `deepthought-cli/cmd/deepthought-server` in the shared Go module.
+- **`deepthought-server/`** — the server-side product: its own Go module (zero
+  CLI dependencies — the Borg-graph wire contract is deliberately copied into
+  `deepthought-server/graph/`), MySQL-backed, own Dockerfile + CI lane.
 
 The CLI runs standalone. `--towel` keeps a local session running across terminal
 disconnects; `ls` and `attach <id>` reconnect. `/jobs` tracks durable Slurm

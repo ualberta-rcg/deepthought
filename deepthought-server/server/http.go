@@ -16,10 +16,9 @@ import (
 	"strings"
 	"time"
 
-	"deepthought-cli/internal/config"
-	"deepthought-cli/internal/history"
-	"deepthought-cli/internal/server/store"
-	"deepthought-cli/internal/skills"
+	"deepthought-server/graph"
+
+	"deepthought-server/store"
 )
 
 //go:embed web
@@ -243,7 +242,7 @@ func (a *API) putChat(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request"})
 		return
 	}
-	var coll history.Collective
+	var coll graph.Collective
 	if err := json.Unmarshal(body, &coll); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "body must be a collective graph"})
 		return
@@ -258,15 +257,14 @@ func (a *API) putChat(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "id": coll.ID})
 }
 
-// crons serves the local cron tracking registry — the one real data endpoint
-// in the skeleton, proving the fleet-aggregation story end to end.
+// crons is a documented placeholder: the CLI-host registry read it replaced
+// was a shared-binary artifact. Fleet cron aggregation moves onto the DB
+// records table (per-user) in a later pass.
 func (a *API) crons(w http.ResponseWriter, r *http.Request) {
-	reg, err := LoadCronRegistry(a.DataDir)
-	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
-		return
-	}
-	writeJSON(w, http.StatusOK, reg)
+	writeJSON(w, http.StatusNotImplemented, map[string]any{
+		"error":  "not implemented yet",
+		"future": "crons aggregation moves onto the server database (docs/SERVER.md)",
+	})
 }
 
 // getDefaults serves the server settings layer.
@@ -298,26 +296,14 @@ func (a *API) putDefaults(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{"status": "saved"})
 }
 
-// reload genuinely re-reads the config and the skills packs — the HTTP form
-// of live editing (SIGHUP is the signal form). Returns what it found.
+// reload reports server state. (The config/skills re-read it performed in
+// the shared-binary era read the CLI host's files; this server owns only its
+// database + settings layers, which are read per-request.)
 func (a *API) reload(w http.ResponseWriter, r *http.Request) {
-	out := map[string]any{"status": "reloaded"}
-	if path, err := config.DefaultPath(); err == nil {
-		if cfg, err := config.Load(path); err == nil {
-			out["config"] = map[string]any{
-				"providers": len(cfg.File.Providers),
-				"models":    len(cfg.File.Models),
-			}
-		} else {
-			out["config"] = map[string]any{"error": err.Error()}
-		}
-	}
-	if list, err := skills.NewLoader().Load("."); err == nil {
-		out["skills"] = len(list)
-	} else {
-		out["skills"] = 0
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status": "reloaded",
+		"db":     a.DB != nil,
+	})
 }
 
 func (a *API) placeholder(name string) http.HandlerFunc {

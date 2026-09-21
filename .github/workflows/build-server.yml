@@ -1,22 +1,18 @@
 name: Build & Push Server Image
 
-# Publishes the deepthought-server image to Docker Hub (default:
-# rkhoja/deepthought-server). Same shape as the aleph house pattern
-# (deploy-gateway.yml): path-filtered push to main + workflow_dispatch;
-# auth via DOCKER_HUB_USER / DOCKER_HUB_TOKEN secrets, optional
-# DOCKER_HUB_REPO secret or repository Variable override.
-#
-# Server-only: the Go compile happens inside docker build
-# (deepthought-cli/Dockerfile, multi-stage → distroless). Deployment does NO
-# testing — the code was tested when it was built (build-cli.yml); this lane
-# only produces and publishes the image.
+# The server's own lane — fully separate from the CLI pipeline; triggered
+# only by deepthought-server/ changes (the module depends on the CLI in NO
+# way). Publishes to Docker Hub (default: rkhoja/deepthought-server), same
+# shape as the aleph house pattern (deploy-gateway.yml). Deployment does NO
+# testing — checkout, login, docker build (the self-contained
+# deepthought-server/ context, multi-stage to distroless), smoke, push.
 
 on:
   push:
     branches:
       - main
     paths:
-      - 'deepthought-cli/**'
+      - 'deepthought-server/**'
       - '.github/workflows/build-server.yml'
   workflow_dispatch:
     inputs:
@@ -103,7 +99,7 @@ jobs:
           docker build \
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" \
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}" \
-            deepthought-cli
+            deepthought-server
 
       - name: Verify image candidate
         run: |

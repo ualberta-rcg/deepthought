@@ -13,7 +13,7 @@ import (
 	"regexp"
 	"strings"
 
-	"deepthought-cli/internal/server/store"
+	"deepthought-server/store"
 )
 
 // errDBNotConfigured is returned by DB-backed endpoints when no DSN was given.

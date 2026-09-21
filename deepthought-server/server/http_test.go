@@ -7,8 +7,6 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
-
-	"deepthought-cli/internal/cron"
 )
 
 func testAPI(password, dataDir string) (*API, *httptest.Server) {
@@ -130,28 +128,6 @@ func TestDBEndpoints503WithoutDSN(t *testing.T) {
 		if err != nil || resp.StatusCode != 503 {
 			t.Errorf("%s = %v %v, want 503", path, err, resp)
 		}
-	}
-}
-
-func TestCronsEndpointServesRegistry(t *testing.T) {
-	dir := t.TempDir()
-	// Seed a registry through the cron package's own save path.
-	reg, _ := LoadCronRegistry(dir)
-	reg.Entries = append(reg.Entries, cron.EntryRecord{Hash: "abc123", Schedule: "0 9 * * *", Command: "run.sh"})
-	if err := reg.Save(dir + "/cron"); err != nil {
-		t.Fatal(err)
-	}
-	_, ts := testAPI("pw", dir)
-	defer ts.Close()
-
-	resp, err := authedGet(ts, "/api/v1/crons", loginSession(t, ts, "ada", "pw"))
-	if err != nil || resp.StatusCode != 200 {
-		t.Fatalf("crons = %v %v, want 200", err, resp)
-	}
-	var got map[string]any
-	_ = json.NewDecoder(resp.Body).Decode(&got)
-	if got["host"] == nil {
-		t.Error("registry body missing host field")
 	}
 }
 

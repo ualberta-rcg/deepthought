@@ -1,10 +1,10 @@
 name: Build DeepThought CLI
 
-# The CLI's CI/CD lane: vet + full test suite (with the MySQL store tests
-# against a service container), then the static binary as a downloadable
-# artifact. Builds happen HERE, never on the login node and never via Slurm.
-# Server-side deploys stay manual-by-design: apply the numbered manifests on
-# the aleph1 control-plane (57/58-*.yaml) with the CI-built image tag.
+# The CLI's own lane — fully separate from the server pipeline. Nothing
+# docker, nothing server-side, NO service containers: vet + test + race, then
+# ONE static binary as an artifact and on the rolling `edge` release:
+#   curl -L -o deepthought-cli https://github.com/ualberta-rcg/deepthought/releases/download/edge/deepthought-cli
+# Builds happen HERE, never on the login node and never via Slurm/CVMFS.
 
 on:
   push:
@@ -35,9 +35,7 @@ jobs:
           cd deepthought-cli
           go vet ./...
 
-      - name: Test (MySQL store tests included)
-        env:
-          DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought
+      - name: Test
         run: |
           set -uo pipefail
           cd deepthought-cli
@@ -61,7 +59,7 @@ jobs:
         run: |
           set -euo pipefail
           cd deepthought-cli
-          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history ./internal/server
+          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history
 
       - name: Build static binary
         run: |

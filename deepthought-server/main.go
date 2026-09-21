@@ -13,12 +13,12 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"strings"
 	"syscall"
 	"time"
 
-	"deepthought-cli/internal/config"
-	dserver "deepthought-cli/internal/server"
+	dserver "deepthought-server/server"
 )
 
 var (
@@ -32,11 +32,14 @@ func main() {
 
 	dataDir := *dataFlag
 	if dataDir == "" {
-		if d, err := config.DataDir(); err == nil {
-			dataDir = d
-		} else {
+		dataDir = os.Getenv("DEEPTHOUGHT_DATA_DIR")
+	}
+	if dataDir == "" {
+		home, err := os.UserHomeDir()
+		if err != nil {
 			log.Fatalf("data dir: %v", err)
 		}
+		dataDir = filepath.Join(home, ".deepthought-server")
 	}
 	if err := dserver.EnsureDirs(dataDir); err != nil {
 		log.Fatalf("data dirs: %v", err)

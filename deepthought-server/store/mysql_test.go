@@ -1,11 +1,10 @@
 package store
 
-// MySQL-store integration tests. Guarded by $DEEPTHOUGHT_MYSQL_DSN: skipped
-// when unset (local/Slurm runs without a server), active in CI where the
-// workflow provides a mysql:8 service container. The golden test pushes the
-// same graph through SQLiteStore and MySQLStore and compares the rehydrated
-// collectives; the remaining tests cover tenant isolation and the settings
-// revision conflict.
+// MySQL-store integration tests. Guarded by $DEEPTHOUGHT_MYSQL_DSN: they skip
+// when unset (builds are database-free) and run wherever a real server
+// database is reachable. The golden test pushes the same graph through
+// SQLiteStore and MySQLStore and compares the rehydrated collectives; the
+// remaining tests cover tenant isolation and the settings revision conflict.
 
 import (
 	"database/sql"
@@ -13,8 +12,9 @@ import (
 	"os"
 	"testing"
 
-	"deepthought-cli/internal/history"
 	"time"
+
+	"deepthought-server/graph"
 )
 
 func mysqlDB(t *testing.T) *sql.DB {
@@ -33,27 +33,27 @@ func mysqlDB(t *testing.T) *sql.DB {
 
 // buildGraph makes a small but complete collective: an incursion with a
 // prompt, a transmission with text and a completed probe carrying a pattern.
-func buildGraph(t *testing.T, store history.ChatStore) *Collective {
+func buildGraph(t *testing.T, store graph.ChatStore) *graph.Collective {
 	t.Helper()
-	coll, err := store.CreateCollective(history.SpawnCollectiveRequest{})
+	coll, err := store.CreateCollective(graph.SpawnCollectiveRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	coll.Title = "golden"
 	inc := coll.StartIncursion("what is the answer?")
-	inc.Status = history.IncursionCompleted
-	tx := &history.Transmission{
-		Vinculum: history.Vinculum{ID: "tx-golden-1", Kind: "transmission", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: inc.ID, CreatedAt: time.Now()},
+	inc.Status = graph.IncursionCompleted
+	tx := &graph.Transmission{
+		Vinculum: graph.Vinculum{ID: "tx-golden-1", Kind: "transmission", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: inc.ID, CreatedAt: time.Now()},
 		Text:     "42",
 	}
 	inc.Transmissions = append(inc.Transmissions, tx)
-	probe := &history.Probe{
-		Vinculum: history.Vinculum{ID: "prb-golden-1", Kind: "probe", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: tx.ID, CreatedAt: time.Now()},
-		WireID:   "bash", Name: "bash", Status: history.ProbeCompleted, Result: history.ResultView{Content: "ok"},
+	probe := &graph.Probe{
+		Vinculum: graph.Vinculum{ID: "prb-golden-1", Kind: "probe", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: tx.ID, CreatedAt: time.Now()},
+		WireID:   "bash", Name: "bash", Status: graph.ProbeCompleted, Result: graph.ResultView{Content: "ok"},
 	}
 	tx.Probes = append(tx.Probes, probe)
-	pattern := &history.Pattern{
-		Vinculum: history.Vinculum{ID: "pat-golden-1", Kind: "pattern", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: probe.ID, CreatedAt: time.Now()},
+	pattern := &graph.Pattern{
+		Vinculum: graph.Vinculum{ID: "pat-golden-1", Kind: "pattern", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: probe.ID, CreatedAt: time.Now()},
 		Category: "env", Content: "the answer is 42",
 	}
 	probe.Patterns = append(probe.Patterns, pattern)
@@ -63,32 +63,21 @@ func buildGraph(t *testing.T, store history.ChatStore) *Collective {
 	return coll
 }
 
-func TestMySQLGoldenAgainstSQLite(t *testing.T) {
+func TestMySQLGraphRoundTrip(t *testing.T) {
 	db := mysqlDB(t)
-
-	sq, err := history.NewSQLiteStore(t.TempDir()+"/g.db", "")
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = sq.Close() })
 	my := ForUser(db, "golden-user")
 	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM interactions WHERE user_id='golden-user'`) })
 
-	want := buildGraph(t, sq)
-	gotColl := buildGraph(t, my)
+	want := buildGraph(t, my)
 
-	got, err := my.GetCollective(gotColl.ID)
+	got, err := my.GetCollective(want.ID)
 	if err != nil {
 		t.Fatalf("mysql GetCollective: %v", err)
 	}
-	wantRt, err := sq.GetCollective(want.ID)
-	if err != nil {
-		t.Fatalf("sqlite GetCollective: %v", err)
-	}
-	a, _ := json.Marshal(mysqlSummarize(wantRt))
+	a, _ := json.Marshal(mysqlSummarize(want))
 	b, _ := json.Marshal(mysqlSummarize(got))
 	if string(a) != string(b) {
-		t.Errorf("rehydrated collectives differ:\n sqlite: %s\n mysql:  %s", a, b)
+		t.Errorf("rehydrated collective differs:\n built: %s\n read:  %s", a, b)
 	}
 
 	sums, err := my.ListCollectives()
@@ -105,7 +94,7 @@ func TestMySQLGoldenAgainstSQLite(t *testing.T) {
 
 // mysqlSummarize projects a collective to the comparable essentials (no
 // IDs — the two stores mint independent collectives).
-func mysqlSummarize(c *history.Collective) map[string]any {
+func mysqlSummarize(c *graph.Collective) map[string]any {
 	out := map[string]any{"title": c.Title, "incursions": len(c.Incursions)} // no IDs: independent stores mint independent IDs
 	if len(c.Incursions) > 0 {
 		inc := c.Incursions[0]

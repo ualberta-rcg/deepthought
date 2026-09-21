@@ -9,7 +9,12 @@ import (
 	"fmt"
 	"strconv"
 	"time"
+
+	"deepthought-server/graph"
 )
+
+// Record aliases the wire-contract record for the KV API surface.
+type Record = graph.Record
 
 // ClaimRecord atomically journals an operation before its external side effect.
 func (s *MySQLStore) ClaimRecord(kind, id string, value any) (bool, error) {
@@ -77,9 +82,9 @@ func (s *MySQLStore) Records(kind string) ([]Record, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []history.Record
+	var out []Record
 	for rows.Next() {
-		var r history.Record
+		var r Record
 		var stamp string
 		if err := rows.Scan(&r.ID, &r.Data, &stamp); err != nil {
 			return nil, err

@@ -3,8 +3,9 @@ package store
 // MySQLStore is the server-side port of SQLiteStore: the same Borg-graph
 // persistence (one polymorphic `interactions` row per Drone, canonical bodies,
 // legacy_json as the rehydration source) behind the same ChatStore interface,
-// but multi-user and networked. Differences from the SQLite original, all
-// deliberate:
+// but multi-user and networked. This package is SERVER-ONLY — the CLI never
+// imports it (and so never links a SQL driver); clients reach this data over
+// the server's HTTP API. Differences from the SQLite original, all deliberate:
 //
 //   - every table and query is user-scoped (a store is constructed per user
 //     via ForUser; the server gets the user from the login session)
@@ -18,9 +19,7 @@ package store
 //     ordering the queries rely on
 //
 // The users/user_settings tables (login identity + the roving settings layer)
-// live here too, managed by UserStore. This package is SERVER-ONLY: the CLI
-// never imports it (and so never links a SQL driver) — clients reach this
-// data over the server's HTTP API.
+// live here too, managed by UserStore.
 
 import (
 	"context"
@@ -33,12 +32,11 @@ import (
 
 	_ "github.com/go-sql-driver/mysql" // register the driver
 
-	"deepthought-cli/internal/history"
+	"deepthought-server/graph"
 )
 
 // Compile-time guarantee the MySQL store satisfies the same contracts.
-var _ ChatStore = (*MySQLStore)(nil)
-var _ UsageReporter = (*MySQLStore)(nil)
+var _ graph.ChatStore = (*MySQLStore)(nil)
 
 // MySQLStore is one user's view of the shared server database.
 type MySQLStore struct {
@@ -138,22 +136,22 @@ var mysqlSchema = []string{
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 }
 
-func (s *MySQLStore) CreateCollective(req history.SpawnCollectiveRequest) (*Collective, error) {
-	coll := history.NewCollective(req)
+func (s *MySQLStore) CreateCollective(req graph.SpawnCollectiveRequest) (*graph.Collective, error) {
+	coll := graph.NewCollective(req)
 	if err := s.SaveObject(coll); err != nil {
 		return nil, err
 	}
 	return coll, nil
 }
 
-func (s *MySQLStore) SaveObject(obj history.Entity) error {
+func (s *MySQLStore) SaveObject(obj graph.Entity) error {
 	if obj == nil {
 		return errors.New("mysql store: nil object")
 	}
-	if drone, ok := obj.(*Drone); ok {
+	if drone, ok := obj.(*graph.Drone); ok {
 		return s.SaveDrone(context.Background(), drone, nil)
 	}
-	drone, err := history.LegacyEntityDrone(obj)
+	drone, err := graph.WrapEntity(obj)
 	if err != nil {
 		return err
 	}
@@ -164,11 +162,11 @@ func (s *MySQLStore) SaveObject(obj history.Entity) error {
 	return s.SaveDrone(context.Background(), drone, legacy)
 }
 
-func (s *MySQLStore) SaveCollective(coll *Collective) error {
+func (s *MySQLStore) SaveCollective(coll *graph.Collective) error {
 	if coll == nil {
 		return errors.New("mysql store: nil collective")
 	}
-	for _, obj := range history.LoadEntitiesWithPatterns(coll) {
+	for _, obj := range graph.LoadEntitiesWithPatterns(coll) {
 		if err := s.SaveObject(obj); err != nil {
 			return err
 		}
@@ -176,8 +174,8 @@ func (s *MySQLStore) SaveCollective(coll *Collective) error {
 	return nil
 }
 
-// UsageByModel aggregates token usage across THIS USER's history.
-func (s *MySQLStore) UsageByModel() (map[string]history.Cost, error) {
+// UsageByModel aggregates token usage across THIS USER's graph.
+func (s *MySQLStore) UsageByModel() (map[string]graph.Cost, error) {
 	const q = `SELECT
 	  NULLIF(JSON_UNQUOTE(JSON_EXTRACT(producer,'$.model_id')),'') AS mid,
 	  SUM(COALESCE(JSON_EXTRACT(cost,'$.input_tokens'),0)),
@@ -190,7 +188,7 @@ func (s *MySQLStore) UsageByModel() (map[string]history.Cost, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]history.Cost{}
+	out := map[string]graph.Cost{}
 	for rows.Next() {
 		var mid sql.NullString
 		var in, outTokens sql.NullInt64
@@ -198,18 +196,18 @@ func (s *MySQLStore) UsageByModel() (map[string]history.Cost, error) {
 			return nil, err
 		}
 		if mid.Valid && mid.String != "" {
-			out[mid.String] = history.Cost{InputTokens: int(in.Int64), OutputTokens: int(outTokens.Int64)}
+			out[mid.String] = graph.Cost{InputTokens: int(in.Int64), OutputTokens: int(outTokens.Int64)}
 		}
 	}
 	return out, rows.Err()
 }
 
-func (s *MySQLStore) SaveDrone(ctx context.Context, drone *Drone, legacy []byte) error {
+func (s *MySQLStore) SaveDrone(ctx context.Context, drone *graph.Drone, legacy []byte) error {
 	if drone == nil || drone.ID == "" {
 		return errors.New("mysql store: empty drone")
 	}
 	{
-		raw, hash, err := history.CanonicalBody(json.RawMessage(drone.Body))
+		raw, hash, err := graph.CanonicalBody(json.RawMessage(drone.Body))
 		if err != nil {
 			return err
 		}
@@ -280,7 +278,7 @@ ON DUPLICATE KEY UPDATE summaries=new.summaries, links=new.links`,
 // content-addressed bodies table (the MySQL replacement for the filesystem
 // spill). bodyRef is the hex sha256; reads re-verify the hash.
 func (s *MySQLStore) inlineOrStore(body, hash []byte) ([]byte, any, error) {
-	if len(body) <= history.InlineBodyLimit {
+	if len(body) <= graph.InlineBodyLimit {
 		return body, nil, nil
 	}
 	ref := hex.EncodeToString(hash)
@@ -299,9 +297,9 @@ func (s *MySQLStore) readBody(ref string, hash []byte) ([]byte, error) {
 	return body, nil
 }
 
-func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
+func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*graph.Drone, error) {
 	row := s.db.QueryRowContext(ctx, `SELECT kind,session_id,collective_id,parent_id,body,body_ref,body_hash,state,pinned,poisoned,tokens,cost,producer,outcome,fail_class,sensitivity,use_count,last_used,created_at,updated FROM interactions WHERE id=? AND user_id=?`, id, s.userID)
-	var d Drone
+	var d graph.Drone
 	d.ID = id
 	var body, hash []byte
 	var bodyRef, collectiveID, parentID, fail, lastUsed, updated sql.NullString
@@ -320,7 +318,7 @@ func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 		}
 	}
 	d.Body = body
-	_, actualHash, hashErr := history.CanonicalBody(json.RawMessage(body))
+	_, actualHash, hashErr := graph.CanonicalBody(body)
 	if hashErr != nil {
 		return nil, hashErr
 	}
@@ -329,7 +327,7 @@ func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 	_ = json.Unmarshal([]byte(cost), &d.Cost)
 	_ = json.Unmarshal([]byte(producer), &d.Producer)
 	if fail.Valid {
-		fc := history.FailureClass(fail.String)
+		fc := graph.FailureClass(fail.String)
 		d.FailClass = &fc
 	}
 	d.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -355,13 +353,13 @@ func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 	return &d, nil
 }
 
-func (s *MySQLStore) GetCollective(id string) (*Collective, error) {
+func (s *MySQLStore) GetCollective(id string) (*graph.Collective, error) {
 	rows, err := s.db.Query(`SELECT state, outcome, sensitivity, legacy_json FROM interactions WHERE user_id=? AND (id=? OR collective_id=?) AND legacy_json IS NOT NULL ORDER BY created_at`, s.userID, id, id)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	var entities []Entity
+	var entities []graph.Entity
 	for rows.Next() {
 		var stateStr, outcomeStr string
 		var sensInt int
@@ -375,27 +373,27 @@ func (s *MySQLStore) GetCollective(id string) (*Collective, error) {
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return nil, fmt.Errorf("history %s: %w", id, err)
 		}
-		obj, err := history.DecodeByKind(kind.Kind, raw)
+		obj, err := graph.DecodeByKind(kind.Kind, raw)
 		if err != nil {
 			return nil, fmt.Errorf("history %s: %w", id, err)
 		}
-		e := obj.(history.Entity)
-		v := e.Gethistory.Vinculum()
+		e := obj.(graph.Entity)
+		v := e.GetVinculum()
 		if stateStr != "" {
-			v.State = State(stateStr)
+			v.State = graph.State(stateStr)
 		}
 		if outcomeStr != "" {
-			v.Outcome = Outcome(outcomeStr)
+			v.Outcome = graph.Outcome(outcomeStr)
 		}
-		v.Sensitivity = Sensitivity(sensInt)
+		v.Sensitivity = graph.Sensitivity(sensInt)
 		entities = append(entities, e)
 	}
-	var coll *Collective
+	var coll *graph.Collective
 	if err := rows.Err(); err != nil {
 		return nil, err
 	}
 	for _, entity := range entities {
-		if value, ok := entity.(*history.Collective); ok {
+		if value, ok := entity.(*graph.Collective); ok {
 			coll = value
 		}
 	}
@@ -406,11 +404,11 @@ func (s *MySQLStore) GetCollective(id string) (*Collective, error) {
 	return coll, nil
 }
 
-func (s *MySQLStore) Resume(id string) (*Collective, error) {
+func (s *MySQLStore) Resume(id string) (*graph.Collective, error) {
 	return s.GetCollective(id)
 }
 
-func (s *MySQLStore) ListCollectives() ([]history.ChatSummary, error) {
+func (s *MySQLStore) ListCollectives() ([]graph.ChatSummary, error) {
 	const q = `
 SELECT
   c.id,
@@ -437,9 +435,9 @@ ORDER BY updated_at DESC`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []history.ChatSummary
+	var out []graph.ChatSummary
 	for rows.Next() {
-		var sum history.ChatSummary
+		var sum graph.ChatSummary
 		var created, updated string
 		if err := rows.Scan(&sum.ID, &created, &updated, &sum.Title, &sum.Incursions, &sum.Messages); err != nil {
 			return nil, err
@@ -453,6 +451,20 @@ ORDER BY updated_at DESC`
 
 func (s *MySQLStore) Close() error { return nil }
 func (s *MySQLStore) Flush() error { return nil }
+
+func formatTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func formatTimePtr(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return formatTime(*t)
+}
 
 // UserStore manages the identity + roving-settings tables (server-owned, not
 // per-user scoped — the server is the trust boundary for who is who).
@@ -530,18 +542,4 @@ func (u *UserStore) SetSettings(userID string, settings map[string]any, expected
 		return 0, err
 	}
 	return expected + 1, tx.Commit()
-}
-
-func formatTime(t time.Time) any {
-	if t.IsZero() {
-		return nil
-	}
-	return t.UTC().Format(time.RFC3339Nano)
-}
-
-func formatTimePtr(t *time.Time) any {
-	if t == nil {
-		return nil
-	}
-	return formatTime(*t)
 }
