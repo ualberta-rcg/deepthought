@@ -1,5 +1,10 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — accept Docker username from vars or secrets
+- The login failure was configuration, not code: DOCKER_HUB_USER was set as a repository Variable while the workflow read secrets.DOCKER_HUB_USER (empty on the runner). Read the username from vars.DOCKER_HUB_USER falling back to secrets.DOCKER_HUB_USER; DOCKER_HUB_TOKEN remains strictly a secret (variables are plaintext).
+- Files: .github/workflows/build-server.yml; this entry.
+- Verification: this push triggers the workflow; with DOCKER_HUB_TOKEN set as a repository secret the Login step should succeed and push rkhoja/deepthought-server:server-21f0b33 (or the next short sha).
+
 ## 2026-09-21 · deepthought-cli — diagnose Docker login failure in server CI
 - Runs 35644617325 and 35644908877 fail at "Login to DockerHub" with no detail in the unauthenticated API. Echo the resolved lengths (never values) of DOCKER_HUB_USER/DOCKER_HUB_TOKEN before docker login, so the log distinguishes "secret not visible to the job" (length 0 — wrong name/level) from a value problem (username format or invalid token).
 - Files: .github/workflows/build-server.yml; this entry.

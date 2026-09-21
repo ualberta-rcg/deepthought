@@ -84,7 +84,9 @@ jobs:
 
       - name: Login to DockerHub
         env:
-          DHU: ${{ secrets.DOCKER_HUB_USER }}
+          # Username from either store (it's not sensitive); token strictly
+          # from secrets — a variable would expose it in plaintext.
+          DHU: ${{ vars.DOCKER_HUB_USER || secrets.DOCKER_HUB_USER }}
           DHT: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: |
           set -euo pipefail
