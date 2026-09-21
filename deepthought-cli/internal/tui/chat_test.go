@@ -145,6 +145,7 @@ func TestHandleToolResultMutatesProbe(t *testing.T) {
 		{ID: "call_1", Type: "function", Function: babel.FunctionCall{Name: "bash", Arguments: `{"command":"echo hi"}`}},
 	})
 	m.dispatch = &dispatchState{transmission: tx}
+	m.busy = true
 
 	probe := tx.Probes[0]
 	probe.Decision = queen.Allow

@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-20 · deepthought-cli — standalone reliability and welcome choices
+- Replace ambiguous splash advance with readable branding and explicit standalone/server-placeholder choices; initialize Models and align F1/F2. Route background results by screen and chat turn, cancel tool contexts, invalidate approvals, and preserve queued turns.
+- Isolate SSH shell/permission state, recover cancelled shells, bound unbroken output, enforce tool JSON Schema, make denies override grants, and persist exact argument approvals with Bash syntax checks.
+- Preserve history event identities, body revisions, hashes and resumable JSONL imports; back up schema upgrades and retain legacy columns for running sessions. Reject conflicting settings saves, mask secrets, handle explicit anonymous providers and incomplete provider streams, and repair cron staging/undo.
+- Files: CLI app, TUI, tools, Queen, Alcove, Babel, config, history, cron, model pool, dependency manifests and regression tests; both CLAUDE guides and docs/REVIEW.md.
+- Verification: Slurm CPU job 1081521; Go 1.25.9, go vet ./..., go test -count=1 ./..., race tests for alcove/app/queen/history/tui, and CGO_ENABLED=0 builds of both entrypoints. All passed; no personal config, live inference, or real crontab changes used.
+
 Single running record for the whole repo, newest entry at the top. Entries are
 dated (absolute, UTC) and **tagged with the app directory(ies) they touch**.
 

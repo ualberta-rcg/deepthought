@@ -38,6 +38,7 @@ func TestDemoteProbeShortensContext(t *testing.T) {
 		ID: "c1", Type: "function", Function: babel.FunctionCall{Name: "read", Arguments: `{}`},
 	}})
 	tx.Probes[0].Result = ResultView{Content: "big body", Summaries: SummarySet{Full: "big body"}}
+	tx.Probes[0].Status = ProbeCompleted
 	inc.MarkCompleted()
 	probeID := tx.Probes[0].ID
 	for _, obj := range []Entity{coll, inc, tx, tx.Probes[0]} {

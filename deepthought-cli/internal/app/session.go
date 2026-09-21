@@ -19,6 +19,9 @@ import (
 // concurrent use.
 func SSHHandler(addr string, d Deps) bubbletea.Handler {
 	return func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
+		d := d // never mutate the closure shared by concurrent connections
+		d.Registry = d.Registry.Fork()
+		go func() { <-sess.Context().Done(); d.Registry.Close() }()
 		d.Status.Addr = addr
 		d.Settings.Addr = addr
 		// Per-session Queen: clone so task/session grants never cross SSH users.

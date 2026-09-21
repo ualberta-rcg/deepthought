@@ -15,7 +15,7 @@ func (c *Client) InvokeJSON(ctx context.Context, path string, input any, output 
 	if c.Wire != "json" {
 		return fmt.Errorf("babel: provider wire %q is not raw json", c.Wire)
 	}
-	if c.APIKey == "" {
+	if c.APIKey == "" && !c.AllowAnonymous {
 		return fmt.Errorf("babel: empty API key")
 	}
 	raw, err := json.Marshal(input)
@@ -30,7 +30,9 @@ func (c *Client) InvokeJSON(ctx context.Context, path string, input any, output 
 	if err != nil {
 		return err
 	}
-	request.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		request.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := c.HTTP.Do(request)
 	if err != nil {

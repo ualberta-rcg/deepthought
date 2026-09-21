@@ -14,6 +14,10 @@ package queen
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
+	"mvdan.cc/sh/v3/syntax"
 	"os"
 	"path/filepath"
 	"strings"
@@ -316,6 +320,9 @@ func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) D
 	if tool == nil {
 		return Deny
 	}
+	if tools.Validate(tool, args) != nil {
+		return Deny
+	}
 	// 1. Rule 1: destructive ops denied always.
 	if isDestructive(tool, args) {
 		return Deny
@@ -325,7 +332,7 @@ func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) D
 	defer g.mu.Unlock()
 
 	key := ruleKey(tool.Name(), args)
-	if g.alwaysDeny[key] {
+	if g.alwaysDeny[key] || matchRules(g.Rules.Deny, tool.Name(), args) {
 		return Deny
 	}
 	if g.alwaysAllow[key] || g.taskAllow[key] {
@@ -338,6 +345,9 @@ func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) D
 		return Deny
 	}
 	if matchRules(g.Rules.Ask, tool.Name(), args) {
+		return Ask
+	}
+	if tool.Name() == "bash" && !simpleShell(primaryArg(tool.Name(), args)) && !exactRule(g.Rules.Allow, key) {
 		return Ask
 	}
 	if matchRules(g.Rules.Allow, tool.Name(), args) {
@@ -390,33 +400,44 @@ func classify(tool tools.Tool, args map[string]any) Category {
 
 // ruleKey is a coarse session-grant key (tool + primary arg prefix).
 func ruleKey(toolName string, args map[string]any) string {
-	return toolName + ":" + primaryArg(toolName, args)
+	raw, _ := json.Marshal(args)
+	hash := sha256.Sum256(raw)
+	return "Call:" + toolName + ":" + hex.EncodeToString(hash[:])
 }
 
 // ruleString builds a persistable reference-style rule, e.g. Bash(git *) or Read(~/**).
 func ruleString(toolName string, args map[string]any) string {
-	if toolName == "" {
-		return ""
-	}
-	arg := primaryArg(toolName, args)
-	title := strings.ToUpper(toolName[:1]) + toolName[1:]
-	if arg == "" {
-		return title
-	}
-	// Soften exact command into a prefix pattern for bash.
-	if toolName == "bash" {
-		fields := strings.Fields(arg)
-		if len(fields) > 0 {
-			return title + "(" + fields[0] + " *)"
+	return ruleKey(toolName, args)
+}
+
+func exactRule(rules []string, key string) bool {
+	for _, r := range rules {
+		if r == key {
+			return true
 		}
 	}
-	if toolName == "read" {
-		dir := filepath.Dir(arg)
-		if dir != "" && dir != "." {
-			return title + "(" + dir + "/**)"
-		}
+	return false
+}
+
+func simpleShell(command string) bool {
+	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
+	if err != nil || len(f.Stmts) != 1 {
+		return false
 	}
-	return title + "(" + arg + ")"
+	s := f.Stmts[0]
+	c, ok := s.Cmd.(*syntax.CallExpr)
+	if !ok || s.Background || s.Coprocess || len(s.Redirs) > 0 || len(c.Assigns) > 0 {
+		return false
+	}
+	simple := true
+	syntax.Walk(c, func(node syntax.Node) bool {
+		switch node.(type) {
+		case *syntax.CmdSubst, *syntax.ProcSubst, *syntax.ParamExp, *syntax.ArithmExp:
+			simple = false
+		}
+		return simple
+	})
+	return simple
 }
 
 func primaryArg(toolName string, args map[string]any) string {
@@ -439,6 +460,9 @@ func primaryArg(toolName string, args map[string]any) string {
 func matchRules(rules []string, toolName string, args map[string]any) bool {
 	arg := primaryArg(toolName, args)
 	for _, raw := range rules {
+		if raw == ruleKey(toolName, args) {
+			return true
+		}
 		raw = strings.TrimSpace(raw)
 		if raw == "" {
 			continue

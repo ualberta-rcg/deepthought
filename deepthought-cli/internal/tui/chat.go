@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"fmt"
+	"net/url"
 	"os"
 	"strings"
 	"time"
@@ -153,26 +154,28 @@ type ChatModel struct {
 	// render: while busy && !streaming the row shows the spinner (cold-start
 	// wait); once the first delta lands, streaming flips true and the row
 	// shows the accumulating thinking block + reply.
-	src       InferenceSource
-	reg       *tools.Registry
-	gate      *queen.Gate
-	coll      *history.Collective
-	store     history.Store
-	cluster   slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
-	env       EnvInfo               // static host/session environment → the env brief
-	skills    string                // compact "available skills" index → a per-request system note
-	replayed  bool                  // prior turns rendered into the transcript (resume)
-	busy      bool
-	streaming bool
-	acc       string
-	thinkAcc  string // reasoning trace accumulating for the in-flight turn
-	pendIdx   int    // index into lines of the in-flight row, -1 when idle
-	streamCh  <-chan streamItem
-	cancel    context.CancelFunc // cancels the in-flight stream; esc triggers it
-	spin      spinner.Model
-	spinFrame int              // our own frame counter; the spinner's frame field is unexported
-	dispatch  *dispatchState   // non-nil while dispatching tool calls
-	awaiting  *pendingApproval // non-nil while a y/n permission prompt is on screen
+	src        InferenceSource
+	reg        *tools.Registry
+	gate       *queen.Gate
+	coll       *history.Collective
+	store      history.Store
+	cluster    slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
+	env        EnvInfo               // static host/session environment → the env brief
+	skills     string                // compact "available skills" index → a per-request system note
+	replayed   bool                  // prior turns rendered into the transcript (resume)
+	busy       bool
+	streaming  bool
+	acc        string
+	thinkAcc   string // reasoning trace accumulating for the in-flight turn
+	pendIdx    int    // index into lines of the in-flight row, -1 when idle
+	streamCh   <-chan streamItem
+	cancel     context.CancelFunc // cancels the in-flight stream; esc triggers it
+	ctx        context.Context
+	generation uint64
+	spin       spinner.Model
+	spinFrame  int              // our own frame counter; the spinner's frame field is unexported
+	dispatch   *dispatchState   // non-nil while dispatching tool calls
+	awaiting   *pendingApproval // non-nil while a y/n permission prompt is on screen
 
 	// Activity / session accounting.
 	turnStarted   time.Time // when the current busy turn began
@@ -210,7 +213,7 @@ func NewChatModel(src InferenceSource, reg *tools.Registry, gate *queen.Gate, se
 	}
 	return buildChat(src, reg, gate, func() (history.Store, *history.Collective) {
 		store := source()
-		coll, _ := store.CreateCollective(history.SpawnCollectiveRequest{
+		coll := history.NewCollective(history.SpawnCollectiveRequest{
 			SystemPrompt: prompt,
 			SessionID:    sessionID,
 		})
@@ -344,10 +347,16 @@ func (m ChatModel) Cursor() *tea.Cursor {
 // when the popover is open it intercepts navigation/accept; otherwise keys go to
 // the input and a value change re-derives the popover.
 func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
+	if event, ok := msg.(chatEvent); ok {
+		if m.coll == nil || event.owner != m.coll.ID || event.turn != m.generation {
+			return m, nil
+		}
+		msg = event.msg
+	}
 	switch msg := msg.(type) {
 	case streamStartedMsg:
 		m.streamCh = msg.ch
-		return m, drainCmd(m.streamCh)
+		return m, m.own(drainCmd(m.streamCh))
 	case streamItemMsg:
 		return m.handleStreamItem(msg)
 	case titleGeneratedMsg:
@@ -361,6 +370,14 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 	case toolResultMsg:
 		return m.handleToolResult(msg)
 	case inlineBashResultMsg:
+		m.busy = false
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+		if m.gate != nil {
+			m.gate.ClearTaskGrants()
+		}
 		if msg.result.IsError {
 			m.appendTurn(styleError.Render("  ↳ " + msg.result.Summary))
 		} else {
@@ -412,9 +429,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 				ap := m.awaiting
 				m.awaiting = nil
 				if ap.inline {
-					return m, runInlineBashCmd(ap.tool, ap.args)
+					return m, m.runInlineBashCmd(ap.tool, ap.args)
 				}
-				return m, runToolCmd(ap.tool, ap.args, ap.probe)
+				return m, m.runToolCmd(ap.tool, ap.args, ap.probe)
 			case "a":
 				ap := m.awaiting
 				m.awaiting = nil
@@ -422,9 +439,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 					m.gate.GrantTask(ap.tool.Name(), ap.args)
 				}
 				if ap.inline {
-					return m, runInlineBashCmd(ap.tool, ap.args)
+					return m, m.runInlineBashCmd(ap.tool, ap.args)
 				}
-				return m, runToolCmd(ap.tool, ap.args, ap.probe)
+				return m, m.runToolCmd(ap.tool, ap.args, ap.probe)
 			case "A":
 				ap := m.awaiting
 				m.awaiting = nil
@@ -432,17 +449,21 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 					m.gate.GrantAlways(ap.tool.Name(), ap.args)
 				}
 				if ap.inline {
-					return m, runInlineBashCmd(ap.tool, ap.args)
+					return m, m.runInlineBashCmd(ap.tool, ap.args)
 				}
-				return m, runToolCmd(ap.tool, ap.args, ap.probe)
+				return m, m.runToolCmd(ap.tool, ap.args, ap.probe)
 			case "n", "N", "esc":
 				ap := m.awaiting
 				m.awaiting = nil
 				if ap.inline {
 					m.appendTurn(styleError.Render("  ↳ denied by user"))
+					m.busy = false
+					if m.cancel != nil {
+						m.cancel()
+					}
 					return m, nil
 				}
-				return m, deniedResultCmd(ap.probe, "denied by user")
+				return m, m.own(deniedResultCmd(ap.probe, "denied by user"))
 			case "d", "D":
 				ap := m.awaiting
 				m.awaiting = nil
@@ -451,9 +472,13 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 				}
 				if ap.inline {
 					m.appendTurn(styleError.Render("  ↳ denied by user (always)"))
+					m.busy = false
+					if m.cancel != nil {
+						m.cancel()
+					}
 					return m, nil
 				}
-				return m, deniedResultCmd(ap.probe, "denied by user (always)")
+				return m, m.own(deniedResultCmd(ap.probe, "denied by user (always)"))
 			}
 			return m, nil // swallow everything else
 		}
@@ -623,8 +648,18 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 // beginChat appends the user incursion to history, paints a "thinking…" row, and fires
 // the streaming call + the spinner's first tick.
 func (m ChatModel) beginChat(text string) (ChatModel, tea.Cmd) {
+	if err := m.store.SaveObject(m.coll); err != nil {
+		m.systemLine("Cannot save chat: " + err.Error())
+		return m, nil
+	}
+	m.generation++
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 	inc := m.coll.StartIncursion(text)
-	_ = m.store.SaveObject(inc)
+	if err := m.store.SaveObject(inc); err != nil {
+		m.cancel()
+		m.systemLine("Cannot save turn: " + err.Error())
+		return m, nil
+	}
 	return m.armStream()
 }
 
@@ -633,6 +668,8 @@ func (m ChatModel) beginChat(text string) (ChatModel, tea.Cmd) {
 // stream items from the cancelled goroutine are ignored (handleStreamItem
 // no-ops when !busy).
 func (m ChatModel) interrupt() (ChatModel, tea.Cmd) {
+	m.generation++
+	m.awaiting = nil
 	partialText, partialThinking := m.acc, m.thinkAcc
 	if m.cancel != nil {
 		m.cancel()
@@ -681,6 +718,8 @@ func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
 		return m, nil
 	}
 	inc.Status = history.IncursionStreaming
+	m.generation++
+	m.ctx, m.cancel = context.WithCancel(context.Background())
 	inc.Error = ""
 	_ = m.store.SaveObject(inc)
 	return m.armStream()
@@ -708,6 +747,10 @@ func (m ChatModel) Notice(text string) ChatModel {
 // busy is asserted by callers; this leaves it set. The agentic role is resolved
 // HERE, per request, so a settings save takes effect on the very next turn.
 func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
+	if m.src == nil {
+		m.systemLine("Configure an agentic model in Settings (F1).")
+		return m, nil
+	}
 	client, model, err := m.src.RoleClient(unimatrix.RoleAgentic)
 	if err != nil {
 		m.appendTurn(styleError.Render("✗ " + err.Error()))
@@ -733,9 +776,10 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 	m.pendIdx = len(m.lines)
 	m.lines = append(m.lines, m.pendingView())
 	m.flush()
-	ctx, cancel := context.WithCancel(context.Background())
-	m.cancel = cancel
-	return m, tea.Batch(startStream(ctx, client, m.newRequest(model)), tea.Cmd(m.spin.Tick))
+	if m.ctx == nil {
+		m.ctx, m.cancel = context.WithCancel(context.Background())
+	}
+	return m, tea.Batch(m.own(startStream(m.ctx, client, m.newRequest(model))), tea.Cmd(m.spin.Tick))
 }
 
 // newRequest builds the ChatRequest for the current incursion: the model, the full message
@@ -838,7 +882,7 @@ func (m ChatModel) envBrief() string {
 	// (fairshare + storage live in the cluster blurb — no duplicate facts.)
 	// Negative capability: forbidden/constrained things are worth more than
 	// positive ones (they prevent failed attempts).
-	if p := proxyEnv(); p != "" {
+	if p := proxyEnv(); p != "" && len(facts) > 0 {
 		facts = append(facts, "outbound network via proxy "+p+" — direct connections fail")
 	}
 	if len(facts) == 0 {
@@ -874,7 +918,15 @@ func hostSuffix(e EnvInfo) string {
 func proxyEnv() string {
 	for _, k := range []string{"https_proxy", "HTTPS_PROXY", "http_proxy", "HTTP_PROXY"} {
 		if v := os.Getenv(k); v != "" {
-			return v
+			if !strings.Contains(v, "://") {
+				if parsed, err := url.Parse("http://" + v); err == nil && parsed.Host != "" {
+					return parsed.Host
+				}
+			}
+			if parsed, err := url.Parse(v); err == nil && parsed.Host != "" {
+				return parsed.Scheme + "://" + parsed.Host
+			}
+			return "configured proxy"
 		}
 	}
 	return ""
@@ -948,7 +1000,7 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 			m.acc += it.delta
 			m.replacePending(m.liveView())
 		}
-		return m, drainCmd(m.streamCh) // re-arm: wait for the next chunk
+		return m, m.own(drainCmd(m.streamCh)) // re-arm: wait for the next chunk
 	}
 
 	// Stream over.
@@ -965,6 +1017,13 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 	}
 
 	if it.err != nil {
+		if m.cancel != nil {
+			m.cancel()
+			m.cancel = nil
+		}
+		if m.gate != nil {
+			m.gate.ClearTaskGrants()
+		}
 		m.busy = false
 		m.appendTurn(styleError.Render("✗ " + it.err.Error()))
 		inc.Fail(it.err.Error())
@@ -1009,7 +1068,7 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 		// After the first real exchange, ask the summary model for a pretty title
 		// (best-effort; failures are swallowed). Only real chats with a reply.
 		if m.coll.Title == "" && tx.Text != "" && len(m.coll.Incursions) == 1 {
-			cmds = append(cmds, generateTitleCmd(m.src, inc.Prompt, tx.Text))
+			cmds = append(cmds, m.own(generateTitleCmd(m.src, inc.Prompt, tx.Text)))
 		}
 		if next := m.drainQueue(); next != nil {
 			cmds = append(cmds, next)
@@ -1063,6 +1122,13 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 
 		inc.Cycles++
 		if inc.Cycles >= m.coll.MaxCycles {
+			if m.cancel != nil {
+				m.cancel()
+				m.cancel = nil
+			}
+			if m.gate != nil {
+				m.gate.ClearTaskGrants()
+			}
 			m.busy = false
 			inc.Fail(fmt.Sprintf("hit tool-loop cap (%d cycles)", m.coll.MaxCycles))
 			_ = m.store.SaveObject(inc)
@@ -1082,14 +1148,17 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 	if !ok {
 		// Unknown tool: feed the error back as a tool result so the model can recover.
 		m.appendTurn(styleError.Render("▸ unknown tool: " + probe.Name))
-		return m, deniedResultCmd(probe, "no such tool: "+probe.Name)
+		return m, m.own(deniedResultCmd(probe, "no such tool: "+probe.Name))
 	}
 
 	args := probe.Arguments
 	m.appendTurn(styleTool.Render("▸ " + probe.Name + ": " + summarizeArgs(probe.Name, args)))
 
 	if probe.ArgumentsError != "" {
-		return m, deniedResultCmd(probe, "invalid arguments JSON: "+probe.ArgumentsError)
+		return m, m.own(deniedResultCmd(probe, "invalid arguments JSON: "+probe.ArgumentsError))
+	}
+	if err := tools.Validate(tool, args); err != nil {
+		return m, m.own(deniedResultCmd(probe, err.Error()))
 	}
 
 	switch m.gate.Decide(context.Background(), tool, args) {
@@ -1097,7 +1166,7 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 		probe.Decision = queen.Allow
 		probe.Status = history.ProbeRunning // allowed → dispatch immediately
 		probe.StartedAt = now()
-		return m, runToolCmd(tool, args, probe)
+		return m, m.runToolCmd(tool, args, probe)
 	case queen.Deny:
 		probe.Decision = queen.Deny
 		probe.Status = history.ProbeDenied // agrees with Decision (terminal for this probe)
@@ -1110,7 +1179,7 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 			}
 		}
 		probe.DecisionReason = reason
-		return m, deniedResultCmd(probe, reason)
+		return m, m.own(deniedResultCmd(probe, reason))
 	default: // Ask
 		probe.Decision = queen.Ask
 		m.awaiting = &pendingApproval{probe: probe, tool: tool, args: args}
@@ -1122,6 +1191,9 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 // handleToolResult renders the result chrome, records the result on the probe,
 // advances the dispatch, and processes the next probe.
 func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
+	if !m.busy || m.dispatch == nil {
+		return m, nil
+	}
 	probe := r.probe
 	probe.Status = history.ProbeCompleted
 	if r.result.IsError {
@@ -1158,11 +1230,15 @@ func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
 
 // runToolCmd runs a tool in a Cmd goroutine (bash can block for its whole timeout).
 // Snapshots tool/args/probe so it never captures the ChatModel.
-func runToolCmd(tool tools.Tool, args map[string]any, probe *history.Probe) tea.Cmd {
-	return func() tea.Msg {
-		res := tool.Run(context.Background(), args)
-		return toolResultMsg{probe: probe, result: res}
+func (m ChatModel) runToolCmd(tool tools.Tool, args map[string]any, probe *history.Probe) tea.Cmd {
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
 	}
+	return m.own(func() tea.Msg {
+		res := tools.Execute(ctx, tool, args)
+		return toolResultMsg{probe: probe, result: res}
+	})
 }
 
 // deniedResultCmd emits a toolResultMsg carrying a denial/error, so the model sees a
@@ -1315,13 +1391,18 @@ func (m *ChatModel) drainQueue() tea.Cmd {
 	next := m.queue[0]
 	m.queue = m.queue[1:]
 	m.userEcho(next)
-	_, cmd := m.beginChat(next)
+	nextModel, cmd := m.beginChat(next)
+	*m = nextModel
 	return cmd
 }
 
 // runInlineBash runs a leading-"!" command through the bash tool + Queen with
 // no model round-trip. Results echo into the transcript like a normal tool call.
 func (m ChatModel) runInlineBash(cmd string) (ChatModel, tea.Cmd) {
+	if m.busy {
+		m.systemLine("Interrupt the active turn before running a shell command.")
+		return m, nil
+	}
 	if cmd == "" {
 		m.systemLine("usage: ! <shell command>")
 		return m, nil
@@ -1336,11 +1417,16 @@ func (m ChatModel) runInlineBash(cmd string) (ChatModel, tea.Cmd) {
 		return m, nil
 	}
 	args := map[string]any{"command": cmd}
+	m.generation++
+	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.busy = true
 	m.userEcho("!" + cmd)
 	m.appendTurn(styleTool.Render("▸ bash: " + truncate(cmd, 60)))
 	if m.gate != nil {
 		switch m.gate.Decide(context.Background(), tool, args) {
 		case queen.Deny:
+			m.busy = false
+			m.cancel()
 			reason := "refused by Queen"
 			if r := queen.DestructiveReason(cmd); r != "" {
 				reason = r
@@ -1354,7 +1440,7 @@ func (m ChatModel) runInlineBash(cmd string) (ChatModel, tea.Cmd) {
 			return m, nil
 		}
 	}
-	return m, runInlineBashCmd(tool, args)
+	return m, m.runInlineBashCmd(tool, args)
 }
 
 // inlineBashResultMsg is like toolResultMsg but for !-mode (no probe graph).
@@ -1362,10 +1448,11 @@ type inlineBashResultMsg struct {
 	result tools.Result
 }
 
-func runInlineBashCmd(tool tools.Tool, args map[string]any) tea.Cmd {
-	return func() tea.Msg {
-		return inlineBashResultMsg{result: tool.Run(context.Background(), args)}
-	}
+func (m ChatModel) runInlineBashCmd(tool tools.Tool, args map[string]any) tea.Cmd {
+	ctx := m.ctx
+	return m.own(func() tea.Msg {
+		return inlineBashResultMsg{result: tools.Execute(ctx, tool, args)}
+	})
 }
 
 // liveView renders the in-flight row once deltas are arriving: the dim thinking
@@ -1418,9 +1505,15 @@ func startStream(ctx context.Context, client *babel.Client, req babel.ChatReques
 		go func() {
 			defer close(ch)
 			rep, err := client.ChatStream(ctx, req, func(d babel.StreamDelta) {
-				ch <- streamItem{delta: d.Content, reasoning: d.Reasoning}
+				select {
+				case ch <- streamItem{delta: d.Content, reasoning: d.Reasoning}:
+				case <-ctx.Done():
+				}
 			})
-			ch <- streamItem{err: err, final: true, toolCalls: rep.ToolCalls, usage: rep.Usage}
+			select {
+			case ch <- streamItem{err: err, final: true, toolCalls: rep.ToolCalls, usage: rep.Usage}:
+			case <-ctx.Done():
+			}
 		}()
 		return streamStartedMsg{ch: ch}
 	}

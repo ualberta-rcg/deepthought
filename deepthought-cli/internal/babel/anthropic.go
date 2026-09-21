@@ -162,21 +162,23 @@ func (c *Client) newAnthropicRequest(ctx context.Context, payload any) (*http.Re
 		return nil, fmt.Errorf("babel: build anthropic request: %w", err)
 	}
 	req.Header.Set("x-api-key", c.APIKey)
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("Content-Type", "application/json")
 	return req, nil
 }
 
 func (c *Client) chatAnthropic(ctx context.Context, req ChatRequest) (Reply, error) {
-	if c.APIKey == "" {
+	if c.APIKey == "" && !c.AllowAnonymous {
 		return Reply{}, fmt.Errorf("babel: empty API key (set provider.api_key in config)")
 	}
 	reply, status, raw, err := c.chatAnthropicOnce(ctx, req, true)
 	if err == nil {
 		return reply, nil
 	}
-	if status == http.StatusBadRequest && req.Effort != "" {
+	if status == http.StatusBadRequest && req.Effort != "" && effortRejected(raw) {
 		returned, _, _, retryErr := c.chatAnthropicOnce(ctx, req, false)
 		if retryErr == nil {
 			return returned, nil
@@ -232,9 +234,10 @@ type anthropicEvent struct {
 	Type         string `json:"type"`
 	Index        int    `json:"index"`
 	ContentBlock struct {
-		Type string `json:"type"`
-		ID   string `json:"id"`
-		Name string `json:"name"`
+		Type  string          `json:"type"`
+		ID    string          `json:"id"`
+		Name  string          `json:"name"`
+		Input json.RawMessage `json:"input"`
 	} `json:"content_block"`
 	Delta struct {
 		Type        string `json:"type"`
@@ -254,7 +257,7 @@ type anthropicEvent struct {
 }
 
 func (c *Client) chatStreamAnthropic(ctx context.Context, req ChatRequest, fn StreamFn) (Reply, error) {
-	if c.APIKey == "" {
+	if c.APIKey == "" && !c.AllowAnonymous {
 		return Reply{}, fmt.Errorf("babel: empty API key (set provider.api_key in config)")
 	}
 	httpReq, err := c.newAnthropicRequest(ctx, buildAnthropicRequest(req, true, true))
@@ -269,7 +272,7 @@ func (c *Client) chatStreamAnthropic(ctx context.Context, req ChatRequest, fn St
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBody))
-		if resp.StatusCode == http.StatusBadRequest && req.Effort != "" {
+		if resp.StatusCode == http.StatusBadRequest && req.Effort != "" && effortRejected(raw) {
 			fallback := req
 			fallback.Effort = ""
 			return c.chatStreamAnthropic(ctx, fallback, fn)
@@ -284,6 +287,8 @@ func (c *Client) chatStreamAnthropic(ctx context.Context, req ChatRequest, fn St
 		args strings.Builder
 	}
 	calls := map[int]*pendingCall{}
+	finished := false
+	var streamErr error
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20)
 	for sc.Scan() {
@@ -297,12 +302,15 @@ func (c *Client) chatStreamAnthropic(ctx context.Context, req ChatRequest, fn St
 		}
 		var event anthropicEvent
 		if err := json.Unmarshal([]byte(payload), &event); err != nil {
-			continue
+			streamErr = fmt.Errorf("babel: malformed stream event: %w", err)
+			break
 		}
 		if event.Error != nil {
 			return Reply{Text: text.String(), Reasoning: reasoning.String()}, fmt.Errorf("babel: anthropic: %s", event.Error.Message)
 		}
 		switch event.Type {
+		case "message_stop":
+			finished = true
 		case "message_start":
 			// input_tokens arrive here (prompt accounting).
 			usage.PromptTokens = event.Message.Usage.InputTokens
@@ -315,7 +323,7 @@ func (c *Client) chatStreamAnthropic(ctx context.Context, req ChatRequest, fn St
 			if event.ContentBlock.Type == "tool_use" {
 				calls[event.Index] = &pendingCall{call: ToolCall{
 					ID: event.ContentBlock.ID, Type: "function",
-					Function: FunctionCall{Name: event.ContentBlock.Name},
+					Function: FunctionCall{Name: event.ContentBlock.Name, Arguments: string(event.ContentBlock.Input)},
 				}}
 			}
 		case "content_block_delta":
@@ -334,17 +342,25 @@ func (c *Client) chatStreamAnthropic(ctx context.Context, req ChatRequest, fn St
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return Reply{}, fmt.Errorf("babel: anthropic stream: %w", err)
+		streamErr = fmt.Errorf("babel: anthropic stream: %w", err)
 	}
 	ordered := make(map[int]*accCall, len(calls))
 	for idx, call := range calls {
-		call.call.Function.Arguments = call.args.String()
+		if call.args.Len() > 0 {
+			call.call.Function.Arguments = call.args.String()
+		}
+		if call.call.Function.Arguments == "" {
+			call.call.Function.Arguments = "{}"
+		}
 		ordered[idx] = &accCall{call: call.call}
 	}
 	clean, inline := extractThinkTags(text.String())
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+	if streamErr == nil && !finished {
+		streamErr = fmt.Errorf("babel: anthropic stream ended without message_stop")
+	}
 	return Reply{
 		Text: clean, Reasoning: coalesce(reasoning.String(), inline),
 		ToolCalls: assembledToolCalls(ordered), Usage: usage,
-	}, nil
+	}, streamErr
 }

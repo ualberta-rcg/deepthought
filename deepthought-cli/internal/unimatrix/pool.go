@@ -30,6 +30,14 @@ func NewPool() *Pool {
 // first use. wire is reserved for the future Anthropic adapter — today every
 // provider is served by the OpenAI-compatible client.
 func (p *Pool) Client(name, baseURL, apiKey, wire string, timeout ...time.Duration) *babel.Client {
+	wait := 6 * time.Minute
+	if len(timeout) > 0 {
+		wait = timeout[0]
+	}
+	return p.ClientFor(name, baseURL, apiKey, wire, false, wait)
+}
+
+func (p *Pool) ClientFor(name, baseURL, apiKey, wire string, anonymous bool, timeout ...time.Duration) *babel.Client {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
@@ -41,6 +49,7 @@ func (p *Pool) Client(name, baseURL, apiKey, wire string, timeout ...time.Durati
 		wait = timeout[0]
 	}
 	c := babel.NewClientWithOptions(baseURL, apiKey, wire, wait)
+	c.AllowAnonymous = anonymous
 	p.clients[name] = c
 	return c
 }

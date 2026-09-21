@@ -49,6 +49,9 @@ func (c *Client) Install(ctx context.Context, lines []string) error {
 	if err != nil && !isNoCrontab(current, err) {
 		return fmt.Errorf("crontab -l (before install): %w", err)
 	}
+	if err != nil {
+		current = nil
+	}
 	if err := c.backup(string(current)); err != nil {
 		return err
 	}
@@ -63,11 +66,20 @@ func (c *Client) Undo(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	if err := c.backup(data); err != nil { // undo is itself undoable
+	current, err := c.Run.Run(ctx, nil, "crontab", "-l")
+	if err != nil && !isNoCrontab(current, err) {
 		return err
 	}
-	_ = c.markRestored(name)
+	if err != nil {
+		current = nil
+	}
+	if err := c.backup(string(current)); err != nil { // undo is itself undoable
+		return err
+	}
 	_, err = c.Run.Run(ctx, []byte(data), "crontab", "-")
+	if err == nil {
+		_ = c.markRestored(name)
+	}
 	return err
 }
 

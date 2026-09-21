@@ -38,7 +38,8 @@ type Provider struct {
 	Name          string   `json:"name"`
 	BaseURL       string   `json:"base_url"` // gateway URL incl. version prefix
 	APIKey        string   `json:"api_key"`  // literal token or "$ENV_VAR" reference
-	Wire          string   `json:"wire"`     // "openai" | "anthropic"; empty defaults to "openai"
+	Anonymous     bool     `json:"anonymous,omitempty"`
+	Wire          string   `json:"wire"` // "openai" | "anthropic"; empty defaults to "openai"
 	TimeoutMS     int      `json:"timeout_ms,omitempty"`
 	Tags          []string `json:"tags,omitempty"`
 	Kind          string   `json:"kind,omitempty"`
@@ -67,13 +68,14 @@ func (p Provider) ExpandedKey() string { return os.ExpandEnv(p.APIKey) }
 // File is the on-disk JSON shape, v2 (the lowercase struct tags map to
 // config.json).
 type File struct {
+	Revision       uint64            `json:"-"`
 	Providers      []Provider        `json:"providers"`
 	Models         []unimatrix.Model `json:"models"`
 	Roles          map[string]string `json:"roles"`              // role → model ID; unset roles fall back to chat
 	Thinking       *bool             `json:"thinking,omitempty"` // nil = on
 	Effort         string            `json:"effort,omitempty"`   // off/low/medium/high/max
 	MaxTokens      int               `json:"max_tokens,omitempty"`
-	Temperature    float64           `json:"temperature,omitempty"`
+	Temperature    float64           `json:"temperature"`
 	PermissionMode string            `json:"permission_mode,omitempty"`
 	Permissions    *Permissions      `json:"permissions,omitempty"` // v2 op-modes + rule lists
 	Routes         map[string]Route  `json:"routes,omitempty"`
@@ -172,17 +174,19 @@ func (c *Config) ProviderFor(m unimatrix.Model) (Provider, error) {
 // the first model in the list.
 func (c *Config) RoleModel(role string) (unimatrix.Model, error) {
 	if id := c.Roles[role]; id != "" {
-		if m, ok := c.FindModel(id); ok {
+		if m, ok := c.FindModel(id); ok && (role != unimatrix.RoleAgentic || m.Agentic()) {
 			return m, nil
 		}
 	}
 	if id := c.Roles[unimatrix.RoleChat]; id != "" {
-		if m, ok := c.FindModel(id); ok {
+		if m, ok := c.FindModel(id); ok && (role != unimatrix.RoleAgentic || m.Agentic()) {
 			return m, nil
 		}
 	}
-	if len(c.Models) > 0 {
-		return c.Models[0], nil
+	for _, m := range c.Models {
+		if role != unimatrix.RoleAgentic || m.Agentic() {
+			return m, nil
+		}
 	}
 	return unimatrix.Model{}, fmt.Errorf("config: no models configured")
 }
@@ -207,7 +211,7 @@ func (c *Config) CompletionTokens() int {
 }
 
 func (c *Config) SamplingTemperature() float64 {
-	if c.Temperature > 0 {
+	if c.Temperature >= 0 {
 		return c.Temperature
 	}
 	return 0.7
@@ -289,7 +293,7 @@ func parse(raw []byte) (File, error) {
 		return migrateV1(old), nil
 	}
 
-	var f File
+	f := File{Temperature: 0.7}
 	if err := json.Unmarshal(raw, &f); err != nil {
 		return File{}, err
 	}
@@ -356,6 +360,7 @@ func migrateV1(old v1File) File {
 // use when no settings file is present.
 func Defaults() *Config {
 	return &Config{File: File{
+		Temperature: 0.7,
 		Providers: []Provider{{
 			Name:    unimatrix.SeedProvider,
 			BaseURL: DefaultBaseURL,
@@ -475,9 +480,22 @@ func Save(path string, f *File) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, append(raw, '\n'), 0o600); err != nil {
+	fh, err := os.CreateTemp(filepath.Dir(path), ".config-*")
+	if err != nil {
+		return err
+	}
+	tmp := fh.Name()
+	defer os.Remove(tmp)
+	if _, err := fh.Write(append(raw, '\n')); err != nil {
+		fh.Close()
 		return fmt.Errorf("write config: %w", err)
+	}
+	if err := fh.Sync(); err != nil {
+		fh.Close()
+		return err
+	}
+	if err := fh.Close(); err != nil {
+		return err
 	}
 	if err := os.Rename(tmp, path); err != nil {
 		return fmt.Errorf("rename config: %w", err)

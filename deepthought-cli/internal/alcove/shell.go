@@ -100,6 +100,9 @@ func (s *Shell) start() error {
 func (s *Shell) Run(ctx context.Context, command string) (Result, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Result{}, err
+	}
 
 	if s.closed {
 		return Result{}, errors.New("alcove: shell is closed")
@@ -129,13 +132,17 @@ func (s *Shell) Run(ctx context.Context, command string) (Result, error) {
 		err    error
 	}
 	done := make(chan readResult, 1)
+	reader := s.reader
 	go func() {
-		r, err := s.readUntil(marker)
+		r, err := s.readUntil(reader, marker)
 		done <- readResult{result: r, err: err}
 	}()
 
 	select {
 	case got := <-done:
+		if got.err != nil {
+			s.killLocked()
+		}
 		return got.result, got.err
 	case <-ctx.Done():
 		s.killLocked()
@@ -144,11 +151,12 @@ func (s *Shell) Run(ctx context.Context, command string) (Result, error) {
 	}
 }
 
-func (s *Shell) readUntil(marker string) (Result, error) {
+func (s *Shell) readUntil(reader *bufio.Reader, marker string) (Result, error) {
 	var out strings.Builder
 	truncated := false
 	for {
-		fragment, err := s.reader.ReadString('\n')
+		part, err := reader.ReadSlice('\n')
+		fragment := string(part)
 		if strings.HasPrefix(fragment, marker) {
 			raw := strings.TrimSpace(strings.TrimPrefix(fragment, marker))
 			code, convErr := strconv.Atoi(raw)
@@ -209,4 +217,6 @@ func (s *Shell) killLocked() {
 	if s.stdout != nil {
 		_ = s.stdout.Close()
 	}
+	s.cmd, s.stdin, s.stdout, s.reader = nil, nil, nil, nil
+	s.startOnce, s.startErr = sync.Once{}, nil
 }

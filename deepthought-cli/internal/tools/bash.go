@@ -42,6 +42,8 @@ func NewGuardedBash() *Bash {
 // NewBashWithShell binds the tool to a per-session Alcove.
 func NewBashWithShell(shell *alcove.Shell) *Bash { return &Bash{shell: shell} }
 
+func (b *Bash) Close() error { return b.shell.Close() }
+
 // Name is the wire name the model uses in a tool_call.
 func (*Bash) Name() string { return "bash" }
 

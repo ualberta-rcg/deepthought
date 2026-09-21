@@ -1,8 +1,12 @@
 package app
 
 import (
+	"crypto/sha256"
+	"encoding/json"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -26,6 +30,8 @@ type Settings struct {
 	path     string
 	pool     *unimatrix.Pool
 	breakers map[string]*providerBreaker
+	revision uint64
+	diskHash [32]byte
 }
 
 type providerBreaker struct {
@@ -35,7 +41,8 @@ type providerBreaker struct {
 
 // NewSettings builds the handle from the loaded config and its file path.
 func NewSettings(cfg *config.Config, path string) *Settings {
-	return &Settings{cfg: cfg, path: path, pool: unimatrix.NewPool(), breakers: map[string]*providerBreaker{}}
+	raw, _ := os.ReadFile(path)
+	return &Settings{cfg: cfg, path: path, pool: unimatrix.NewPool(), breakers: map[string]*providerBreaker{}, revision: 1, diskHash: sha256.Sum256(raw)}
 }
 
 // Path returns the resolved settings file path (for the Overview page).
@@ -46,10 +53,20 @@ func (s *Settings) Path() string { return s.path }
 func (s *Settings) Snapshot() config.File {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
-	return cloneFile(s.cfg.File)
+	f := cloneFile(s.cfg.File)
+	f.Revision = s.revision
+	return f
 }
 
 func cloneFile(f config.File) config.File {
+	raw, err := json.Marshal(f)
+	if err == nil {
+		var copied config.File
+		if json.Unmarshal(raw, &copied) == nil {
+			copied.Revision = f.Revision
+			return copied
+		}
+	}
 	out := f
 	out.Providers = append([]config.Provider(nil), f.Providers...)
 	for i := range out.Providers {
@@ -88,6 +105,34 @@ func cloneFile(f config.File) config.File {
 // pool is dropped wholesale on any change — stale clients cost one lazy
 // rebuild, and URL/key edits never linger.
 func (s *Settings) Save(f config.File) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.saveLocked(f)
+}
+
+func (s *Settings) saveLocked(f config.File) error {
+	if f.Revision != 0 && f.Revision != s.revision {
+		return fmt.Errorf("settings changed; reload and retry your edit")
+	}
+	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
+	raw, err := os.ReadFile(s.path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	if sha256.Sum256(raw) != s.diskHash {
+		return fmt.Errorf("settings changed in another process; reload before saving")
+	}
 	cfg, err := config.Validate(f)
 	if err != nil {
 		return err
@@ -95,9 +140,40 @@ func (s *Settings) Save(f config.File) error {
 	if err := config.Save(s.path, &f); err != nil {
 		return err
 	}
+	s.cfg = cfg
+	s.revision++
+	raw, err = os.ReadFile(s.path)
+	if err != nil {
+		return err
+	}
+	s.diskHash = sha256.Sum256(raw)
+	s.pool = unimatrix.NewPool()
+	return nil
+}
+
+// Update applies a local edit to the latest snapshot in one transaction.
+func (s *Settings) Update(edit func(*config.File)) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.cfg = cfg
+	f := cloneFile(s.cfg.File)
+	f.Revision = s.revision
+	edit(&f)
+	return s.saveLocked(f)
+}
+
+func (s *Settings) Reload() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	cfg, err := config.Load(s.path)
+	if err != nil {
+		return err
+	}
+	raw, err := os.ReadFile(s.path)
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	s.cfg, s.diskHash = cfg, sha256.Sum256(raw)
+	s.revision++
 	s.pool = unimatrix.NewPool()
 	return nil
 }
@@ -117,7 +193,7 @@ func (s *Settings) HasAgenticModel() bool {
 	if err != nil {
 		return false
 	}
-	return p.ExpandedKey() != ""
+	return p.Anonymous || p.ExpandedKey() != ""
 }
 
 func (s *Settings) Effort() babel.Effort {
@@ -380,7 +456,7 @@ func (s *Settings) ProviderClient(providerName string) (*babel.Client, error) {
 	if !ok {
 		return nil, fmt.Errorf("settings: unknown provider %q", providerName)
 	}
-	return s.pool.Client(p.Name, p.BaseURL, p.ExpandedKey(), p.Wire, providerTimeout(p)), nil
+	return s.pool.ClientFor(p.Name, p.BaseURL, p.ExpandedKey(), p.Wire, p.Anonymous, providerTimeout(p)), nil
 }
 
 // clientForModel returns the pooled client for a model's provider (openai only
@@ -390,7 +466,7 @@ func (s *Settings) clientForModel(m unimatrix.Model) (*babel.Client, error) {
 	if err != nil {
 		return nil, err
 	}
-	return s.pool.Client(p.Name, p.BaseURL, p.ExpandedKey(), p.Wire, providerTimeout(p)), nil
+	return s.pool.ClientFor(p.Name, p.BaseURL, p.ExpandedKey(), p.Wire, p.Anonymous, providerTimeout(p)), nil
 }
 
 // RouteClient resolves a declarative route while enforcing sensitivity and
@@ -443,7 +519,7 @@ func (s *Settings) RouteClient(routeName string, sensitivity history.Sensitivity
 	}
 	sort.SliceStable(candidates, func(i, j int) bool { return candidates[i].rank < candidates[j].rank })
 	chosen := candidates[0]
-	return s.pool.Client(chosen.provider.Name, chosen.provider.BaseURL, chosen.provider.ExpandedKey(), chosen.provider.Wire, providerTimeout(chosen.provider)), chosen.model, nil
+	return s.pool.ClientFor(chosen.provider.Name, chosen.provider.BaseURL, chosen.provider.ExpandedKey(), chosen.provider.Wire, chosen.provider.Anonymous, providerTimeout(chosen.provider)), chosen.model, nil
 }
 
 func providerClearance(value string) history.Sensitivity {

@@ -11,6 +11,7 @@ package tools
 
 import (
 	"context"
+	"io"
 	"sort"
 
 	"deepthought-cli/internal/babel"
@@ -55,8 +56,38 @@ func NewRegistry(ts ...Tool) *Registry {
 
 // Lookup finds a tool by the name the model used in its tool_call.
 func (r *Registry) Lookup(name string) (Tool, bool) {
+	if r == nil {
+		return nil, false
+	}
 	t, ok := r.byName[name]
 	return t, ok
+}
+
+// Fork isolates stateful tools for each terminal session.
+func (r *Registry) Fork() *Registry {
+	if r == nil {
+		return NewRegistry()
+	}
+	var ts []Tool
+	for _, name := range r.order {
+		t := r.byName[name]
+		if _, ok := t.(*Bash); ok {
+			t = NewGuardedBash()
+		}
+		ts = append(ts, t)
+	}
+	return NewRegistry(ts...)
+}
+
+func (r *Registry) Close() {
+	if r == nil {
+		return
+	}
+	for _, t := range r.byName {
+		if c, ok := t.(io.Closer); ok {
+			_ = c.Close()
+		}
+	}
 }
 
 // Schemas renders the registry as the OpenAI request `tools` array, in stable order

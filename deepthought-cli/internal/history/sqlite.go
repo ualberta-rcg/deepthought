@@ -48,6 +48,10 @@ func NewSQLiteStore(path, bodyDir string) (*SQLiteStore, error) {
 		_ = db.Close()
 		return nil, err
 	}
+	if err := store.migrateIdentity(path); err != nil {
+		_ = db.Close()
+		return nil, err
+	}
 	return store, nil
 }
 
@@ -79,8 +83,7 @@ CREATE TABLE IF NOT EXISTS interactions (
   last_used TEXT,
   created_at TEXT NOT NULL,
   updated_at TEXT,
-  legacy_json BLOB,
-  UNIQUE(session_id, body_hash)
+  legacy_json BLOB
 );
 CREATE INDEX IF NOT EXISTS interactions_session_created ON interactions(session_id, created_at);
 CREATE INDEX IF NOT EXISTS interactions_collective_kind_state ON interactions(collective_id, kind, state);
@@ -105,6 +108,13 @@ CREATE TABLE IF NOT EXISTS summaries (
 CREATE TABLE IF NOT EXISTS migrations (
   name TEXT NOT NULL PRIMARY KEY,
   completed_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS body_versions (
+ interaction_id TEXT NOT NULL, body_hash BLOB NOT NULL, body BLOB, body_ref TEXT,
+ created_at TEXT NOT NULL, PRIMARY KEY(interaction_id, body_hash)
+);
+CREATE TABLE IF NOT EXISTS drone_metadata (
+ interaction_id TEXT PRIMARY KEY, summaries TEXT NOT NULL, links TEXT NOT NULL
 );`)
 	return err
 }
@@ -112,7 +122,7 @@ CREATE TABLE IF NOT EXISTS migrations (
 // MigrateLegacyChats imports the existing JSONL collectives exactly once.
 func (s *SQLiteStore) MigrateLegacyChats(dir string) error {
 	var marker string
-	err := s.db.QueryRow(`SELECT name FROM migrations WHERE name='jsonl_to_drones_v1'`).Scan(&marker)
+	err := s.db.QueryRow(`SELECT name FROM migrations WHERE name='jsonl_to_drones_v2'`).Scan(&marker)
 	if err == nil {
 		return nil
 	}
@@ -124,21 +134,22 @@ func (s *SQLiteStore) MigrateLegacyChats(dir string) error {
 		return err
 	}
 	for _, summary := range summaries {
+		var exists int
+		if err := s.db.QueryRow(`SELECT count(*) FROM interactions WHERE id=? AND legacy_json IS NOT NULL`, summary.ID).Scan(&exists); err != nil {
+			return err
+		}
+		if exists > 0 {
+			continue
+		} // never overwrite chats updated since import
 		coll, err := NewFileStore(dir).GetCollective(summary.ID)
 		if err != nil {
 			return fmt.Errorf("migrate %s: %w", summary.ID, err)
 		}
-		drones, err := DronesFromCollective(coll)
-		if err != nil {
-			return err
-		}
-		for _, drone := range drones {
-			if err := s.SaveDrone(context.Background(), drone, nil); err != nil {
-				return fmt.Errorf("migrate %s/%s: %w", summary.ID, drone.ID, err)
-			}
+		if err := s.SaveCollective(coll); err != nil {
+			return fmt.Errorf("migrate %s: %w", summary.ID, err)
 		}
 	}
-	_, err = s.db.Exec(`INSERT INTO migrations(name,completed_at) VALUES('jsonl_to_drones_v1',?)`, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err = s.db.Exec(`INSERT OR IGNORE INTO migrations(name,completed_at) VALUES('jsonl_to_drones_v2',?)`, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
 
@@ -160,7 +171,7 @@ func (s *SQLiteStore) Export(dir string) error {
 	for _, sum := range sums {
 		coll, err := s.GetCollective(sum.ID)
 		if err != nil {
-			continue // skip unreadable collectives rather than aborting the export
+			return fmt.Errorf("export %s: %w", sum.ID, err)
 		}
 		f, err := os.OpenFile(filepath.Join(dir, sum.ID+".jsonl"), os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if err != nil {
@@ -328,20 +339,12 @@ func (s *SQLiteStore) SaveDrone(ctx context.Context, drone *Drone, legacy []byte
 	if drone == nil || drone.ID == "" {
 		return errors.New("sqlite store: empty drone")
 	}
-	if len(drone.BodyHash) == 0 {
+	{
 		raw, hash, err := canonicalBody(json.RawMessage(drone.Body))
 		if err != nil {
 			return err
 		}
 		drone.Body, drone.BodyHash = raw, hash
-	}
-	var existing string
-	err := s.db.QueryRowContext(ctx, `SELECT id FROM interactions WHERE session_id=? AND body_hash=?`, drone.SessionID, drone.BodyHash).Scan(&existing)
-	if err == nil && existing != drone.ID {
-		return nil // idempotent duplicate body in this session
-	}
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
-		return err
 	}
 	body, bodyRef, err := s.inlineOrSpill(drone.Body, drone.BodyHash)
 	if err != nil {
@@ -368,7 +371,7 @@ INSERT INTO interactions
 (id,kind,session_id,collective_id,parent_id,body,body_ref,body_hash,state,pinned,poisoned,tokens,cost,producer,outcome,fail_class,sensitivity,use_count,last_used,created_at,updated_at,legacy_json)
 VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(id) DO UPDATE SET
- body=excluded.body, body_ref=excluded.body_ref, state=excluded.state,
+ body=excluded.body, body_ref=excluded.body_ref, body_hash=excluded.body_hash, state=excluded.state,
  pinned=excluded.pinned, poisoned=excluded.poisoned, tokens=excluded.tokens,
  cost=excluded.cost, producer=excluded.producer, outcome=excluded.outcome,
  fail_class=excluded.fail_class, sensitivity=excluded.sensitivity,
@@ -381,6 +384,20 @@ ON CONFLICT(id) DO UPDATE SET
 		formatTime(drone.CreatedAt), formatTime(drone.UpdatedAt), legacy)
 	if err != nil {
 		return fmt.Errorf("sqlite store: save interaction: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT OR IGNORE INTO body_versions(interaction_id,body_hash,body,body_ref,created_at) VALUES(?,?,?,?,?)`, drone.ID, drone.BodyHash, body, bodyRef, time.Now().UTC().Format(time.RFC3339Nano)); err != nil {
+		return err
+	}
+	summaryJSON, err := json.Marshal(drone.Summaries)
+	if err != nil {
+		return err
+	}
+	linksJSON, err := json.Marshal(drone.Links)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO drone_metadata(interaction_id,summaries,links) VALUES(?,?,?) ON CONFLICT(interaction_id) DO UPDATE SET summaries=excluded.summaries,links=excluded.links`, drone.ID, string(summaryJSON), string(linksJSON)); err != nil {
+		return err
 	}
 	for ordinal, link := range drone.Links {
 		meta, _ := json.Marshal(link.Metadata)
@@ -401,8 +418,17 @@ func (s *SQLiteStore) inlineOrSpill(body, hash []byte) ([]byte, any, error) {
 	name := hex.EncodeToString(hash) + ".json"
 	path := filepath.Join(s.bodyDir, name)
 	if _, err := os.Stat(path); os.IsNotExist(err) {
-		tmp := path + ".tmp"
-		if err := os.WriteFile(tmp, body, 0o600); err != nil {
+		f, err := os.CreateTemp(s.bodyDir, ".body-*")
+		if err != nil {
+			return nil, nil, err
+		}
+		tmp := f.Name()
+		defer os.Remove(tmp)
+		if _, err := f.Write(body); err != nil {
+			f.Close()
+			return nil, nil, err
+		}
+		if err := f.Close(); err != nil {
 			return nil, nil, err
 		}
 		if err := os.Rename(tmp, path); err != nil {
@@ -433,6 +459,11 @@ func (s *SQLiteStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 		}
 	}
 	d.Body = body
+	_, actualHash, hashErr := canonicalBody(json.RawMessage(body))
+	if hashErr != nil {
+		return nil, hashErr
+	}
+	d.BodyHash = actualHash
 	_ = json.Unmarshal([]byte(tokens), &d.Tokens)
 	_ = json.Unmarshal([]byte(cost), &d.Cost)
 	_ = json.Unmarshal([]byte(producer), &d.Producer)
@@ -447,6 +478,18 @@ func (s *SQLiteStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 	if lastUsed.Valid {
 		parsed, _ := time.Parse(time.RFC3339Nano, lastUsed.String)
 		d.LastUsed = &parsed
+	}
+	var summaryJSON, linksJSON string
+	err := s.db.QueryRowContext(ctx, `SELECT summaries,links FROM drone_metadata WHERE interaction_id=?`, id).Scan(&summaryJSON, &linksJSON)
+	if err == nil {
+		if err := json.Unmarshal([]byte(summaryJSON), &d.Summaries); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(linksJSON), &d.Links); err != nil {
+			return nil, err
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
 	}
 	return &d, nil
 }
@@ -472,10 +515,13 @@ func (s *SQLiteStore) GetCollective(id string) (*Collective, error) {
 		var kind struct {
 			Kind string `json:"Kind"`
 		}
-		if json.Unmarshal(raw, &kind) != nil {
-			continue
+		if err := json.Unmarshal(raw, &kind); err != nil {
+			return nil, fmt.Errorf("history %s: %w", id, err)
 		}
 		obj, err := decodeByKind(kind.Kind, raw)
+		if err != nil {
+			return nil, fmt.Errorf("history %s: %w", id, err)
+		}
 		if err == nil {
 			e := obj.(Entity)
 			v := e.GetVinculum()
@@ -490,6 +536,9 @@ func (s *SQLiteStore) GetCollective(id string) (*Collective, error) {
 		}
 	}
 	var coll *Collective
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
 	for _, entity := range entities {
 		if value, ok := entity.(*Collective); ok {
 			coll = value

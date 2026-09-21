@@ -127,10 +127,11 @@ func (u *wireUsage) usage() Usage {
 // fields are immutable after NewClient and http.Client is goroutine-safe — so one
 // client is shared across all SSH sessions.
 type Client struct {
-	BaseURL string // gateway URL incl. version prefix, e.g. .../serving/api/v1
-	APIKey  string
-	Wire    string
-	HTTP    *http.Client
+	BaseURL        string // gateway URL incl. version prefix, e.g. .../serving/api/v1
+	APIKey         string
+	AllowAnonymous bool
+	Wire           string
+	HTTP           *http.Client
 }
 
 // NewClient builds a Client with a timeout generous enough for KServe cold starts
@@ -254,10 +255,11 @@ func applyEffort(w *wireRequest, req ChatRequest) {
 type wireResponse struct {
 	Choices []struct {
 		Message struct {
-			Role             string `json:"role"`
-			Content          string `json:"content"`
-			Reasoning        string `json:"reasoning"`
-			ReasoningContent string `json:"reasoning_content"`
+			ToolCalls        []ToolCall `json:"tool_calls"`
+			Role             string     `json:"role"`
+			Content          string     `json:"content"`
+			Reasoning        string     `json:"reasoning"`
+			ReasoningContent string     `json:"reasoning_content"`
 		} `json:"message"`
 		FinishReason string `json:"finish_reason"`
 	} `json:"choices"`
@@ -275,7 +277,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (Reply, error) {
 	if c.Wire == "anthropic" {
 		return c.chatAnthropic(ctx, req)
 	}
-	if c.APIKey == "" {
+	if c.APIKey == "" && !c.AllowAnonymous {
 		return Reply{}, errors.New("babel: empty API key (set provider.api_key in config)")
 	}
 	if c.BaseURL == "" {
@@ -286,7 +288,7 @@ func (c *Client) Chat(ctx context.Context, req ChatRequest) (Reply, error) {
 	if err == nil {
 		return reply, nil
 	}
-	if status == http.StatusBadRequest && req.Effort != "" {
+	if status == http.StatusBadRequest && req.Effort != "" && effortRejected(raw) {
 		fallback := req
 		fallback.Effort, fallback.ReasoningStyle, fallback.Thinking = "", "", false
 		if retried, _, _, retryErr := c.chatOpenAIOnce(ctx, fallback); retryErr == nil {
@@ -310,7 +312,9 @@ func (c *Client) chatOpenAIOnce(ctx context.Context, req ChatRequest) (Reply, in
 	if err != nil {
 		return Reply{}, 0, nil, fmt.Errorf("babel: build request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
 
@@ -341,7 +345,7 @@ func (c *Client) chatOpenAIOnce(ctx context.Context, req ChatRequest) (Reply, in
 	}
 	msg := wr.Choices[0].Message
 	text, inlineReasoning := extractThinkTags(msg.Content)
-	return Reply{Text: text, Reasoning: coalesce(msg.Reasoning, msg.ReasoningContent, inlineReasoning), Usage: wr.Usage.usage()}, resp.StatusCode, raw, nil
+	return Reply{Text: text, Reasoning: coalesce(msg.Reasoning, msg.ReasoningContent, inlineReasoning), ToolCalls: msg.ToolCalls, Usage: wr.Usage.usage()}, resp.StatusCode, raw, nil
 }
 
 // coalesce returns the first non-empty string.
@@ -377,7 +381,7 @@ type modelsResponse struct {
 // Used by the settings editor's "list models" discovery. Providers that don't
 // implement the endpoint return an error (surfaced in the UI, not a crash).
 func (c *Client) ListModels(ctx context.Context) ([]string, error) {
-	if c.APIKey == "" {
+	if c.APIKey == "" && !c.AllowAnonymous {
 		return nil, errors.New("babel: empty API key")
 	}
 	if c.BaseURL == "" {
@@ -387,7 +391,9 @@ func (c *Client) ListModels(ctx context.Context) ([]string, error) {
 	if err != nil {
 		return nil, fmt.Errorf("babel: build models request: %w", err)
 	}
-	req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		req.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	req.Header.Set("Accept", "application/json")
 
 	resp, err := c.HTTP.Do(req)
@@ -436,6 +442,9 @@ type StreamFn func(d StreamDelta)
 // Reasoning models stream the thinking trace in Delta.Reasoning (or
 // Delta.ReasoningContent on some vLLM builds) before any content arrives.
 type streamChunk struct {
+	Error *struct {
+		Message string `json:"message"`
+	} `json:"error"`
 	Choices []struct {
 		Delta struct {
 			Role             string `json:"role"`
@@ -473,7 +482,7 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 	if c.Wire == "anthropic" {
 		return c.chatStreamAnthropic(ctx, req, fn)
 	}
-	if c.APIKey == "" {
+	if c.APIKey == "" && !c.AllowAnonymous {
 		return Reply{}, errors.New("babel: empty API key (set provider.api_key in config)")
 	}
 	if c.BaseURL == "" {
@@ -490,7 +499,9 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 	if err != nil {
 		return Reply{}, fmt.Errorf("babel: build request: %w", err)
 	}
-	httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	if c.APIKey != "" {
+		httpReq.Header.Set("Authorization", "Bearer "+c.APIKey)
+	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "text/event-stream")
 
@@ -502,7 +513,7 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 
 	if resp.StatusCode != http.StatusOK {
 		raw, _ := io.ReadAll(io.LimitReader(resp.Body, MaxBody))
-		if resp.StatusCode == http.StatusBadRequest && req.Effort != "" {
+		if resp.StatusCode == http.StatusBadRequest && req.Effort != "" && effortRejected(raw) {
 			fallback := req
 			fallback.Effort, fallback.ReasoningStyle, fallback.Thinking = "", "", false
 			return c.ChatStream(ctx, fallback, fn)
@@ -513,6 +524,8 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 	var acc, racc strings.Builder
 	byIndex := map[int]*accCall{}
 	var usage Usage // last non-zero usage seen (OpenAI sends it on the final chunk)
+	finished := false
+	var streamErr error
 	sc := bufio.NewScanner(resp.Body)
 	sc.Buffer(make([]byte, 0, 64<<10), 1<<20) // 1 MiB max line (huge deltas / tool payloads)
 	for sc.Scan() {
@@ -525,11 +538,20 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 		}
 		payload := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if payload == "[DONE]" {
+			finished = true
 			break
 		}
 		var ch streamChunk
 		if err := json.Unmarshal([]byte(payload), &ch); err != nil {
-			continue // skip malformed/keep-alive lines rather than aborting a good stream
+			streamErr = fmt.Errorf("babel: malformed stream event: %w", err)
+			break
+		}
+		if ch.Error != nil {
+			streamErr = fmt.Errorf("babel: stream: %s", ch.Error.Message)
+			break
+		}
+		if len(ch.Choices) > 0 && ch.Choices[0].FinishReason != "" {
+			finished = true
 		}
 		if len(ch.Choices) == 0 {
 			// A chunk with usage but no choices (the terminal usage frame some
@@ -574,7 +596,18 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 	if err := sc.Err(); err != nil {
 		return reply, fmt.Errorf("babel: read stream: %w", err)
 	}
+	if streamErr != nil {
+		return reply, streamErr
+	}
+	if !finished {
+		return reply, fmt.Errorf("babel: stream ended without a completion marker")
+	}
 	return reply, nil
+}
+
+func effortRejected(raw []byte) bool {
+	s := strings.ToLower(string(raw))
+	return strings.Contains(s, "reasoning") || strings.Contains(s, "thinking") || strings.Contains(s, "effort") || strings.Contains(s, "chat_template_kwargs")
 }
 
 func extractThinkTags(content string) (text, reasoning string) {

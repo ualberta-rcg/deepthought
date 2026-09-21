@@ -35,7 +35,7 @@ func (c *Collective) messagesAt(level func(*Incursion, *Transmission, *Probe) Su
 	out = append(out, babel.Message{Role: "system", Content: c.SystemPrompt})
 
 	for _, inc := range c.Incursions {
-		if inc.Status == IncursionFailed {
+		if inc.Status == IncursionFailed && len(inc.Transmissions) == 0 {
 			continue
 		}
 
@@ -55,9 +55,13 @@ func (c *Collective) messagesAt(level func(*Incursion, *Transmission, *Probe) Su
 			out = append(out, msg)
 
 			for _, p := range tx.Probes {
+				content := p.Summary(level(inc, tx, p))
+				if p.Status == ProbePending || p.Status == ProbeRunning {
+					content = "Tool execution interrupted; outcome unknown. Verify side effects before retrying."
+				}
 				out = append(out, babel.Message{
 					Role:       "tool",
-					Content:    p.Summary(level(inc, tx, p)),
+					Content:    content,
 					ToolCallID: p.WireID,
 				})
 			}
@@ -75,7 +79,7 @@ func stateToLevel(s State) SummaryLevel {
 		return SummaryCondensed
 	case StateLine:
 		return SummarySemantic
-	case StateTombstone:
+	case StateTombstone, StateElided:
 		return SummaryTombstone
 	default:
 		return SummaryFull

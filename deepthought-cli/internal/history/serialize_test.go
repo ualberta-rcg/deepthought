@@ -18,6 +18,7 @@ func TestMessagesByStateIdenticalToFullWhenFull(t *testing.T) {
 		ID: "c1", Type: "function", Function: babel.FunctionCall{Name: "read", Arguments: `{}`},
 	}})
 	tx.Probes[0].Result = ResultView{Content: "body", Summaries: SummarySet{Full: "body"}}
+	tx.Probes[0].Status = ProbeCompleted
 	inc.MarkCompleted()
 
 	want := coll.Messages(SummaryFull)
@@ -46,6 +47,7 @@ func TestMessagesByStateRendersDemotedProbe(t *testing.T) {
 		Summaries: SummarySet{Full: "big body", Tombstone: "[summarized]"},
 	}
 	tx.Probes[0].State = StateTombstone
+	tx.Probes[0].Status = ProbeCompleted
 	inc.MarkCompleted()
 
 	msgs := coll.MessagesByState()

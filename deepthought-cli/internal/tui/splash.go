@@ -12,7 +12,7 @@ import (
 
 const (
 	splashVersion = "DeepThought v0.0.1"
-	splashHint    = "press any key to continue"
+	splashHint    = "↑/↓ choose · enter select"
 )
 
 // splashSubtitles are the rotating HHGTTG one-liners shown under the DON'T
@@ -53,6 +53,8 @@ type SplashModel struct {
 	sub       string // chosen subtitle for this boot
 	width     int
 	height    int
+	selected  int
+	notice    string
 }
 
 // NewSplashModel builds a splash with the braille spinner. boot feeds the
@@ -85,14 +87,23 @@ func (m SplashModel) Init() tea.Cmd {
 // configured) the Settings add-provider area. HoldDoneMsg is accepted
 // defensively (stale timers from an earlier screen); splash arms none itself.
 func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
-	switch msg.(type) {
+	switch msg := msg.(type) {
 	case spinner.TickMsg:
 		var cmd tea.Cmd
 		m.spin, cmd = m.spin.Update(msg)
 		m.spinFrame++
 		return m, cmd
-	case tea.KeyPressMsg, HoldDoneMsg:
-		return m, func() tea.Msg { return SplashAdvanceMsg{} }
+	case tea.KeyPressMsg:
+		switch msg.String() {
+		case "up", "down", "tab", "shift+tab":
+			m.selected = 1 - m.selected
+			m.notice = ""
+		case "enter":
+			if m.selected == 0 {
+				return m, func() tea.Msg { return SplashAdvanceMsg{} }
+			}
+			m.notice = "Server login is coming soon. Run standalone to begin."
+		}
 	}
 	return m, nil
 }
@@ -111,19 +122,24 @@ func (m SplashModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	header := dontPanicHeader(m.width, m.height-footerRows)
+	header := dontPanicHeader(m.width, m.height-footerRows-4)
+	choices := []string{"  Run standalone", "  Log in to server — coming soon"}
+	choices[m.selected] = "› " + strings.TrimSpace(choices[m.selected])
 
 	block := lipgloss.JoinVertical(lipgloss.Center,
 		header,
+		styleName.Render("DeepThought"),
 		"",
 		styleVersion.Render(m.sub),
 		styleVersion.Render(m.statusLine()),
 		styleVersion.Render(splashVersion),
-		spinnerGlyph(m.spinFrame)+" "+styleVerb.Render(m.verb),
+		styleName.Render(choices[0]),
+		styleVersion.Render(choices[1]),
+		styleVersion.Render(m.notice),
 		"",
 		styleVersion.Render(splashHint),
 	)
-	return placeCenter(m.width, m.height, block)
+	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(placeCenter(m.width, m.height, block))
 }
 
 // statusLine renders the boot model + provider (or a not-ready hint).
@@ -144,8 +160,7 @@ func (m SplashModel) statusLine() string {
 // cyan→violet brand shade, static.
 func dontPanicHeader(width, height int) string {
 	for _, cand := range [][]string{
-		bigTextIn(bigTextFont, "DON'T PANIC"),
-		stackArt(bigTextIn(bigTextFont, "DON'T"), bigTextIn(bigTextFont, "PANIC")),
+		bigTextIn("standard", "DON'T PANIC"),
 		bigTextIn(smallTextFont, "DON'T PANIC"),
 	} {
 		if len(cand) > 0 && widestRow(cand) <= width && len(cand) <= height {

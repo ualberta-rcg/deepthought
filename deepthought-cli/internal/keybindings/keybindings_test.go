@@ -8,7 +8,7 @@ import (
 
 func TestDefaultsAndOverrides(t *testing.T) {
 	m := Defaults()
-	if got, ok := m.Resolve(Global, "f2"); !ok || got != Settings {
+	if got, ok := m.Resolve(Global, "f1"); !ok || got != Settings {
 		t.Fatalf("f2=%q ok=%v", got, ok)
 	}
 	path := filepath.Join(t.TempDir(), "keys.json")

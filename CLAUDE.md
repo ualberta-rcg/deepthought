@@ -38,10 +38,9 @@ identifiers must not reintroduce them.
 
 ## Environment (Vulcan HPC login node)
 
-- Builds happen on the login node by explicit user choice for this project's dev
-  loop (org policy would say offload to Slurm). Keep compiles to the app trees;
-  Go caches live on `$SCRATCH/deepthought-cli/{gocache,gomodcache}` via
-  `go env -w`.
+- Builds, tests, and race checks run in Slurm CPU jobs, never on the shared
+  login node. Discover the account and toolchain first; set account, CPUs,
+  memory, and time explicitly. Keep job outputs and Go caches on scratch.
 - Job I/O on `$SCRATCH`, not `$HOME` (50 GB quota). The CLI's deploy dir is
   `$SCRATCH/deepthought-cli/`; its SSH host key (`host_ed25519`) never gets
   committed.

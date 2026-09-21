@@ -121,7 +121,7 @@ func (s *Session) runTool(ctx context.Context, call babel.ToolCall) tools.Result
 	if decision == queen.Ask && (s.Approve == nil || !s.Approve(ctx, call)) {
 		return tools.Result{IsError: true, Content: "User declined this tool call", Summary: "tool · declined"}
 	}
-	return tool.Run(ctx, args)
+	return tools.Execute(ctx, tool, args)
 }
 
 func (s *Session) emit(kind string, body any) {

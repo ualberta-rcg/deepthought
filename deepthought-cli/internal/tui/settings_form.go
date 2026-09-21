@@ -43,6 +43,10 @@ type fieldEdit struct {
 func newTextEdit(label, value string, password bool) *fieldEdit {
 	ti := textinput.New()
 	ti.Prompt = ""
+	if password {
+		ti.EchoMode = textinput.EchoPassword
+		ti.EchoCharacter = '•'
+	}
 	ti.SetValue(value)
 	ti.Focus()
 	return &fieldEdit{kind: fText, label: label, password: password, input: ti}

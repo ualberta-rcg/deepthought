@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"charm.land/bubbles/v2/viewport"
 	"charm.land/bubbletea/v2"
@@ -68,14 +69,16 @@ type CronModel struct {
 	view    cronView
 	cursor  int
 
-	edit    *fieldEdit // cvEdit raw-line editor
-	editIdx int        // index into pending rows, -1 = adding
-	confirm string     // what cvConfirm will do ("apply" | "undo")
-	toast   string
-	err     string
-	vp      viewport.Model
-	width   int
-	height  int
+	edit     *fieldEdit // cvEdit raw-line editor
+	editIdx  int        // index into pending rows, -1 = adding
+	confirm  string     // what cvConfirm will do ("apply" | "undo")
+	toast    string
+	err      string
+	vp       viewport.Model
+	width    int
+	height   int
+	applying bool
+	loaded   bool
 }
 
 // pendingTable is the staged next crontab: raw lines + which are new.
@@ -115,6 +118,10 @@ func (m CronModel) reloadCmd() tea.Cmd {
 			return cronLoadedMsg{err: err}
 		}
 		reg, err := client.LoadRegistry()
+		if err == nil {
+			reg.Observe(lines, time.Now().UTC())
+			err = client.SaveRegistry(reg)
+		}
 		return cronLoadedMsg{lines: lines, reg: reg, err: err}
 	}
 }
@@ -127,12 +134,14 @@ func (m CronModel) Update(msg tea.Msg) (CronModel, tea.Cmd) {
 			return m, nil
 		}
 		m.err = ""
+		m.loaded = true
 		m.lines, m.reg, m.preg = msg.lines, msg.reg, msg.reg
 		if m.pending == nil {
 			m.stage() // start staging from the live table
 		}
 		return m, nil
 	case cronAppliedMsg:
+		m.applying = false
 		if msg.err != nil {
 			m.err, m.toast = msg.err.Error(), ""
 			return m, nil
@@ -140,6 +149,9 @@ func (m CronModel) Update(msg tea.Msg) (CronModel, tea.Cmd) {
 		m.pending = nil
 		m.view, m.confirm = cvList, ""
 		return m, m.reloadCmd()
+	}
+	if m.applying {
+		return m, nil
 	}
 	if m.edit != nil {
 		if kp, ok := msg.(tea.KeyPressMsg); ok {
@@ -238,18 +250,39 @@ func (m CronModel) updateConfirm(key tea.KeyPressMsg) (CronModel, tea.Cmd) {
 			return m, m.reloadCmd()
 		}
 		client := m.client
+		m.applying = true
 		if m.confirm == "undo" {
 			return m, func() tea.Msg {
-				return cronAppliedMsg{err: client.Undo(context.Background())}
+				ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+				defer cancel()
+				return cronAppliedMsg{err: client.Undo(ctx)}
 			}
 		}
 		if m.pending == nil {
+			m.applying = false
 			m.view, m.confirm = cvList, ""
 			return m, nil
 		}
-		rows := m.pending.rows
+		rows := append([]string(nil), m.pending.rows...)
+		baseline := make([]string, len(m.lines))
+		for i, line := range m.lines {
+			baseline[i] = line.Raw
+		}
 		return m, func() tea.Msg {
-			return cronAppliedMsg{err: client.Install(context.Background(), rows)}
+			ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+			defer cancel()
+			live, err := client.List(ctx)
+			if err != nil {
+				return cronAppliedMsg{err: err}
+			}
+			current := make([]string, len(live))
+			for i, line := range live {
+				current[i] = line.Raw
+			}
+			if strings.Join(baseline, "\n") != strings.Join(current, "\n") {
+				return cronAppliedMsg{err: fmt.Errorf("crontab changed externally; reload and review again")}
+			}
+			return cronAppliedMsg{err: client.Install(ctx, rows)}
 		}
 	}
 	m.view, m.confirm = cvList, ""
@@ -302,9 +335,12 @@ func (m CronModel) beginEdit() (CronModel, tea.Cmd) {
 }
 
 func (m CronModel) beginAdd() (CronModel, tea.Cmd) {
-	m.pending.rows = append(m.pending.rows, "0 9 * * * echo hello")
-	idx := len(m.pending.rows) - 1
-	m.edit = newTextEdit("entry", m.pending.rows[idx], false)
+	if m.pending == nil {
+		m.toast = "Wait for the crontab to load."
+		return m, nil
+	}
+	idx := -1
+	m.edit = newTextEdit("entry", "0 9 * * * ", false)
 	m.edit.setWidth(m.width - 8)
 	m.editIdx, m.view, m.cursor = idx, cvEdit, len(m.pendingEntries())-1
 	return m, m.edit.input.Focus()
@@ -314,13 +350,20 @@ func (m CronModel) commitEdit() (CronModel, tea.Cmd) {
 	raw := strings.TrimSpace(m.edit.value())
 	if raw == "" {
 		m.edit, m.view = nil, cvList
+		if m.editIdx == -1 {
+			return m, nil
+		}
 		return m.stageDeleteAt(m.editIdx) // cleared = delete
 	}
 	if l := cron.Parse(raw); len(l) != 1 || l[0].Kind != cron.LineEntry {
 		m.toast = "not a valid crontab entry — fix it (esc cancels and removes the row)"
 		return m, nil // stay in the editor; nothing junk stays staged
 	}
-	m.pending.rows[m.editIdx] = raw
+	if m.editIdx == -1 {
+		m.pending.rows = append(m.pending.rows, raw)
+	} else {
+		m.pending.rows[m.editIdx] = raw
+	}
 	m.edit, m.toast, m.view = nil, "", cvList
 	return m, nil
 }

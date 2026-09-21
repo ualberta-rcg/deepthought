@@ -130,6 +130,7 @@ func NewRootModel(d Deps) RootModel {
 		settings:  tui.NewSettingsModel(d.Live, d.Settings),
 		grid:      tui.NewGridModel(),
 		statusScr: tui.NewStatusModel(statusInputs(d)),
+		modelsScr: tui.NewModelsModel(d.Live),
 		cronScr:   tui.NewCronModel(cronDataDir()),
 		bindings:  d.Bindings,
 	}
@@ -271,7 +272,7 @@ func splashBoot(live *Settings) tui.BootInfo {
 // activeInit (rather than splash.Init unconditionally) means --no-splash, which
 // starts on the menu, doesn't spin up an off-screen splash timer.
 func (m RootModel) Init() tea.Cmd {
-	cmds := []tea.Cmd{tui.TickClock(), m.activeInit(), checkModelCmd(m.deps.Live)}
+	cmds := []tea.Cmd{tui.TickClock(), m.activeInit()}
 	// Background Slurm poll: fetch immediately at login (only where Slurm
 	// exists), then re-arm every 5 min from the handler. The Status page reads
 	// the cached snapshot, so opening it never blocks.
@@ -285,6 +286,21 @@ func (m RootModel) Init() tea.Cmd {
 }
 
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if tui.IsChatEvent(msg) {
+		var cmd tea.Cmd
+		m.chat, cmd = m.chat.Update(msg)
+		return m, cmd
+	}
+	if tui.IsModelsEvent(msg) {
+		var cmd tea.Cmd
+		m.modelsScr, cmd = m.modelsScr.Update(msg)
+		return m, cmd
+	}
+	if tui.IsCronEvent(msg) {
+		var cmd tea.Cmd
+		m.cronScr, cmd = m.cronScr.Update(msg)
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tui.TickMsg:
 		m.sidebar.Clock = time.Time(msg)
@@ -396,6 +412,11 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.pushScreenOnce(msg.To)
 		return m, m.activeInit()
 	case tui.ResumeChatMsg:
+		if m.chat.Busy() {
+			m.chat = m.chat.Notice("Interrupt the active turn before switching chats.")
+			m.screen = tui.ScreenChat
+			return m, nil
+		}
 		// Rebuild the chat model around the selected collective; resuming a chat
 		// is a new root.
 		cm, err := tui.ResumeChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.deps.ChatSource, msg.CollectID)
@@ -450,7 +471,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, cmd
 		}
-		if !m.screenCapturesKeys() {
+		if m.screen != tui.ScreenSplash && !m.screenCapturesKeys() {
 			if action, ok := m.bindings.Resolve(keybindings.Global, msg.String()); ok {
 				return m.handleAction(action)
 			}
@@ -531,8 +552,13 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// instant cluster poll so the data is fresh.
 		m.statusScr = m.statusScr.SetHealth(m.healthOK, m.healthMsg).SetClock(m.clock)
 		m.pushScreenOnce(tui.ScreenStatus)
-		return m, tea.Batch(m.statusScr.Init(), pollClusterCmd())
+		return m, m.statusScr.Init()
 	case keybindings.NewChat:
+		if m.chat.Busy() {
+			m.chat = m.chat.Notice("Interrupt the active turn before starting a new chat.")
+			m.screen = tui.ScreenChat
+			return m, nil
+		}
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
 		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetEnv(m.env).

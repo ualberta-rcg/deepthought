@@ -36,7 +36,7 @@ func TestSQLiteStoreRoundTripAndIdempotency(t *testing.T) {
 		t.Fatalf("duplicate should be idempotent: %v", err)
 	}
 	var count int
-	if err := store.db.QueryRow(`SELECT COUNT(*) FROM interactions`).Scan(&count); err != nil || count != 1 {
+	if err := store.db.QueryRow(`SELECT COUNT(*) FROM interactions`).Scan(&count); err != nil || count != 2 {
 		t.Fatalf("count=%d err=%v", count, err)
 	}
 }

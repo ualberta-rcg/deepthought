@@ -17,6 +17,25 @@ running tools, and executing shell commands under a permission gate.
 
 ## Status
 
+### Reliability release (2026-09-20)
+
+- Welcome requires Enter on **Run standalone**. **Log in to server — coming soon**
+  is informational. No model health request is made at startup.
+- F1 opens Settings; F2 shows Help. Models is initialized with the live store.
+- Async chat, model, and cron results are routed to their owners when off screen.
+  Chat results carry collective/turn ownership; interruption cancels tools and
+  invalidates pending approvals. Finish or interrupt a turn before changing chats.
+- SSH connections isolate shell and Queen state. Shells recover after cancellation.
+- Tools validate JSON Schema before execution. Denies precede grants; new saved
+  grants match exact canonical arguments. Ambiguous compound shell calls ask.
+- SQLite keeps distinct event identities and body revisions. JSONL migration
+  retains resume data. Existing table columns and legacy JSON remain compatible
+  with older running sessions; schema migration first backs up the database.
+- Settings use revision checks and a file lock. Password fields are masked.
+  Providers may explicitly set `anonymous: true` for endpoints without keys.
+- See the root review report for remaining implementation stages; older milestone
+  descriptions below include historical architecture and are not acceptance tests.
+
 - **Repository:** `ualberta-rcg/deepthought` (GitHub), this product lives in
   `deepthought-cli/` — the repo also holds a `deepthought-server/` scaffold and a
   root `CLAUDE.md` + `CHANGELOG.md` (the root CLAUDE.md carries repo-wide rules,
@@ -152,13 +171,10 @@ running tools, and executing shell commands under a permission gate.
 
 ## Running environment (Vulcan login node)
 
-This box is a shared HPC login node, **not** a laptop. The org policy
-(`/etc/claude-code/CLAUDE.md`) says "never compile on the login node; offload to a
-job or `salloc`." **For this project the user has explicitly chosen to build on the
-login node** for the dev loop; keep the footprint small: **module/build caches on
-`$SCRATCH`, not `$HOME`** (`go env -w GOCACHE/GOMODCACHE` already set), and keep
-compiles to this tree. An interactive `salloc` shell is the compliant
-alternative if the node ever feels it.
+This is a shared HPC login node. Builds, tests, and race checks must run in
+Slurm CPU jobs. Discover available accounts and software first, set account,
+CPU, memory and time explicitly, and keep build caches and job output on
+scratch. The current user instruction supersedes historical build exceptions.
 
 - Editing source and `go mod`/`go get`/`go mod tidy` are always fine.
 - Caches: `GOCACHE=$SCRATCH/deepthought-cli/gocache`,
