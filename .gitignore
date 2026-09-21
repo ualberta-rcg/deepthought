@@ -19,3 +19,4 @@ host_ed25519*
 # IDE / OS noise
 .DS_Store
 *.swp
+slurm-*.out
