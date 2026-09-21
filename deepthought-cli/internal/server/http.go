@@ -18,6 +18,7 @@ import (
 
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/server/store"
 	"deepthought-cli/internal/skills"
 )
 
@@ -37,8 +38,8 @@ type API struct {
 	Version  string
 	// DB is the shared MySQL pool; nil disables the DB-backed endpoints
 	// (user settings, chats) with a 503.
-	DB   *sql.DB
-	Users *history.UserStore
+	DB    *sql.DB
+	Users *store.UserStore
 }
 
 // NewMux builds the full route table.
@@ -180,7 +181,7 @@ func (a *API) putUserSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	rev, err := a.Users.SetSettings(sanitizeUserID(SessionUser(r)), req.Settings, req.Revision)
-	if errors.Is(err, history.ErrSettingsRevision) {
+	if errors.Is(err, store.ErrSettingsRevision) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "settings changed on the server; pull before push"})
 		return
 	}

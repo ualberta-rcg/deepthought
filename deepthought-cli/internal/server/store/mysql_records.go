@@ -1,4 +1,4 @@
-package history
+package store
 
 // The records KV on MySQL (port of the SQLite local_records in records.go),
 // user-scoped: every key lives under (user_id, kind, id), so workflows and
@@ -77,9 +77,9 @@ func (s *MySQLStore) Records(kind string) ([]Record, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	var out []Record
+	var out []history.Record
 	for rows.Next() {
-		var r Record
+		var r history.Record
 		var stamp string
 		if err := rows.Scan(&r.ID, &r.Data, &stamp); err != nil {
 			return nil, err

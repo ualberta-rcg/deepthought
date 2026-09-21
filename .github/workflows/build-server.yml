@@ -7,8 +7,9 @@ name: Build & Push Server Image
 # DOCKER_HUB_REPO secret or repository Variable override.
 #
 # Server-only: the Go compile happens inside docker build
-# (deepthought-cli/Dockerfile, multi-stage → distroless). No CLI checks,
-# binaries, or artifacts are produced here.
+# (deepthought-cli/Dockerfile, multi-stage → distroless). Deployment does NO
+# testing — the code was tested when it was built (build-cli.yml); this lane
+# only produces and publishes the image.
 
 on:
   push:
@@ -29,57 +30,6 @@ on:
         default: 'latest'
 
 jobs:
-  test-store:
-    name: Store tests (MySQL)
-    runs-on: ubuntu-24.04
-
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: deepthought
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: deepthought-cli/go.mod
-
-      - name: Run MySQL store tests
-        env:
-          DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought
-        run: |
-          set -uo pipefail
-          cd deepthought-cli
-          # Failures are echoed into the job summary, which is publicly
-          # viewable (the run log requires auth).
-          go test ./internal/history -run TestMySQL -v -count=1 2>&1 | tee /tmp/test.log
-          status=${PIPESTATUS[0]}
-          if [ "$status" -ne 0 ]; then
-            {
-              echo "## MySQL test failures"
-              echo '```'
-              grep -E "FAIL|--- FAIL|Error|error|panic" /tmp/test.log | head -40
-              echo '```'
-            } >> "$GITHUB_STEP_SUMMARY"
-            # Annotations are readable via the public API (summaries are not).
-            { grep -E "^--- FAIL|^    .*\.go:[0-9]+:|Error [0-9]+|panic" /tmp/test.log | head -10; echo "---- last lines ----"; tail -8 /tmp/test.log; } | while IFS= read -r line; do
-              echo "::error::${line}"
-            done
-            exit "$status"
-          fi
-
   build-and-push:
     name: Build & Push Server
     runs-on: ubuntu-24.04

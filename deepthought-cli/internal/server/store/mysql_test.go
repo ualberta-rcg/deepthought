@@ -1,4 +1,4 @@
-package history
+package store
 
 // MySQL-store integration tests. Guarded by $DEEPTHOUGHT_MYSQL_DSN: skipped
 // when unset (local/Slurm runs without a server), active in CI where the
@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"os"
 	"testing"
+
+	"deepthought-cli/internal/history"
 	"time"
 )
 
@@ -31,27 +33,27 @@ func mysqlDB(t *testing.T) *sql.DB {
 
 // buildGraph makes a small but complete collective: an incursion with a
 // prompt, a transmission with text and a completed probe carrying a pattern.
-func buildGraph(t *testing.T, store ChatStore) *Collective {
+func buildGraph(t *testing.T, store history.ChatStore) *Collective {
 	t.Helper()
-	coll, err := store.CreateCollective(SpawnCollectiveRequest{})
+	coll, err := store.CreateCollective(history.SpawnCollectiveRequest{})
 	if err != nil {
 		t.Fatal(err)
 	}
 	coll.Title = "golden"
 	inc := coll.StartIncursion("what is the answer?")
-	inc.Status = IncursionCompleted
-	tx := &Transmission{
-		Vinculum: Vinculum{ID: newID("tx"), Kind: "transmission", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: inc.ID, CreatedAt: time.Now()},
+	inc.Status = history.IncursionCompleted
+	tx := &history.Transmission{
+		Vinculum: history.Vinculum{ID: "tx-golden-1", Kind: "transmission", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: inc.ID, CreatedAt: time.Now()},
 		Text:     "42",
 	}
 	inc.Transmissions = append(inc.Transmissions, tx)
-	probe := &Probe{
-		Vinculum: Vinculum{ID: newID("prb"), Kind: "probe", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: tx.ID, CreatedAt: time.Now()},
-		WireID:   "bash", Name: "bash", Status: ProbeCompleted, Result: ResultView{Content: "ok"},
+	probe := &history.Probe{
+		Vinculum: history.Vinculum{ID: "prb-golden-1", Kind: "probe", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: tx.ID, CreatedAt: time.Now()},
+		WireID:   "bash", Name: "bash", Status: history.ProbeCompleted, Result: history.ResultView{Content: "ok"},
 	}
 	tx.Probes = append(tx.Probes, probe)
-	pattern := &Pattern{
-		Vinculum: Vinculum{ID: newID("pat"), Kind: "pattern", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: probe.ID, CreatedAt: time.Now()},
+	pattern := &history.Pattern{
+		Vinculum: history.Vinculum{ID: "pat-golden-1", Kind: "pattern", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: probe.ID, CreatedAt: time.Now()},
 		Category: "env", Content: "the answer is 42",
 	}
 	probe.Patterns = append(probe.Patterns, pattern)
@@ -64,7 +66,7 @@ func buildGraph(t *testing.T, store ChatStore) *Collective {
 func TestMySQLGoldenAgainstSQLite(t *testing.T) {
 	db := mysqlDB(t)
 
-	sq, err := NewSQLiteStore(t.TempDir()+"/g.db", "")
+	sq, err := history.NewSQLiteStore(t.TempDir()+"/g.db", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +105,7 @@ func TestMySQLGoldenAgainstSQLite(t *testing.T) {
 
 // mysqlSummarize projects a collective to the comparable essentials (no
 // IDs — the two stores mint independent collectives).
-func mysqlSummarize(c *Collective) map[string]any {
+func mysqlSummarize(c *history.Collective) map[string]any {
 	out := map[string]any{"title": c.Title, "incursions": len(c.Incursions)} // no IDs: independent stores mint independent IDs
 	if len(c.Incursions) > 0 {
 		inc := c.Incursions[0]

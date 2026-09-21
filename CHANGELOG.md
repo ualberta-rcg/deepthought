@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — only the server talks to MySQL; CI builds without any database
+- Architecture: the MySQL store moved from internal/history to internal/server/store (SERVER-ONLY package). Verified via the dependency graph: cmd/deepthought-cli links ZERO SQL-driver packages; only cmd/deepthought-server does. The CLI reaches this data exclusively over the server's HTTP API. internal/history gained thin exports (CanonicalBody, DecodeByKind, LegacyEntityDrone, LoadEntitiesWithPatterns) so the store package shares the SQLite codec.
+- CI: both workflows are database-free. build-cli.yml (vet + test + race + ONE static binary) no longer spins a mysql service container — the DB-backed store tests are env-guarded and skip; the store is validated against the real MySQL on the cluster, where it runs. The binary ships as a single-file artifact AND is attached to the rolling `edge` GitHub Release for one-line installs: curl -L -o deepthought-cli https://github.com/ualberta-rcg/deepthought/releases/download/edge/deepthought-cli.
+- Deployment does NO testing (build-server.yml is build + push only) — the code was tested when it was built.
+- Files: internal/server/store/{mysql.go,mysql_records.go,mysql_test.go} (moved); internal/history/export.go (new); internal/server/{db.go,http.go}; .github/workflows/{build-cli.yml,build-server.yml}; this entry.
+- Verification: go list -deps confirms the CLI's import graph excludes go-sql-driver and the server's includes it; this push is the first full CI run of the database-free lanes.
+
 ## 2026-09-21 · deepthought-cli — CI/CD is the build system; Slurm/CVMFS references removed
 - The Makefile's `compute` Slurm-allocation gate is gone (build/test/vet/deploy are plain local conveniences; the authoritative artifacts come from CI). New `.github/workflows/build-cli.yml`: vet, full test suite with the MySQL store tests against a mysql:8.4 service container (failures echoed into the public job summary), race checks, and the static CLI binary + SHA256SUMS as a downloadable artifact. Both CLAUDE.md environment sections rewritten to match: never build on the login node, never Slurm/CVMFS (kube-backed compute, no CVMFS); the ONLY manual deploy step is applying the server-side manifests on the aleph1 control-plane with the CI-built image tag.
 - Files: deepthought-cli/Makefile; .github/workflows/build-cli.yml (new); CLAUDE.md; deepthought-cli/CLAUDE.md; this entry.

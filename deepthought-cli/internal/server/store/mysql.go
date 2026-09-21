@@ -1,4 +1,4 @@
-package history
+package store
 
 // MySQLStore is the server-side port of SQLiteStore: the same Borg-graph
 // persistence (one polymorphic `interactions` row per Drone, canonical bodies,
@@ -18,7 +18,9 @@ package history
 //     ordering the queries rely on
 //
 // The users/user_settings tables (login identity + the roving settings layer)
-// live here too, managed by UserStore.
+// live here too, managed by UserStore. This package is SERVER-ONLY: the CLI
+// never imports it (and so never links a SQL driver) — clients reach this
+// data over the server's HTTP API.
 
 import (
 	"context"
@@ -30,6 +32,8 @@ import (
 	"time"
 
 	_ "github.com/go-sql-driver/mysql" // register the driver
+
+	"deepthought-cli/internal/history"
 )
 
 // Compile-time guarantee the MySQL store satisfies the same contracts.
@@ -134,22 +138,22 @@ var mysqlSchema = []string{
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 }
 
-func (s *MySQLStore) CreateCollective(req SpawnCollectiveRequest) (*Collective, error) {
-	coll := NewCollective(req)
+func (s *MySQLStore) CreateCollective(req history.SpawnCollectiveRequest) (*Collective, error) {
+	coll := history.NewCollective(req)
 	if err := s.SaveObject(coll); err != nil {
 		return nil, err
 	}
 	return coll, nil
 }
 
-func (s *MySQLStore) SaveObject(obj Entity) error {
+func (s *MySQLStore) SaveObject(obj history.Entity) error {
 	if obj == nil {
 		return errors.New("mysql store: nil object")
 	}
 	if drone, ok := obj.(*Drone); ok {
 		return s.SaveDrone(context.Background(), drone, nil)
 	}
-	drone, err := legacyEntityDrone(obj)
+	drone, err := history.LegacyEntityDrone(obj)
 	if err != nil {
 		return err
 	}
@@ -164,7 +168,7 @@ func (s *MySQLStore) SaveCollective(coll *Collective) error {
 	if coll == nil {
 		return errors.New("mysql store: nil collective")
 	}
-	for _, obj := range loadEntitiesWithPatterns(coll) {
+	for _, obj := range history.LoadEntitiesWithPatterns(coll) {
 		if err := s.SaveObject(obj); err != nil {
 			return err
 		}
@@ -173,7 +177,7 @@ func (s *MySQLStore) SaveCollective(coll *Collective) error {
 }
 
 // UsageByModel aggregates token usage across THIS USER's history.
-func (s *MySQLStore) UsageByModel() (map[string]Cost, error) {
+func (s *MySQLStore) UsageByModel() (map[string]history.Cost, error) {
 	const q = `SELECT
 	  NULLIF(JSON_UNQUOTE(JSON_EXTRACT(producer,'$.model_id')),'') AS mid,
 	  SUM(COALESCE(JSON_EXTRACT(cost,'$.input_tokens'),0)),
@@ -186,7 +190,7 @@ func (s *MySQLStore) UsageByModel() (map[string]Cost, error) {
 		return nil, err
 	}
 	defer rows.Close()
-	out := map[string]Cost{}
+	out := map[string]history.Cost{}
 	for rows.Next() {
 		var mid sql.NullString
 		var in, outTokens sql.NullInt64
@@ -194,7 +198,7 @@ func (s *MySQLStore) UsageByModel() (map[string]Cost, error) {
 			return nil, err
 		}
 		if mid.Valid && mid.String != "" {
-			out[mid.String] = Cost{InputTokens: int(in.Int64), OutputTokens: int(outTokens.Int64)}
+			out[mid.String] = history.Cost{InputTokens: int(in.Int64), OutputTokens: int(outTokens.Int64)}
 		}
 	}
 	return out, rows.Err()
@@ -205,7 +209,7 @@ func (s *MySQLStore) SaveDrone(ctx context.Context, drone *Drone, legacy []byte)
 		return errors.New("mysql store: empty drone")
 	}
 	{
-		raw, hash, err := canonicalBody(json.RawMessage(drone.Body))
+		raw, hash, err := history.CanonicalBody(json.RawMessage(drone.Body))
 		if err != nil {
 			return err
 		}
@@ -276,7 +280,7 @@ ON DUPLICATE KEY UPDATE summaries=new.summaries, links=new.links`,
 // content-addressed bodies table (the MySQL replacement for the filesystem
 // spill). bodyRef is the hex sha256; reads re-verify the hash.
 func (s *MySQLStore) inlineOrStore(body, hash []byte) ([]byte, any, error) {
-	if len(body) <= InlineBodyLimit {
+	if len(body) <= history.InlineBodyLimit {
 		return body, nil, nil
 	}
 	ref := hex.EncodeToString(hash)
@@ -316,7 +320,7 @@ func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 		}
 	}
 	d.Body = body
-	_, actualHash, hashErr := canonicalBody(json.RawMessage(body))
+	_, actualHash, hashErr := history.CanonicalBody(json.RawMessage(body))
 	if hashErr != nil {
 		return nil, hashErr
 	}
@@ -325,7 +329,7 @@ func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*Drone, error) {
 	_ = json.Unmarshal([]byte(cost), &d.Cost)
 	_ = json.Unmarshal([]byte(producer), &d.Producer)
 	if fail.Valid {
-		fc := FailureClass(fail.String)
+		fc := history.FailureClass(fail.String)
 		d.FailClass = &fc
 	}
 	d.CreatedAt, _ = time.Parse(time.RFC3339Nano, created)
@@ -371,12 +375,12 @@ func (s *MySQLStore) GetCollective(id string) (*Collective, error) {
 		if err := json.Unmarshal(raw, &kind); err != nil {
 			return nil, fmt.Errorf("history %s: %w", id, err)
 		}
-		obj, err := decodeByKind(kind.Kind, raw)
+		obj, err := history.DecodeByKind(kind.Kind, raw)
 		if err != nil {
 			return nil, fmt.Errorf("history %s: %w", id, err)
 		}
-		e := obj.(Entity)
-		v := e.GetVinculum()
+		e := obj.(history.Entity)
+		v := e.Gethistory.Vinculum()
 		if stateStr != "" {
 			v.State = State(stateStr)
 		}
@@ -391,7 +395,7 @@ func (s *MySQLStore) GetCollective(id string) (*Collective, error) {
 		return nil, err
 	}
 	for _, entity := range entities {
-		if value, ok := entity.(*Collective); ok {
+		if value, ok := entity.(*history.Collective); ok {
 			coll = value
 		}
 	}
@@ -406,7 +410,7 @@ func (s *MySQLStore) Resume(id string) (*Collective, error) {
 	return s.GetCollective(id)
 }
 
-func (s *MySQLStore) ListCollectives() ([]ChatSummary, error) {
+func (s *MySQLStore) ListCollectives() ([]history.ChatSummary, error) {
 	const q = `
 SELECT
   c.id,
@@ -433,9 +437,9 @@ ORDER BY updated_at DESC`
 		return nil, err
 	}
 	defer rows.Close()
-	var out []ChatSummary
+	var out []history.ChatSummary
 	for rows.Next() {
-		var sum ChatSummary
+		var sum history.ChatSummary
 		var created, updated string
 		if err := rows.Scan(&sum.ID, &created, &updated, &sum.Title, &sum.Incursions, &sum.Messages); err != nil {
 			return nil, err
@@ -526,4 +530,18 @@ func (u *UserStore) SetSettings(userID string, settings map[string]any, expected
 		return 0, err
 	}
 	return expected + 1, tx.Commit()
+}
+
+func formatTime(t time.Time) any {
+	if t.IsZero() {
+		return nil
+	}
+	return t.UTC().Format(time.RFC3339Nano)
+}
+
+func formatTimePtr(t *time.Time) any {
+	if t == nil {
+		return nil
+	}
+	return formatTime(*t)
 }

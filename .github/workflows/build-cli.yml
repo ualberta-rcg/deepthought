@@ -20,20 +20,6 @@ jobs:
     name: Test + Build CLI
     runs-on: ubuntu-24.04
 
-    services:
-      mysql:
-        image: mysql:8.4
-        env:
-          MYSQL_ROOT_PASSWORD: root
-          MYSQL_DATABASE: deepthought
-        ports:
-          - 3306:3306
-        options: >-
-          --health-cmd="mysqladmin ping -proot"
-          --health-interval=10s
-          --health-timeout=5s
-          --health-retries=10
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -92,5 +78,15 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deepthought-cli-${{ github.sha }}
-          path: out/
+          path: out/deepthought-cli
           if-no-files-found: error
+
+      - name: Publish to the rolling edge release (curl-able)
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          cd deepthought-cli
+          gh release delete edge --yes --cleanup-tag 2>/dev/null || true
+          NOTES="Rolling build from main @ ${GITHUB_SHA::7}. One static binary (linux/amd64). Install: curl -L -o deepthought-cli https://github.com/ualberta-rcg/deepthought/releases/download/edge/deepthought-cli && chmod +x deepthought-cli"
+          gh release create edge --title "deepthought-cli (edge)" --notes "$NOTES" --prerelease ../out/deepthought-cli

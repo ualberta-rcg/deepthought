@@ -13,7 +13,7 @@ import (
 	"regexp"
 	"strings"
 
-	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/server/store"
 )
 
 // errDBNotConfigured is returned by DB-backed endpoints when no DSN was given.
@@ -43,16 +43,16 @@ func sanitizeUserID(user string) string {
 }
 
 // OpenDB opens the MySQL pool from a DSN and ensures the schema.
-func OpenDB(dsn string) (*sql.DB, *history.UserStore, error) {
-	db, err := history.OpenMySQL(dsn)
+func OpenDB(dsn string) (*sql.DB, *store.UserStore, error) {
+	db, err := store.OpenMySQL(dsn)
 	if err != nil {
 		return nil, nil, fmt.Errorf("server db: %w", err)
 	}
-	return db, history.NewUserStore(db), nil
+	return db, store.NewUserStore(db), nil
 }
 
 // userStore returns a per-user store view for the request's session.
-func (a *API) userStore(r *http.Request) (*history.MySQLStore, error) {
+func (a *API) userStore(r *http.Request) (*store.MySQLStore, error) {
 	if a.DB == nil {
 		return nil, errDBNotConfigured
 	}
@@ -60,5 +60,5 @@ func (a *API) userStore(r *http.Request) (*history.MySQLStore, error) {
 	if user == "" {
 		return nil, fmt.Errorf("no session user")
 	}
-	return history.ForUser(a.DB, sanitizeUserID(user)), nil
+	return store.ForUser(a.DB, sanitizeUserID(user)), nil
 }
