@@ -101,9 +101,10 @@ func TestMySQLGoldenAgainstSQLite(t *testing.T) {
 	}
 }
 
-// summarize projects a collective to the comparable essentials.
+// mysqlSummarize projects a collective to the comparable essentials (no
+// IDs — the two stores mint independent collectives).
 func mysqlSummarize(c *Collective) map[string]any {
-	out := map[string]any{"title": c.Title, "id": c.ID, "incursions": len(c.Incursions)}
+	out := map[string]any{"title": c.Title, "incursions": len(c.Incursions)} // no IDs: independent stores mint independent IDs
 	if len(c.Incursions) > 0 {
 		inc := c.Incursions[0]
 		out["prompt"] = inc.Prompt

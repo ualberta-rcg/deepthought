@@ -58,7 +58,7 @@ jobs:
 
       - name: Run MySQL store tests
         env:
-          DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought?multiStatements=true
+          DEEPTHOUGHT_MYSQL_DSN: root:root@tcp(127.0.0.1:3306)/deepthought
         run: |
           set -euo pipefail
           cd deepthought-cli
