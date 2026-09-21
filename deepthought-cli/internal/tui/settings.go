@@ -810,6 +810,15 @@ func (m SettingsModel) fieldRows() []string {
 		if d.kind == fMulti {
 			val = strings.Join(d.getMulti(&m.dirty), "+")
 		}
+		if source, ok := m.store.(interface{ Source(string) string }); ok {
+			path := d.label
+			if m.entityKind == "provider" {
+				path = "providers"
+			}
+			if origin := source.Source(path); origin != "" {
+				val += "  [" + origin + "]"
+			}
+		}
 		rs = append(rs, m.mark(i, settingRow(d.label, val)))
 	}
 	return rs
@@ -1369,6 +1378,21 @@ func providerFieldDefs(ref string) []fieldDef {
 					return fmt.Errorf("provider was removed elsewhere")
 				}
 				f.Providers[i].Wire = e.value()
+				return nil
+			}},
+		{"anonymous", fEnum, false, []string{"false", "true"},
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].Anonymous {
+					return "true"
+				}
+				return "false"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				f.Providers[i].Anonymous = e.value() == "true"
 				return nil
 			}},
 		{"tags", fText, false, nil,

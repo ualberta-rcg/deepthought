@@ -25,6 +25,7 @@ import (
 	"deepthought-cli/internal/tools"
 	"deepthought-cli/internal/tui"
 	"deepthought-cli/internal/unimatrix"
+	"deepthought-cli/internal/workflow"
 )
 
 type modelHealthMsg struct {
@@ -49,16 +50,24 @@ const statusCmdInterval = 30 * time.Second
 // screen to start on. Built once in main (the settings/registry/gate pointers
 // are shared, concurrency-safe); the SSH handler copies it per connection.
 type Deps struct {
-	Status      tui.StatusInfo
-	Settings    tui.SettingsInfo
-	Live        *Settings
-	Registry    *tools.Registry
-	Gate        *queen.Gate
-	Skills      string                  // compact "available skills" index, injected into each chat request
-	ChatSource  history.ChatStoreSource // a ChatStore per chat (FileStore now; SQLite after 3b)
-	StartScreen tui.Screen
-	Bindings    *keybindings.Map
-	SessionID   string
+	Workflows         *workflow.Service
+	SkillListing      func() string
+	ReloadSkills      func() error
+	Scheduler         *slurm.Client
+	Context           context.Context
+	Publish           func(RunnerFrame) error
+	ResumeCollective  string
+	DisableMonitoring bool
+	Status            tui.StatusInfo
+	Settings          tui.SettingsInfo
+	Live              *Settings
+	Registry          *tools.Registry
+	Gate              *queen.Gate
+	Skills            string                  // compact "available skills" index, injected into each chat request
+	ChatSource        history.ChatStoreSource // a ChatStore per chat (FileStore now; SQLite after 3b)
+	StartScreen       tui.Screen
+	Bindings          *keybindings.Map
+	SessionID         string
 }
 
 // RootModel owns the active screen, the terminal size, and the screen
@@ -66,27 +75,30 @@ type Deps struct {
 // delegates to the active sub-model. Sub-models return their own concrete type
 // from Update, so the root stores the result directly with no type assertion.
 type RootModel struct {
-	deps        Deps
-	screen      tui.Screen
-	status      tui.StatusInfo // feeds the top bar
-	clock       time.Time      // live clock; updated by TickMsg
-	lastCtrlC   time.Time
-	width       int
-	height      int
-	sessionID   string
-	healthOK    bool // last model-health ping (drives the Status dashboard)
-	healthMsg   string
-	lastCluster slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
-	splash      tui.SplashModel
-	chat        tui.ChatModel
-	continue_   tui.ContinueModel
-	settings    tui.SettingsModel
-	grid        tui.GridModel
-	statusScr   tui.StatusModel
-	modelsScr   tui.ModelsModel
-	cronScr     tui.CronModel
-	env         tui.EnvInfo
-	sidebar     tui.SidebarData
+	deps              Deps
+	screen            tui.Screen
+	status            tui.StatusInfo // feeds the top bar
+	clock             time.Time      // live clock; updated by TickMsg
+	lastCtrlC         time.Time
+	width             int
+	height            int
+	sessionID         string
+	healthOK          bool // last model-health ping (drives the Status dashboard)
+	healthMsg         string
+	lastCluster       slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
+	clusterGeneration uint64
+	splash            tui.SplashModel
+	chat              tui.ChatModel
+	continue_         tui.ContinueModel
+	settings          tui.SettingsModel
+	grid              tui.GridModel
+	statusScr         tui.StatusModel
+	modelsScr         tui.ModelsModel
+	cronScr           tui.CronModel
+	jobsScr           tui.JobsModel
+	plansScr          tui.PlansModel
+	env               tui.EnvInfo
+	sidebar           tui.SidebarData
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -132,9 +144,19 @@ func NewRootModel(d Deps) RootModel {
 		statusScr: tui.NewStatusModel(statusInputs(d)),
 		modelsScr: tui.NewModelsModel(d.Live),
 		cronScr:   tui.NewCronModel(cronDataDir()),
+		jobsScr:   tui.NewJobsModel(d.Scheduler),
+		plansScr:  tui.NewPlansModel(d.Workflows),
 		bindings:  d.Bindings,
 	}
 	m.settings = m.settings.SetEnv(env).SetSkills(skillPacks(d.Skills))
+	m.chat = m.chat.SetParentContext(d.Context).SetSkillListing(d.SkillListing)
+	if d.ResumeCollective != "" {
+		if resumed, err := tui.ResumeChatModel(d.Live, d.Registry, d.Gate, d.ChatSource, d.ResumeCollective); err == nil {
+			m.chat = resumed.SetParentContext(d.Context).SetEnv(env).SetSkills(d.Skills).SetSkillListing(d.SkillListing)
+		} else {
+			m.chat = m.chat.Notice("Resume failed: " + err.Error())
+		}
+	}
 	if d.Registry != nil {
 		m.settings = m.settings.SetTools(d.Registry.Names())
 	}
@@ -276,7 +298,7 @@ func (m RootModel) Init() tea.Cmd {
 	// Background Slurm poll: fetch immediately at login (only where Slurm
 	// exists), then re-arm every 5 min from the handler. The Status page reads
 	// the cached snapshot, so opening it never blocks.
-	if slurm.Detected() {
+	if slurm.Detected() && !m.deps.DisableMonitoring {
 		cmds = append(cmds, pollClusterCmd())
 	}
 	if cmd := m.statusLineCommand(); cmd != "" {
@@ -286,6 +308,45 @@ func (m RootModel) Init() tea.Cmd {
 }
 
 func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if input, ok := msg.(runnerInputMsg); ok {
+		if input.input.ApprovalID != m.chat.ApprovalID() {
+			return m, nil
+		}
+		if input.input.Key != nil {
+			msg = *input.input.Key
+		} else if input.input.Paste != nil {
+			msg = tea.PasteMsg{Content: *input.input.Paste}
+		}
+	}
+	next, cmd := m.update(msg)
+	root := next.(RootModel)
+	if root.deps.Publish != nil {
+		view := root.View()
+		frame := RunnerFrame{View: view.Content, CollectiveID: root.chat.CollectiveID(), Busy: root.chat.Busy(), ApprovalID: root.chat.ApprovalID()}
+		if view.Cursor != nil {
+			frame.CursorVisible = true
+			frame.CursorX = view.Cursor.X
+			frame.CursorY = view.Cursor.Y
+		}
+		if err := root.deps.Publish(frame); err != nil {
+			root.chat = root.chat.Stop().Notice("Resident persistence failed: " + err.Error())
+			return root, nil
+		}
+	}
+	return root, cmd
+}
+
+func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if tui.IsPlansEvent(msg) {
+		var cmd tea.Cmd
+		m.plansScr, cmd = m.plansScr.Update(msg)
+		return m, cmd
+	}
+	if tui.IsJobsEvent(msg) {
+		var cmd tea.Cmd
+		m.jobsScr, cmd = m.jobsScr.Update(msg)
+		return m, cmd
+	}
 	if tui.IsChatEvent(msg) {
 		var cmd tea.Cmd
 		m.chat, cmd = m.chat.Update(msg)
@@ -357,7 +418,14 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.sidebar.Cluster, m.sidebar.ClusterOK = msg.snap, !msg.snap.FetchedAt.IsZero()
 		m.statusScr = m.statusScr.SetCluster(msg.snap)
 		m.chat = m.chat.SetCluster(msg.snap)
-		return m, tea.Tick(m.nextClusterPoll(), func(time.Time) tea.Msg { return pollCluster() })
+		m.clusterGeneration++
+		generation := m.clusterGeneration
+		return m, tea.Tick(m.nextClusterPoll(), func(time.Time) tea.Msg { return clusterTimerMsg(generation) })
+	case clusterTimerMsg:
+		if uint64(msg) != m.clusterGeneration {
+			return m, nil
+		}
+		return m, pollClusterCmd()
 	case tui.RefreshClusterMsg:
 		// `r` on the Status page: re-poll now.
 		return m, pollClusterCmd()
@@ -372,6 +440,8 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.grid = m.grid.Resize(msg.Width, msg.Height)
 		m.modelsScr = m.modelsScr.Resize(msg.Width, msg.Height)
 		m.cronScr = m.cronScr.Resize(msg.Width, msg.Height)
+		m.jobsScr = m.jobsScr.Resize(msg.Width, msg.Height)
+		m.plansScr = m.plansScr.Resize(msg.Width, msg.Height)
 		m.statusScr = m.statusScr.Resize(msg.Width, msg.Height).
 			SetHealth(m.healthOK, m.healthMsg).
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext, m.sessionCycles, m.sessionMsgs)
@@ -385,9 +455,9 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the add-provider area.
 		m.screenStack = nil
 		if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
-			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetEnv(m.env).
+			m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetParentContext(m.deps.Context).SetEnv(m.env).
 				SetCluster(m.lastCluster).
-				SetSkills(m.deps.Skills).
+				SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing).
 				Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
 			m.screen = tui.ScreenChat
 			m.chatResize()
@@ -426,7 +496,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.screenStack = nil
-		m.chat = cm.SetEnv(m.env).SetCluster(m.lastCluster).SetSkills(m.deps.Skills)
+		m.chat = cm.SetParentContext(m.deps.Context).SetEnv(m.env).SetCluster(m.lastCluster).SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing)
 		m.chatResize()
 		m.screen = tui.ScreenChat
 		return m, m.activeInit()
@@ -515,6 +585,10 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.modelsScr, cmd = m.modelsScr.Update(msg)
 	case tui.ScreenCron:
 		m.cronScr, cmd = m.cronScr.Update(msg)
+	case tui.ScreenJobs:
+		m.jobsScr, cmd = m.jobsScr.Update(msg)
+	case tui.ScreenPlans:
+		m.plansScr, cmd = m.plansScr.Update(msg)
 	}
 	return m, cmd
 }
@@ -562,9 +636,9 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		}
 		// F5 — a fresh chat is a new navigation root.
 		m.screenStack = nil
-		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetEnv(m.env).
+		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetParentContext(m.deps.Context).SetEnv(m.env).
 			SetCluster(m.lastCluster).
-			SetSkills(m.deps.Skills)
+			SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing)
 		m.chatResize()
 		m.screen = tui.ScreenChat
 		return m, m.chat.Init()
@@ -724,6 +798,10 @@ func (m RootModel) View() tea.View {
 		s = m.modelsScr.View()
 	case tui.ScreenCron:
 		s = m.cronScr.View()
+	case tui.ScreenJobs:
+		s = m.jobsScr.View()
+	case tui.ScreenPlans:
+		s = m.plansScr.View()
 	}
 	// A centered overlay floats on top of whatever screen is active —
 	// composited OVER it (the old version placed the card on an empty canvas,
@@ -761,6 +839,10 @@ func (m RootModel) activeInit() tea.Cmd {
 		return m.modelsScr.Init()
 	case tui.ScreenCron:
 		return m.cronScr.Init()
+	case tui.ScreenJobs:
+		return m.jobsScr.Init()
+	case tui.ScreenPlans:
+		return m.plansScr.Init()
 	}
 	return nil
 }
@@ -785,7 +867,7 @@ func usageFunc(src history.ChatStoreSource) func() map[string]history.Cost {
 // Cluster poll cadence: fast while a live view (the sidebar or the Status
 // page) is showing, slow in the background — the data is LIVE when watched.
 const (
-	clusterPollFast = 30 * time.Second
+	clusterPollFast = 3 * time.Minute
 	clusterPollSlow = 3 * time.Minute
 )
 
@@ -798,6 +880,7 @@ func (m RootModel) nextClusterPoll() time.Duration {
 
 // clusterSnapshotMsg carries a background Slurm snapshot to the Status page.
 type clusterSnapshotMsg struct{ snap slurm.ClusterSnapshot }
+type clusterTimerMsg uint64
 
 // pollCluster fetches one Slurm snapshot (blocking; run in a Cmd goroutine).
 func pollCluster() clusterSnapshotMsg {

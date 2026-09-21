@@ -17,8 +17,10 @@ import (
 // an import cycle): it is handed a list of names and a lookup callback that
 // returns a skill body. main wires the callback to the loaded skill set.
 type Skill struct {
-	names  []string // sorted, for stable listing
-	lookup func(name string) (body string, found bool, err error)
+	LiveNames  func() []string
+	LiveLookup func(string) (string, []string, bool, error)
+	names      []string // sorted, for stable listing
+	lookup     func(name string) (body string, found bool, err error)
 }
 
 // NewSkillTool builds the skill tool. `names` is the set of skill names and
@@ -53,17 +55,29 @@ func (t *Skill) Parameters() map[string]any {
 func (t *Skill) ReadOnly() bool { return true }
 
 func (t *Skill) Run(_ context.Context, args map[string]any) Result {
+	names := t.names
+	if t.LiveNames != nil {
+		names = t.LiveNames()
+	}
 	name := strings.TrimSpace(stringArg(args, "name"))
 	if name == "" {
 		return Result{
-			Content: "Available skills:\n" + strings.Join(t.names, "\n"),
-			Summary: fmt.Sprintf("skill: %d available", len(t.names)),
+			Content: "Available skills:\n" + strings.Join(names, "\n"),
+			Summary: fmt.Sprintf("skill: %d available", len(names)),
 		}
 	}
-	body, found, err := t.lookup(name)
+	var body string
+	var found bool
+	var err error
+	var allowed []string
+	if t.LiveLookup != nil {
+		body, allowed, found, err = t.LiveLookup(name)
+	} else {
+		body, found, err = t.lookup(name)
+	}
 	if !found {
 		return Result{
-			Content: fmt.Sprintf("No skill named %q. Available skills:\n%s", name, strings.Join(t.names, "\n")),
+			Content: fmt.Sprintf("No skill named %q. Available skills:\n%s", name, strings.Join(names, "\n")),
 			IsError: true,
 			Summary: "skill: not found",
 		}
@@ -72,8 +86,9 @@ func (t *Skill) Run(_ context.Context, args map[string]any) Result {
 		return Result{IsError: true, Content: "failed to load skill: " + err.Error(), Summary: "skill: load error"}
 	}
 	return Result{
-		Content: "# Skill: " + name + "\n\n" + body,
-		Summary: "skill: " + name,
+		AllowedTools: allowed,
+		Content:      "# Skill: " + name + "\n\n" + body,
+		Summary:      "skill: " + name,
 	}
 }
 

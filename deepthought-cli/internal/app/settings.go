@@ -137,10 +137,14 @@ func (s *Settings) saveLocked(f config.File) error {
 	if err != nil {
 		return err
 	}
-	if err := config.Save(s.path, &f); err != nil {
+	if err := config.SaveLocalPatch(s.path, raw, s.cfg.File, f); err != nil {
 		return err
 	}
-	s.cfg = cfg
+	_ = cfg
+	s.cfg, err = config.Load(s.path)
+	if err != nil {
+		return err
+	}
 	s.revision++
 	raw, err = os.ReadFile(s.path)
 	if err != nil {
@@ -176,6 +180,12 @@ func (s *Settings) Reload() error {
 	s.revision++
 	s.pool = unimatrix.NewPool()
 	return nil
+}
+
+func (s *Settings) Source(path string) string {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.cfg.Source(path)
 }
 
 // HasAgenticModel reports whether an agentic-capable model is configured AND its

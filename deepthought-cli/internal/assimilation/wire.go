@@ -11,7 +11,7 @@ import (
 // It keeps user instructions and the current exchange intact; older bulky tool
 // output is a labelled preview. If that is insufficient the caller must compact
 // or choose a larger model, rather than silently losing active constraints.
-func Wire(messages []babel.Message, tools []babel.ToolDef, window, output int, references map[string]string) ([]babel.Message, Manifest, error) {
+func Wire(messages []babel.Message, tools []babel.ToolDef, window, output int, references map[string]string, pinned ...map[string]bool) ([]babel.Message, Manifest, error) {
 	if window <= 0 {
 		window = 32768
 	}
@@ -45,6 +45,9 @@ func Wire(messages []babel.Message, tools []babel.ToolDef, window, output int, r
 			continue
 		}
 		id := references[out[i].ToolCallID]
+		if len(pinned) > 0 && pinned[0][id] {
+			continue
+		}
 		if id == "" {
 			id = out[i].ToolCallID
 		}

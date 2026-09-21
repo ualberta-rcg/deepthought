@@ -30,7 +30,8 @@ type Vinculum struct {
 	// future Queen AI thread demotes objects (Full→Digest→…→Tombstone) via
 	// Drone.Demote; GetCollective rehydrates this from the Drone's state column
 	// so MessagesByState renders each node at its own residency.
-	State State
+	State  State
+	Pinned bool
 
 	// Provenance/metadata mirrored onto the persisted Drone (Drone's own fields
 	// shadow these when both exist). Outcome is derived from the node's lifecycle

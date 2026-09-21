@@ -19,9 +19,10 @@ import (
 
 // Result is what a Tool.Run returns. Content feeds the model; Summary feeds the TUI.
 type Result struct {
-	Content string // sent to the model as the role:"tool" message body
-	IsError bool   // flags a failed/permission-denied result in the transcript
-	Summary string // one-line TUI chrome; never sent to the model
+	AllowedTools []string // skill restrictions, intersected for the current turn
+	Content      string   // sent to the model as the role:"tool" message body
+	IsError      bool     // flags a failed/permission-denied result in the transcript
+	Summary      string   // one-line TUI chrome; never sent to the model
 }
 
 // Tool is one native capability. Implementations are stateless and concurrency-safe

@@ -191,6 +191,14 @@ func locateProject(cwd string) string {
 		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
 			return dir
 		}
+		if filepath.Dir(dir) == dir {
+			break
+		}
+	}
+	for dir := cwd; ; dir = filepath.Dir(dir) {
+		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
+			return dir
+		}
 		if _, err := os.Stat(filepath.Join(dir, "AGENTS.md")); err == nil {
 			return dir
 		}

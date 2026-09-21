@@ -305,7 +305,7 @@ func (t *FileTool) Run(ctx context.Context, args map[string]any) Result {
 	}
 	// Recheck immediately before replacement; an external edit invalidates approval.
 	current, _, readErr := readBounded(root, path)
-	if (readErr != nil && !os.IsNotExist(readErr)) || (readErr == nil && fileHash(current) != fileHash(old)) || (os.IsNotExist(readErr) && argString(args, "expected_hash") != "") {
+	if (readErr != nil && !os.IsNotExist(readErr)) || (readErr == nil && (argString(args, "expected_hash") == "" || fileHash(current) != fileHash(old))) || (os.IsNotExist(readErr) && argString(args, "expected_hash") != "") {
 		return failure(fmt.Errorf("file changed while preparing edit; read it again"))
 	}
 	if err := root.Rename(tmp, path); err != nil {

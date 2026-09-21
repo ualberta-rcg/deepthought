@@ -139,3 +139,12 @@ func TestParseStorageRows(t *testing.T) {
 		}
 	}
 }
+
+func TestGPUInventoryCountsEachNodeOnce(t *testing.T) {
+	runner := &fakeRunner{out: "node1    gpu:l40s:4    gpu:l40s:1(IDX:1)    102400    20480\nnode1    gpu:l40s:4    gpu:l40s:1(IDX:1)    102400    20480\n"}
+	var snapshot ClusterSnapshot
+	snapshot.gatherGPUsAndMem(context.Background(), runner)
+	if snapshot.GPUs != 4 || snapshot.GPUsUsed != 1 || snapshot.MemTotalGB != 100 {
+		t.Fatalf("duplicate node counted: %+v", snapshot)
+	}
+}

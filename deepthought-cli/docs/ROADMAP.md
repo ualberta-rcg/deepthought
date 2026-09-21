@@ -8,7 +8,13 @@ validates and compares results, supports interactive→batch transitions and sci
 tools, shares lab knowledge, and gives the researcher control over autonomy and spend — all
 within an explicit objective.
 
-> **Status: vision, not yet built.** Much of this is future work and depends on the **server
+> **Status update (2026-09-20):** standalone resident sessions, journaled Slurm
+> submissions, local sequential workflow records, predicate validation and artifact
+> staleness are implemented. See [LOCAL-OPERATIONS.md](LOCAL-OPERATIONS.md) for
+> supported paths and limits. Server login, automatic workflow execution, sweeps,
+> lab sharing and the broader capability list below remain future work.
+>
+> Much of the longer-term vision depends on the **server
 > side** — groundwork has now started: a skeleton HTTP server + live reload + this document's
 > architecture live at `cmd/deepthought-server` (see [SERVER.md](SERVER.md)), destined for
 > `deepthought.vulcan.alliancecan.ca` as a container on the Vulcan Kubernetes cluster.
@@ -30,9 +36,10 @@ storage**. The model *interprets evidence, proposes changes, and selects actions
 **execution system enforces constraints and tracks what actually happened.** This lets you swap
 models without losing research history.
 
-The missing piece is the **server side**: a durable, detachable daemon that persists state
-across client disconnects and restarts and resumes work. v1's Transwarp socket
-(`--towel` / `ls` / `attach` / `stop`) is a primitive for this, not the thing itself.
+The local Transwarp daemon now keeps sessions and pending approvals alive across
+terminal disconnects (`--towel` / `ls` / `attach` / `stop`). After process loss it
+recovers persisted history as interrupted; it does not replay uncertain actions.
+Server coordination and automatic workflow execution remain future work.
 
 ## Capability areas
 

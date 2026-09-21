@@ -20,6 +20,7 @@ import (
 func SSHHandler(addr string, d Deps) bubbletea.Handler {
 	return func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
 		d := d // never mutate the closure shared by concurrent connections
+		d.Context = sess.Context()
 		d.Registry = d.Registry.Fork()
 		go func() { <-sess.Context().Done(); d.Registry.Close() }()
 		d.Status.Addr = addr

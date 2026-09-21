@@ -6,13 +6,22 @@ Two products, one repo:
   over SSH. `ssh` in, land on a splash, and drive an LLM agent that can write and
   run code, operate HPC clusters (Slurm, modules, schedulers), and help with
   scientific work — every fs/shell/network action gated by a permission model.
-- **`deepthought-server/`** — scaffold for the server-side product (no code yet).
+- **`deepthought-server/`** — product scaffold; the HTTP skeleton lives under
+  `deepthought-cli/cmd/deepthought-server` in the shared Go module.
+
+The CLI runs standalone. `--towel` keeps a local session running across terminal
+disconnects; `ls` and `attach <id>` reconnect. `/jobs` tracks durable Slurm
+submissions and `/plan` shows scientific objectives and validation evidence.
+Server login remains a future feature. See [local operations](deepthought-cli/docs/LOCAL-OPERATIONS.md)
+for settings layers, resident recovery, workflows, manifests and releases.
 
 Start with [`CLAUDE.md`](CLAUDE.md) for the repo rules (including the
 changelog-before-commit rule) and [`deepthought-cli/CLAUDE.md`](deepthought-cli/CLAUDE.md)
 for the CLI's architecture and conventions.
 
 ## Build & run the CLI
+
+Run these inside a Slurm CPU allocation on Vulcan, with caches and output on scratch:
 
 ```
 make -C deepthought-cli check     # go vet + go test

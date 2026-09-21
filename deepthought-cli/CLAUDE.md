@@ -19,6 +19,21 @@ running tools, and executing shell commands under a permission gate.
 
 ### Reliability release (2026-09-20)
 
+- Local resident sessions now own the same RootModel tool loop independently of
+  terminal attachments. Ctrl+\\ detaches; attach restores screen/input/approvals.
+  Process loss restores history as interrupted and never silently replays work.
+- `/jobs` shows durable submission intents and reconciliation; every Slurm submit
+  and cancel asks. `/plan` shows persisted sequential objectives, attempts,
+  predicate validation and artifact staleness. Workflows do not auto-submit jobs.
+- Settings merge built-in/server/local/session layers with source metadata; only
+  local editing is exposed. The server-defaults interface has no active transport.
+  Skill catalog refresh is live; allowed-tools narrows permissions for the turn.
+- Explicit scientific manifests register schema-validated, permission-gated tools.
+  OpenAPI import is unsupported. `/pin` protects selected probe output from
+  automatic shortening and `/compact`.
+- The operational contract and limitations are in [LOCAL-OPERATIONS.md](docs/LOCAL-OPERATIONS.md).
+  Historical milestone notes below are retained as architecture history.
+
 - Workspace file tools now provide read receipts, bounded literal search, previewed
   edits and atomic replacement. Their root is the launch directory; Bash remains
   separately permission-gated. `/compact`, `/doctor`, `/export <directory>` and
@@ -58,7 +73,7 @@ running tools, and executing shell commands under a permission gate.
  `internal/{alcove,app,assimilation,babel,commands,config,cvmfs,history,historytools,keybindings,queen,residency,science,skills,slurm,tools,transwarp,tui,unimatrix}/`
  exist; the binary runs
   locally and serves over SSH (`--sub-etha :2323`). The shell is **chat-home with a
-  navigation history stack**: splash (any key) → **New Chat** if an agentic model is
+  navigation history stack**: splash (Enter on Run standalone) → **New Chat** if an agentic model is
   configured, else → **Settings › Providers › + add**. F-keys/slash commands push a
   screen onto the stack; `esc` pops it (overlay first, then the screen stack, then
   **chat** = home, where esc is a no-op). While a turn streams, the 1st `esc` interrupts; the
@@ -85,8 +100,8 @@ running tools, and executing shell commands under a permission gate.
   "+ Add" stages in-memory drafts until valid, and the splash drops you straight at
   Providers › + add when nothing is configured. **Overlay pickers** (`overlay.go`) nest:
   the **Effort** picker (F4) and the **Model chooser** (F3). The splash is the big
-  **DON'T PANIC** wordmark (go-figure colossal, static cyan→violet brand gradient).
-  F-keys: `F1` help · `F2` settings · `F3` model · `F4` effort · `F5` new chat · `F6`
+  **DON'T PANIC** wordmark (go-figure standard, static cyan→violet brand gradient).
+  F-keys: `F1` settings · `F2` help · `F3` model · `F4` effort · `F5` new chat · `F6`
   resume · `F7` grid · `F8` cron · `F9` mode · `F10` sidebar · `F11` models · `F12`
   status. **Effort is the sole reasoning
   control** (F4 /

@@ -29,7 +29,7 @@ func TestStatusAdaptiveSections(t *testing.T) {
 			t.Errorf("no-slurm page missing %q:\n%s", want, no)
 		}
 	}
-	for _, absent := range []string{"Cluster", "Your jobs", "Fairshare", "Your dirs"} {
+	for _, absent := range []string{"Cluster", "Your jobs", "Fairshare", "Filesystem capacity"} {
 		if strings.Contains(no, absent) {
 			t.Errorf("no-slurm page should not show %q:\n%s", absent, no)
 		}
@@ -38,7 +38,7 @@ func TestStatusAdaptiveSections(t *testing.T) {
 	// 2) Slurm detected + full snapshot: every section present.
 	snap := testSnapshot()
 	full := statusPage(t, EnvInfo{Slurm: true, Host: "login1", User: "rahimk"}, &snap)
-	for _, want := range []string{"Session", "Host", "Cluster", "Your jobs", "Fairshare", "Your dirs"} {
+	for _, want := range []string{"Session", "Host", "Cluster", "Your jobs", "Fairshare", "Filesystem capacity"} {
 		if !strings.Contains(full, want) {
 			t.Errorf("slurm page missing %q:\n%s", want, full)
 		}
@@ -55,7 +55,7 @@ func TestStatusAdaptiveSections(t *testing.T) {
 			t.Errorf("slim slurm page missing %q:\n%s", want, slimView)
 		}
 	}
-	for _, absent := range []string{"Fairshare", "Your dirs"} {
+	for _, absent := range []string{"Fairshare", "Filesystem capacity"} {
 		if strings.Contains(slimView, absent) {
 			t.Errorf("slim slurm page should not show %q:\n%s", absent, slimView)
 		}

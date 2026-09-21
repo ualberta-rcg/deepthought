@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-20 · deepthought-cli — resident sessions and durable scientific workflows
+- Run standalone and detached sessions through the same runtime. Add authenticated local attach streams, stale-approval rejection, paste/cursor forwarding, restart recovery and shared skill/config refresh. Settings preserve local overrides and record built-in/server/local/session provenance; no server login or transport is enabled.
+- Journal Slurm intent before submission, stage script hashes on scratch, reconcile uncertain outcomes without duplicate submissions, enforce explicit resources/account discovery and approval, and add /jobs. Persist sequential workflow objectives, linked attempts, validation evidence and artifact staleness with /plan and optimistic revisions.
+- Register configured scientific manifest tools with input/output contracts and approval. Add live skill restrictions, context pins, durable pre-execution tool state, normalized replies, breaker reporting, bounded predicates, and per-node capacity accounting with shared polling caches.
+- Files: CLI entrypoints/resident bridge; app, config, history, workflow, skills, science, Slurm, tools, Queen, assimilation and TUI packages/tests; both product guides, review/operations/roadmap docs, Makefile and CLI/server CI artifacts.
+- Verification: Slurm CPU job 1087888 completed with exit 0:0 using Go 1.25.9: go vet, all package tests, race checks across eleven runtime packages, and static CLI/server builds. Fixtures cover detach during approval and exactly-once execution, lost sbatch responses, workflow reopen/staleness, invalid scientific contracts, skill restrictions and duplicate node reporting. No live inference or real job submission was used by these tests. Job 1087066 exposed an input-pointer race; the copied-input fix passed jobs 1087876 and 1087888. Deployment retains the previous executable and does not restart existing sessions.
+
 ## 2026-09-20 · deepthought-cli — workspace tools and live context inspection
 - Add session-local workspace read/search/write/edit tools using os.Root confinement, sensitive-path restrictions, read receipts, stale-file checks, atomic writes and approval previews.
 - Budget live chat requests with tool schemas and output reserve, preserve tool-call pairing and required instructions, populate Grid from actual requests, and add /compact, /doctor, /export and explicit /memory management.

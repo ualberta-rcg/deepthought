@@ -24,6 +24,9 @@ func Compile(provider config.Provider, card ModelCard, client *http.Client) (too
 	if card.Endpoint == "" || card.InputSchema == nil {
 		return nil, fmt.Errorf("science: model %q needs endpoint and input_schema manifest data", card.ID)
 	}
+	if provider.ExpandedKey() == "" && !provider.Anonymous {
+		return nil, fmt.Errorf("science: provider requires a key or explicit anonymous mode")
+	}
 	if client == nil {
 		timeout := 6 * time.Minute
 		if card.TimeoutMS > 0 {
@@ -38,13 +41,14 @@ func Compile(provider config.Provider, card ModelCard, client *http.Client) (too
 	return &compiledTool{
 		name: toolNameChars.ReplaceAllString(card.ID, "_"), description: card.Description,
 		endpoint: strings.TrimRight(provider.BaseURL, "/") + "/" + strings.TrimLeft(card.Endpoint, "/"),
-		method:   method, schema: card.InputSchema, key: provider.ExpandedKey(), client: client,
+		method:   method, schema: card.InputSchema, outputSchema: card.OutputSchema, key: provider.ExpandedKey(), client: client,
 	}, nil
 }
 
 type compiledTool struct {
 	name, description, endpoint, method, key string
 	schema                                   map[string]any
+	outputSchema                             map[string]any
 	client                                   *http.Client
 }
 
@@ -57,6 +61,7 @@ func (t *compiledTool) Description() string {
 }
 func (t *compiledTool) Parameters() map[string]any { return t.schema }
 func (*compiledTool) ReadOnly() bool               { return false }
+func (*compiledTool) AlwaysAsk() bool              { return true }
 func (t *compiledTool) Run(ctx context.Context, args map[string]any) tools.Result {
 	raw, err := json.Marshal(args)
 	if err != nil {
@@ -66,19 +71,34 @@ func (t *compiledTool) Run(ctx context.Context, args map[string]any) tools.Resul
 	if err != nil {
 		return tools.Result{IsError: true, Content: err.Error(), Summary: t.name + " · request failed"}
 	}
-	request.Header.Set("Authorization", "Bearer "+t.key)
+	if t.key != "" {
+		request.Header.Set("Authorization", "Bearer "+t.key)
+	}
 	request.Header.Set("Content-Type", "application/json")
 	response, err := t.client.Do(request)
 	if err != nil {
 		return tools.Result{IsError: true, Content: err.Error(), Summary: t.name + " · invoke failed"}
 	}
 	defer response.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(response.Body, 4<<20))
+	body, err := io.ReadAll(io.LimitReader(response.Body, (4<<20)+1))
 	if err != nil {
 		return tools.Result{IsError: true, Content: err.Error(), Summary: t.name + " · read failed"}
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return tools.Result{IsError: true, Content: string(body), Summary: fmt.Sprintf("%s · HTTP %d", t.name, response.StatusCode)}
+	}
+	if len(body) > 4<<20 {
+		return tools.Result{IsError: true, Content: "response exceeds 4 MiB", Summary: t.name + " · response too large"}
+	}
+	if t.outputSchema != nil {
+		var value any
+		err := json.Unmarshal(body, &value)
+		if err == nil {
+			err = tools.ValidateSchema(t.outputSchema, value)
+		}
+		if err != nil {
+			return tools.Result{IsError: true, Content: err.Error(), Summary: t.name + " · invalid output"}
+		}
 	}
 	return tools.Result{Content: strings.TrimSpace(string(body)), Summary: t.name + " · complete"}
 }

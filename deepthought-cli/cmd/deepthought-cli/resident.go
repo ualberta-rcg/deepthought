@@ -4,17 +4,17 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"log"
 	"os"
 	"os/exec"
+	"os/signal"
 	"path/filepath"
 	"syscall"
 	"time"
 
 	"deepthought-cli/internal/alcove"
+	"deepthought-cli/internal/app"
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/history"
-	"deepthought-cli/internal/skills"
 	"deepthought-cli/internal/transwarp"
 )
 
@@ -24,7 +24,11 @@ func handleResidentVerb(args []string) (attachID string, handled bool) {
 	}
 	switch args[0] {
 	case "daemon":
-		runResidentDaemon()
+		path := ""
+		if len(args) > 1 {
+			path = args[1]
+		}
+		runResidentDaemon(path)
 		return "", true
 	case "ls", "status":
 		response, err := sendControl(transwarp.Request{Operation: transwarp.ReportStatus})
@@ -53,13 +57,11 @@ func handleResidentVerb(args []string) (attachID string, handled bool) {
 			fmt.Fprintln(os.Stderr, "usage: deepthought-cli attach <session-id>")
 			return "", true
 		}
-		if _, err := sendControl(transwarp.Request{
-			Operation: transwarp.DisplayMessage, SessionID: args[1], Message: "TUI attached",
-		}); err != nil {
+		if err := runAttached(args[1]); err != nil {
 			fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 			return "", true
 		}
-		return args[1], false
+		return "", true
 	}
 	return "", false
 }
@@ -70,7 +72,7 @@ func sendControl(request transwarp.Request) (transwarp.Response, error) {
 	return transwarp.Send(ctx, transwarp.SocketPath(), request)
 }
 
-func startResident() error {
+func startResident(configPath string) error {
 	if _, err := sendControl(transwarp.Request{Operation: transwarp.ReportStatus}); err == nil {
 		return nil
 	}
@@ -90,10 +92,10 @@ func startResident() error {
 		return err
 	}
 	defer logFile.Close()
-	name, args := executable, []string{"daemon"}
+	name, args := executable, []string{"daemon", configPath}
 	envelope := alcove.DefaultEnvelope()
 	if envelope.Available() {
-		name, args = envelope.Wrap(executable, "daemon")
+		name, args = envelope.Wrap(executable, "daemon", configPath)
 	}
 	cmd := exec.Command(name, args...)
 	cmd.Stdin = nil
@@ -107,52 +109,70 @@ func startResident() error {
 		if _, err := sendControl(transwarp.Request{Operation: transwarp.ReportStatus}); err == nil {
 			return nil
 		}
-		time.Sleep(50 * time.Millisecond)
+		time.Sleep(250 * time.Millisecond)
 	}
 	return fmt.Errorf("resident daemon did not create %s", transwarp.SocketPath())
 }
 
-func runResidentDaemon() {
+func runResidentDaemon(configPath string) {
+	cfg, path, err := loadConfig(configPath)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		return
+	}
+	deps, store := buildRuntime(cfg, path, "")
+	if store == nil {
+		return
+	}
+	defer store.Close()
 	manager := transwarp.NewManager()
 	manager.Audit = auditDirective
-	manager.OnRefresh = reloadLiveState
 	ctx, cancel := signalContext()
 	defer cancel()
+	hub := &residentHub{ctx: ctx, deps: deps, store: store, runners: map[string]*app.SessionRunner{}}
+	manager.OnControl = hub.control
+	manager.OnStream = hub.stream
+	go func() {
+		ticker := time.NewTicker(3 * time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				probe, cancel := context.WithTimeout(ctx, 30*time.Second)
+				_, _ = deps.Scheduler.Reconcile(probe)
+				cancel()
+			}
+		}
+	}()
+	manager.OnRefresh = func(operation string) error {
+		if operation == "refresh_config" {
+			return deps.Live.Reload()
+		}
+		return deps.ReloadSkills()
+	}
 	if err := manager.Serve(ctx, transwarp.SocketPath()); err != nil {
 		fmt.Fprintln(os.Stderr, "deepthought-cli:", err)
 	}
-}
-
-// reloadLiveState re-reads the config or the skills packs on demand — the
-// live-editing path behind the daemon's refresh_config/refresh_skills verbs
-// and the server's SIGHUP / admin/reload. Edits land via git pull or SSH and
-// apply without a restart.
-func reloadLiveState(operation string) error {
-	path, err := config.DefaultPath()
-	if err != nil {
-		return err
+	cancel()
+	hub.mu.Lock()
+	runners := make([]*app.SessionRunner, 0, len(hub.runners))
+	for _, r := range hub.runners {
+		r.Stop()
+		runners = append(runners, r)
 	}
-	switch operation {
-	case "refresh_config":
-		cfg, err := config.Load(path)
-		if err != nil {
-			return fmt.Errorf("reload config: %w", err)
+	hub.mu.Unlock()
+	for _, r := range runners {
+		select {
+		case <-r.Done():
+		case <-time.After(5 * time.Second):
 		}
-		log.Printf("daemon: config reloaded (%d providers, %d models)", len(cfg.File.Providers), len(cfg.File.Models))
-		return nil
-	case "refresh_skills":
-		list, err := skills.NewLoader().Load(".")
-		if err != nil {
-			return fmt.Errorf("reload skills: %w", err)
-		}
-		log.Printf("daemon: skills reloaded (%d packs)", len(list))
-		return nil
 	}
-	return fmt.Errorf("unknown refresh op %q", operation)
 }
 
 func signalContext() (context.Context, context.CancelFunc) {
-	return context.WithCancel(context.Background())
+	return signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 }
 
 func auditDirective(request transwarp.Request) {

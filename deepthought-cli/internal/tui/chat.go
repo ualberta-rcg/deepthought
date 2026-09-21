@@ -77,6 +77,7 @@ const chatDefaultMaxTokens = 8192
 //     and re-arms drainCmd, so chunks render as they arrive. The final item closes
 //     the loop and commits the assistant turn to history.
 type streamItem struct {
+	reply     *babel.Reply
 	delta     string // visible content chunk
 	reasoning string // thinking-trace chunk
 	toolCalls []babel.ToolCall
@@ -112,8 +113,9 @@ type pendingApproval struct {
 
 // toolResultMsg carries a completed (or denied) tool run back into Update.
 type toolResultMsg struct {
-	probe  *history.Probe
-	result tools.Result
+	persistErr error
+	probe      *history.Probe
+	result     tools.Result
 }
 
 // InferenceSource resolves roles to pooled clients. app.Settings satisfies it
@@ -156,28 +158,30 @@ type ChatModel struct {
 	// render: while busy && !streaming the row shows the spinner (cold-start
 	// wait); once the first delta lands, streaming flips true and the row
 	// shows the accumulating thinking block + reply.
-	src        InferenceSource
-	reg        *tools.Registry
-	gate       *queen.Gate
-	coll       *history.Collective
-	store      history.Store
-	cluster    slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
-	env        EnvInfo               // static host/session environment → the env brief
-	skills     string                // compact "available skills" index → a per-request system note
-	replayed   bool                  // prior turns rendered into the transcript (resume)
-	busy       bool
-	streaming  bool
-	acc        string
-	thinkAcc   string // reasoning trace accumulating for the in-flight turn
-	pendIdx    int    // index into lines of the in-flight row, -1 when idle
-	streamCh   <-chan streamItem
-	cancel     context.CancelFunc // cancels the in-flight stream; esc triggers it
-	ctx        context.Context
-	generation uint64
-	spin       spinner.Model
-	spinFrame  int              // our own frame counter; the spinner's frame field is unexported
-	dispatch   *dispatchState   // non-nil while dispatching tool calls
-	awaiting   *pendingApproval // non-nil while a y/n permission prompt is on screen
+	src           InferenceSource
+	reg           *tools.Registry
+	gate          *queen.Gate
+	coll          *history.Collective
+	store         history.Store
+	cluster       slurm.ClusterSnapshot // latest cached snapshot → the model's cluster blurb
+	env           EnvInfo               // static host/session environment → the env brief
+	skills        string                // compact "available skills" index → a per-request system note
+	skillListing  func() string
+	replayed      bool // prior turns rendered into the transcript (resume)
+	busy          bool
+	streaming     bool
+	acc           string
+	thinkAcc      string // reasoning trace accumulating for the in-flight turn
+	pendIdx       int    // index into lines of the in-flight row, -1 when idle
+	streamCh      <-chan streamItem
+	cancel        context.CancelFunc // cancels the in-flight stream; esc triggers it
+	ctx           context.Context
+	parentContext context.Context
+	generation    uint64
+	spin          spinner.Model
+	spinFrame     int              // our own frame counter; the spinner's frame field is unexported
+	dispatch      *dispatchState   // non-nil while dispatching tool calls
+	awaiting      *pendingApproval // non-nil while a y/n permission prompt is on screen
 
 	// Activity / session accounting.
 	turnStarted   time.Time // when the current busy turn began
@@ -618,6 +622,10 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		return m, Goto(ScreenModels)
 	case val == "/cron":
 		return m, Goto(ScreenCron)
+	case val == "/jobs":
+		return m, Goto(ScreenJobs)
+	case val == "/plan":
+		return m, Goto(ScreenPlans)
 	case val == "/context":
 		return m, Goto(ScreenGrid)
 	case val == "/compact":
@@ -632,7 +640,7 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 			}
 			for _, tx := range inc.Transmissions {
 				for _, p := range tx.Probes {
-					if len(p.Result.Content) < 2048 {
+					if p.Pinned || len(p.Result.Content) < 2048 {
 						continue
 					}
 					p.Result.Summaries.Condensed = history.Condense(p.Result.Content, 16, 1536) + "\n[Shortened; expand history ID " + p.ID + " for full output.]"
@@ -646,6 +654,35 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 			}
 		}
 		m.systemLine(fmt.Sprintf("Compacted %d older tool results; full bodies remain available through expand.", count))
+		return m, nil
+	case strings.HasPrefix(val, "/pin ") || strings.HasPrefix(val, "/unpin "):
+		if m.busy {
+			m.systemLine("Finish or interrupt the turn before changing context pins.")
+			return m, nil
+		}
+		parts := strings.Fields(val)
+		if len(parts) != 2 {
+			return m, nil
+		}
+		for _, inc := range m.coll.Incursions {
+			for _, tx := range inc.Transmissions {
+				for _, p := range tx.Probes {
+					if p.ID == parts[1] {
+						p.Pinned = parts[0] == "/pin"
+						if p.Pinned {
+							p.State = history.StateFull
+						}
+						if err := m.store.SaveObject(p); err != nil {
+							m.systemLine(err.Error())
+						} else {
+							m.systemLine(fmt.Sprintf("Context pin %s: %t", p.ID, p.Pinned))
+						}
+						return m, nil
+					}
+				}
+			}
+		}
+		m.systemLine("No probe with that ID in this chat.")
 		return m, nil
 	case val == "/doctor":
 		m.systemLine(fmt.Sprintf("Standalone · workspace tools: %d · estimated context: %d/%d · server login: coming soon", len(m.reg.Names()), m.manifest.Estimated, m.manifest.Budget))
@@ -713,7 +750,7 @@ func (m ChatModel) beginChat(text string) (ChatModel, tea.Cmd) {
 		return m, nil
 	}
 	m.generation++
-	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.ctx, m.cancel = context.WithCancel(m.parent())
 	inc := m.coll.StartIncursion(text)
 	if err := m.store.SaveObject(inc); err != nil {
 		m.cancel()
@@ -779,7 +816,7 @@ func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
 	}
 	inc.Status = history.IncursionStreaming
 	m.generation++
-	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.ctx, m.cancel = context.WithCancel(m.parent())
 	inc.Error = ""
 	_ = m.store.SaveObject(inc)
 	return m.armStream()
@@ -813,7 +850,7 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 	}
 	client, model, err := m.src.RoleClient(unimatrix.RoleAgentic)
 	if err != nil {
-		m.appendTurn(styleError.Render("✗ " + err.Error()))
+		m.failTurn(err)
 		return m, nil
 	}
 	// Stamp the producer for the transmissions this turn will create.
@@ -837,7 +874,7 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 	m.lines = append(m.lines, m.pendingView())
 	m.flush()
 	if m.ctx == nil {
-		m.ctx, m.cancel = context.WithCancel(context.Background())
+		m.ctx, m.cancel = context.WithCancel(m.parent())
 	}
 	req := m.newRequest(model)
 	if resolver, ok := m.src.(interface {
@@ -849,6 +886,9 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 				sensitivity = inc.Sensitivity
 			}
 			for _, tx := range inc.Transmissions {
+				if tx.Sensitivity > sensitivity {
+					sensitivity = tx.Sensitivity
+				}
 				for _, p := range tx.Probes {
 					if p.Sensitivity > sensitivity {
 						sensitivity = p.Sensitivity
@@ -858,32 +898,54 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 		}
 		client, model, err = resolver.ResolveRequest(unimatrix.RoleAgentic, sensitivity, estimateUsage(req.Messages, "", "").PromptTokens+req.MaxTokens)
 		if err != nil {
-			m.busy = false
-			m.cancel()
-			m.systemLine(err.Error())
+			m.failTurn(err)
 			return m, nil
 		}
 		req = m.newRequest(model)
 	}
+	m.currentProducer = &history.Producer{Provider: model.Provider, ModelID: model.ID}
 	refs := map[string]string{}
+	pins := map[string]bool{}
 	for _, inc := range m.coll.Incursions {
 		for _, tx := range inc.Transmissions {
 			for _, p := range tx.Probes {
 				refs[p.WireID] = p.ID
+				pins[p.ID] = p.Pinned
 			}
 		}
 	}
-	req.Messages, m.manifest, err = assimilation.Wire(req.Messages, req.Tools, model.Context, req.MaxTokens, refs)
+	req.Messages, m.manifest, err = assimilation.Wire(req.Messages, req.Tools, model.Context, req.MaxTokens, refs, pins)
 	if err != nil {
-		m.busy = false
-		m.cancel()
-		m.systemLine(err.Error())
+		m.failTurn(err)
 		return m, nil
 	}
 	return m, tea.Batch(m.own(startStream(m.ctx, client, req)), tea.Cmd(m.spin.Tick))
 }
 
 func (m ChatModel) Manifest() assimilation.Manifest { return m.manifest }
+
+func (m *ChatModel) failTurn(err error) {
+	if m.cancel != nil {
+		m.cancel()
+		m.cancel = nil
+	}
+	m.busy = false
+	m.streaming = false
+	m.awaiting = nil
+	m.dispatch = nil
+	if m.gate != nil {
+		m.gate.ClearTaskGrants()
+	}
+	if m.coll != nil {
+		if inc := m.coll.ActiveIncursion(); inc != nil {
+			inc.Fail(err.Error())
+			if m.store != nil {
+				_ = m.store.SaveObject(inc)
+			}
+		}
+	}
+	m.systemLine("Turn stopped: " + err.Error())
+}
 
 // newRequest builds the ChatRequest for the current incursion: the model, the full message
 // history (system prompt + incursions incl. any tool calls/results), the advertised tools,
@@ -932,6 +994,10 @@ func (m ChatModel) SetSkills(s string) ChatModel {
 	m.skills = s
 	return m
 }
+func (m ChatModel) SetSkillListing(listing func() string) ChatModel {
+	m.skillListing = listing
+	return m
+}
 
 // requestMessages returns the message slice to send by flattening the rich
 // collective. It uses MessagesByState so each probe renders at its own residency
@@ -943,6 +1009,9 @@ func (m ChatModel) requestMessages() []babel.Message {
 	msgs := m.coll.MessagesByState()
 	if facts := m.memoryContext(); facts != "" {
 		msgs = append(msgs, babel.Message{Role: "system", Content: facts})
+	}
+	if m.skillListing != nil {
+		m.skills = m.skillListing()
 	}
 	if m.skills != "" {
 		msgs = append(msgs, babel.Message{Role: "system", Content: m.skills})
@@ -1110,6 +1179,13 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 	}
 
 	// Stream over.
+	if reporter, ok := m.src.(interface{ ReportProviderResult(string, error) }); ok && m.currentProducer != nil {
+		reporter.ReportProviderResult(m.currentProducer.Provider, it.err)
+	}
+	if it.reply != nil && it.err == nil {
+		m.acc, m.thinkAcc = it.reply.Text, it.reply.Reasoning
+		m.replacePending(m.liveView())
+	}
 	m.streaming = false
 	m.streamCh = nil
 	m.pendIdx = -1
@@ -1151,10 +1227,19 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 	m.recordUsage(usage)
 	if m.thinkAcc != "" {
 		syn := tx.AddSynapse(m.thinkAcc, "reasoning")
-		_ = m.store.SaveObject(syn)
+		if err := m.store.SaveObject(syn); err != nil {
+			m.failTurn(err)
+			return m, nil
+		}
 	}
-	_ = m.store.SaveObject(tx)
-	_ = m.store.SaveObject(inc)
+	if err := m.store.SaveObject(tx); err != nil {
+		m.failTurn(err)
+		return m, nil
+	}
+	if err := m.store.SaveObject(inc); err != nil {
+		m.failTurn(err)
+		return m, nil
+	}
 
 	if len(it.toolCalls) == 0 {
 		// Plain answer — render it and go idle.
@@ -1163,8 +1248,14 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 			m.gate.ClearTaskGrants()
 		}
 		inc.MarkCompleted()
-		_ = m.store.SaveObject(inc)
-		_ = m.store.Flush()
+		if err := m.store.SaveObject(inc); err != nil {
+			m.failTurn(err)
+			return m, nil
+		}
+		if err := m.store.Flush(); err != nil {
+			m.failTurn(err)
+			return m, nil
+		}
 		if tx.Text == "" {
 			m.appendTurn(styleSystem.Render("(empty reply)"))
 		} else {
@@ -1310,10 +1401,17 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 // handleToolResult renders the result chrome, records the result on the probe,
 // advances the dispatch, and processes the next probe.
 func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
+	if r.persistErr != nil {
+		m.failTurn(r.persistErr)
+		return m, nil
+	}
 	if !m.busy || m.dispatch == nil {
 		return m, nil
 	}
 	probe := r.probe
+	if !r.result.IsError && m.gate != nil {
+		m.gate.Restrict(r.result.AllowedTools)
+	}
 	probe.Status = history.ProbeCompleted
 	if r.result.IsError {
 		probe.Status = history.ProbeFailed
@@ -1337,8 +1435,14 @@ func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
 
 	inc := m.coll.ActiveIncursion()
 	if inc != nil {
-		_ = m.store.SaveObject(probe)
-		_ = m.store.SaveObject(inc)
+		if err := m.store.SaveObject(probe); err != nil {
+			m.failTurn(err)
+			return m, nil
+		}
+		if err := m.store.SaveObject(inc); err != nil {
+			m.failTurn(err)
+			return m, nil
+		}
 	}
 
 	if m.dispatch != nil {
@@ -1350,6 +1454,12 @@ func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
 // runToolCmd runs a tool in a Cmd goroutine (bash can block for its whole timeout).
 // Snapshots tool/args/probe so it never captures the ChatModel.
 func (m ChatModel) runToolCmd(tool tools.Tool, args map[string]any, probe *history.Probe) tea.Cmd {
+	probe.Decision = queen.Allow
+	probe.Status = history.ProbeRunning
+	probe.StartedAt = now()
+	if err := m.store.SaveObject(probe); err != nil {
+		return m.own(func() tea.Msg { return toolResultMsg{persistErr: err} })
+	}
 	ctx := m.ctx
 	if ctx == nil {
 		ctx = context.Background()
@@ -1537,7 +1647,7 @@ func (m ChatModel) runInlineBash(cmd string) (ChatModel, tea.Cmd) {
 	}
 	args := map[string]any{"command": cmd}
 	m.generation++
-	m.ctx, m.cancel = context.WithCancel(context.Background())
+	m.ctx, m.cancel = context.WithCancel(m.parent())
 	m.busy = true
 	m.userEcho("!" + cmd)
 	m.appendTurn(styleTool.Render("▸ bash: " + truncate(cmd, 60)))
@@ -1630,7 +1740,7 @@ func startStream(ctx context.Context, client *babel.Client, req babel.ChatReques
 				}
 			})
 			select {
-			case ch <- streamItem{err: err, final: true, toolCalls: rep.ToolCalls, usage: rep.Usage}:
+			case ch <- streamItem{err: err, final: true, toolCalls: rep.ToolCalls, usage: rep.Usage, reply: &rep}:
 			case <-ctx.Done():
 			}
 		}()

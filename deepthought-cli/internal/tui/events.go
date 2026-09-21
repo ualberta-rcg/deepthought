@@ -2,6 +2,31 @@ package tui
 
 import tea "charm.land/bubbletea/v2"
 
+import (
+	"context"
+	"fmt"
+)
+
+func (m ChatModel) CollectiveID() string {
+	if m.coll == nil {
+		return ""
+	}
+	return m.coll.ID
+}
+func (m ChatModel) ApprovalID() string {
+	if m.awaiting == nil {
+		return ""
+	}
+	return fmt.Sprintf("%s:%d:%s", m.coll.ID, m.generation, m.awaiting.probe.ID)
+}
+func (m ChatModel) SetParentContext(ctx context.Context) ChatModel { m.parentContext = ctx; return m }
+func (m ChatModel) parent() context.Context {
+	if m.parentContext != nil {
+		return m.parentContext
+	}
+	return context.Background()
+}
+
 // Async messages belong to their screen even when it is not visible.
 func IsChatEvent(msg tea.Msg) bool {
 	switch msg.(type) {

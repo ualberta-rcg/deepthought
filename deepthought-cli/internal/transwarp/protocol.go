@@ -20,11 +20,13 @@ const (
 	Drain           Operation = "drain"
 	Stop            Operation = "stop"
 	ResolveApproval Operation = "resolve_approval"
+	NewSession      Operation = "new_session"
+	AttachSession   Operation = "attach_session"
 )
 
 func (o Operation) Valid() bool {
 	switch o {
-	case RunSchedule, RefreshConfig, RefreshSkills, ReportStatus, DisplayMessage, Drain, Stop, ResolveApproval:
+	case RunSchedule, RefreshConfig, RefreshSkills, ReportStatus, DisplayMessage, Drain, Stop, ResolveApproval, NewSession, AttachSession:
 		return true
 	default:
 		return false

@@ -5,10 +5,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"net"
 	"os"
 	"path/filepath"
 	"sync"
+	"syscall"
 	"time"
 )
 
@@ -29,6 +31,8 @@ type Manager struct {
 	// OnRefresh is the live-editing hook: re-read config (refresh_config) or
 	// skills (refresh_skills) without a restart. Wired by the host process.
 	OnRefresh func(operation string) error
+	OnControl func(Request) (Response, bool)
+	OnStream  func(net.Conn, Request) bool
 }
 
 func NewManager() *Manager {
@@ -65,6 +69,11 @@ func (m *Manager) WaitApproval(ctx context.Context, sessionID string) (bool, err
 }
 
 func (m *Manager) Handle(request Request) Response {
+	if m.OnControl != nil {
+		if response, handled := m.OnControl(request); handled {
+			return response
+		}
+	}
 	if m.Audit != nil {
 		m.Audit(request)
 	}
@@ -133,7 +142,7 @@ func (m *Manager) Handle(request Request) Response {
 		}
 		return Response{OK: true, Message: string(request.Operation) + " reloaded"}
 	case RunSchedule:
-		return Response{OK: true, Message: string(request.Operation) + " accepted"}
+		return Response{Error: "schedule execution is not configured"}
 	default:
 		return Response{Error: "unsupported operation"}
 	}
@@ -154,7 +163,23 @@ func (m *Manager) Serve(ctx context.Context, socket string) error {
 	// Clear a stale socket from a crashed prior run; failure here is fine
 	// (no socket = nothing to clear), and a real conflict surfaces from
 	// net.Listen below.
-	_ = os.Remove(socket)
+	if info, err := os.Stat(filepath.Dir(socket)); err != nil {
+		return err
+	} else if stat, ok := info.Sys().(*syscall.Stat_t); !ok || stat.Uid != uint32(os.Getuid()) || info.Mode().Perm()&0077 != 0 {
+		return fmt.Errorf("resident socket directory must be private and owned by the current user")
+	}
+	if conn, err := net.DialTimeout("unix", socket, 200*time.Millisecond); err == nil {
+		conn.Close()
+		return fmt.Errorf("resident daemon already running")
+	}
+	if info, err := os.Lstat(socket); err == nil {
+		if info.Mode()&os.ModeSocket == 0 {
+			return fmt.Errorf("refusing to replace non-socket path")
+		}
+		if err := os.Remove(socket); err != nil {
+			return err
+		}
+	}
 	listener, err := net.Listen("unix", socket)
 	if err != nil {
 		return err
@@ -185,10 +210,26 @@ func (m *Manager) Serve(ctx context.Context, socket string) error {
 
 func (m *Manager) serveConn(conn net.Conn) {
 	defer conn.Close()
+	if uc, ok := conn.(*net.UnixConn); ok {
+		raw, err := uc.SyscallConn()
+		if err != nil {
+			return
+		}
+		valid := false
+		if err := raw.Control(func(fd uintptr) {
+			cred, err := unix.GetsockoptUcred(int(fd), unix.SOL_SOCKET, unix.SO_PEERCRED)
+			valid = err == nil && cred.Uid == uint32(os.Getuid())
+		}); err != nil || !valid {
+			return
+		}
+	}
 	_ = conn.SetDeadline(time.Now().Add(10 * time.Second))
 	request, err := DecodeRequest(conn)
 	if err != nil {
 		_ = json.NewEncoder(conn).Encode(Response{Error: err.Error()})
+		return
+	}
+	if m.OnStream != nil && m.OnStream(conn, request) {
 		return
 	}
 	_ = json.NewEncoder(conn).Encode(m.Handle(request))

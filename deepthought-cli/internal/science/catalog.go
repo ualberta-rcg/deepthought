@@ -44,9 +44,17 @@ func (s ToolServer) Discover(ctx context.Context) ([]ModelCard, error) {
 	source := CatalogSource(s.Provider.CatalogSource)
 	switch source {
 	case CatalogSkill:
-		raw, err := os.ReadFile(s.Manifest)
+		f, err := os.Open(s.Manifest)
 		if err != nil {
 			return nil, err
+		}
+		defer f.Close()
+		raw, err := io.ReadAll(io.LimitReader(f, (8<<20)+1))
+		if err != nil {
+			return nil, err
+		}
+		if len(raw) > 8<<20 {
+			return nil, fmt.Errorf("science: manifest exceeds 8 MiB")
 		}
 		return decodeCards(raw)
 	case CatalogOpenAI:
@@ -67,7 +75,9 @@ func (s ToolServer) Discover(ctx context.Context) ([]ModelCard, error) {
 			cards = append(cards, ModelCard{ID: model.ID})
 		}
 		return cards, nil
-	case CatalogRich, CatalogOpenAPI:
+	case CatalogOpenAPI:
+		return nil, fmt.Errorf("science: OpenAPI compilation is not supported; supply a rich_manifest or skill_manifest with explicit schemas")
+	case CatalogRich:
 		path := s.Manifest
 		if path == "" {
 			path = "/models"
@@ -106,18 +116,25 @@ func (s ToolServer) get(ctx context.Context, path string) ([]byte, error) {
 	if err != nil {
 		return nil, err
 	}
-	request.Header.Set("Authorization", "Bearer "+s.Provider.ExpandedKey())
+	if key := s.Provider.ExpandedKey(); key != "" {
+		request.Header.Set("Authorization", "Bearer "+key)
+	} else if !s.Provider.Anonymous {
+		return nil, fmt.Errorf("science: provider requires a key or explicit anonymous mode")
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
 	}
 	defer response.Body.Close()
-	raw, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
+	raw, err := io.ReadAll(io.LimitReader(response.Body, (8<<20)+1))
 	if err != nil {
 		return nil, err
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		return nil, fmt.Errorf("science: catalog %s: %s", response.Status, strings.TrimSpace(string(raw)))
+	}
+	if len(raw) > 8<<20 {
+		return nil, fmt.Errorf("science: manifest exceeds 8 MiB")
 	}
 	return raw, nil
 }

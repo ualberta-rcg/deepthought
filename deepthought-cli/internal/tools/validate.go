@@ -16,7 +16,11 @@ func Validate(tool Tool, args map[string]any) error {
 	if tool == nil {
 		return fmt.Errorf("unknown tool")
 	}
-	raw, err := json.Marshal(tool.Parameters())
+	return ValidateSchema(tool.Parameters(), args)
+}
+
+func ValidateSchema(parameters map[string]any, inputValue any) error {
+	raw, err := json.Marshal(parameters)
 	if err != nil {
 		return err
 	}
@@ -33,11 +37,11 @@ func Validate(tool Tool, args map[string]any) error {
 		}
 		schema, err := compiler.Compile("tool.json")
 		if err != nil {
-			return fmt.Errorf("%s schema: %w", tool.Name(), err)
+			return fmt.Errorf("schema: %w", err)
 		}
 		value, _ = schemas.LoadOrStore(key, schema)
 	}
-	raw, err = json.Marshal(args)
+	raw, err = json.Marshal(inputValue)
 	if err != nil {
 		return err
 	}
@@ -46,7 +50,7 @@ func Validate(tool Tool, args map[string]any) error {
 		return err
 	}
 	if err := value.(*jsonschema.Schema).Validate(input); err != nil {
-		return fmt.Errorf("%s arguments: %w", tool.Name(), err)
+		return fmt.Errorf("arguments: %w", err)
 	}
 	return nil
 }

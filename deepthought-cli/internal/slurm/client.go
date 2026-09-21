@@ -4,13 +4,16 @@ package slurm
 
 import (
 	"context"
+	"deepthought-cli/internal/history"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -28,7 +31,11 @@ func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte,
 	return out, nil
 }
 
-type Client struct{ Runner Runner }
+type Client struct {
+	Runner Runner
+	Store  *history.SQLiteStore
+	mu     sync.Mutex
+}
 
 func NewClient(runner Runner) *Client {
 	if runner == nil {
@@ -38,6 +45,7 @@ func NewClient(runner Runner) *Client {
 }
 
 type Job struct {
+	Comment  string `json:"comment,omitempty"`
 	ID       string `json:"id"`
 	Name     string `json:"name,omitempty"`
 	State    string `json:"state,omitempty"`
@@ -48,7 +56,14 @@ type Job struct {
 }
 
 func (c *Client) Queue(ctx context.Context, jobID string) ([]Job, error) {
-	args := []string{"--json"}
+	if err := validateJobID(jobID); err != nil {
+		return nil, err
+	}
+	user := os.Getenv("USER")
+	if user == "" {
+		return nil, fmt.Errorf("current user is unavailable")
+	}
+	args := []string{"--json", "--user", user}
 	if jobID != "" {
 		args = append(args, "--jobs", jobID)
 	}
@@ -60,7 +75,14 @@ func (c *Client) Queue(ctx context.Context, jobID string) ([]Job, error) {
 }
 
 func (c *Client) Accounting(ctx context.Context, jobID string) ([]Job, error) {
-	args := []string{"--json", "-X"}
+	if err := validateJobID(jobID); err != nil {
+		return nil, err
+	}
+	user := os.Getenv("USER")
+	if user == "" {
+		return nil, fmt.Errorf("current user is unavailable")
+	}
+	args := []string{"--json", "-X", "--user", user, "--starttime=now-7days"}
 	if jobID != "" {
 		args = append(args, "--jobs", jobID)
 	}
@@ -81,6 +103,7 @@ func parseJobs(raw []byte) ([]Job, error) {
 	out := make([]Job, 0, len(payload.Jobs))
 	for _, value := range payload.Jobs {
 		out = append(out, Job{
+			Comment:  valueString(value, "comment"),
 			ID:       valueString(value, "job_id", "jobid", "id"),
 			Name:     valueString(value, "name", "job_name"),
 			State:    valueString(value, "job_state", "state"),
@@ -111,8 +134,10 @@ func valueString(values map[string]any, keys ...string) string {
 			}
 			return strings.Join(parts, ",")
 		case map[string]any:
-			if set, ok := typed["set"]; ok {
-				return fmt.Sprint(set)
+			for _, field := range []string{"number", "current"} {
+				if nested, ok := typed[field]; ok {
+					return valueString(map[string]any{"value": nested}, "value")
+				}
 			}
 			raw, _ := json.Marshal(typed)
 			return string(raw)
@@ -124,18 +149,21 @@ func valueString(values map[string]any, keys ...string) string {
 }
 
 type SubmitRequest struct {
-	Script  string
-	Account string
-	Time    string
-	Memory  string
-	GRES    string
+	SubmissionID string
+	CPUs         int
+	Script       string
+	Account      string
+	Time         string
+	Memory       string
+	GRES         string
 }
 
-func (c *Client) Submit(ctx context.Context, request SubmitRequest) (string, error) {
+func (c *Client) submitCommand(ctx context.Context, request SubmitRequest) (string, error) {
 	if request.Script == "" {
 		return "", fmt.Errorf("slurm: script is required")
 	}
 	args := []string{"--parsable"}
+	args = append(args, "--cpus-per-task", strconv.Itoa(request.CPUs), "--comment", "deepthought:"+request.SubmissionID, "--job-name", "deepthought-"+request.SubmissionID, "--chdir", filepath.Dir(request.Script), "--output", filepath.Join(filepath.Dir(request.Script), "slurm-%j.out"))
 	if request.Account != "" {
 		args = append(args, "--account", request.Account)
 	}
@@ -154,7 +182,7 @@ func (c *Client) Submit(ctx context.Context, request SubmitRequest) (string, err
 		return "", err
 	}
 	id := strings.Split(strings.TrimSpace(string(raw)), ";")[0]
-	if id == "" {
+	if id == "" || validateJobID(id) != nil {
 		return "", fmt.Errorf("slurm: sbatch returned no job id")
 	}
 	return id, nil
@@ -164,8 +192,33 @@ func (c *Client) Cancel(ctx context.Context, id string) error {
 	if id == "" {
 		return fmt.Errorf("slurm: job id is required")
 	}
-	_, err := c.Runner.Run(ctx, "scancel", id)
+	if err := validateJobID(id); err != nil {
+		return err
+	}
+	jobs, err := c.Queue(ctx, id)
+	if err != nil {
+		return err
+	}
+	owned := false
+	for _, job := range jobs {
+		if job.ID == id {
+			owned = true
+		}
+	}
+	if !owned {
+		return fmt.Errorf("job is not in the current user's active queue")
+	}
+	_, err = c.Runner.Run(ctx, "scancel", id)
 	return err
+}
+
+var jobIDPattern = regexp.MustCompile(`^[0-9]+(?:_[0-9]+)?$`)
+
+func validateJobID(id string) error {
+	if id != "" && !jobIDPattern.MatchString(id) {
+		return fmt.Errorf("invalid job id")
+	}
+	return nil
 }
 
 func (c *Client) GRES(ctx context.Context) ([]string, error) {
@@ -251,45 +304,45 @@ type StorageRow struct {
 // Snapshot queries sinfo + squeue and returns a structured cluster status. It is
 // non-fatal per command: a failing sinfo still yields squeue-derived fields, and
 // vice versa; Err is set only if nothing could be gathered.
+var snapshotCache struct {
+	sync.Mutex
+	value   ClusterSnapshot
+	quotaAt time.Time
+	quota   []string
+}
+
 func Snapshot(ctx context.Context) ClusterSnapshot {
+	snapshotCache.Lock()
+	defer snapshotCache.Unlock()
+	if time.Since(snapshotCache.value.FetchedAt) < 3*time.Minute {
+		return snapshotCache.value
+	}
+	value := snapshot(ctx)
+	snapshotCache.value = value
+	return value
+}
+func snapshot(ctx context.Context) ClusterSnapshot {
 	s := ClusterSnapshot{FetchedAt: time.Now()}
 	runner := ExecRunner{}
 
-	// Nodes + CPUs: "%D|%C" → nodecount|A/I/O/T per node group.
-	if raw, err := runner.Run(ctx, "sinfo", "-h", "-o", "%D|%C"); err == nil {
+	// Each node contributes once even when it belongs to multiple partitions.
+	if raw, err := runner.Run(ctx, "sinfo", "--Node", "-h", "-o", "%N|%C|%t"); err == nil {
+		seen := map[string]bool{}
 		for _, line := range strings.Split(string(raw), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
+			p := strings.Split(strings.TrimSpace(line), "|")
+			if len(p) != 3 || seen[p[0]] {
 				continue
 			}
-			parts := strings.Split(line, "|")
-			s.NodesTotal += atoi(parts[0])
-			if len(parts) > 1 {
-				cpu := strings.Split(parts[1], "/")
-				if len(cpu) >= 4 {
-					s.CPUAlloc += atoi(cpu[0])
-					s.CPUIdle += atoi(cpu[1])
-					s.CPUTotal += atoi(cpu[3])
-				}
+			seen[p[0]] = true
+			s.NodesTotal++
+			if isNodeUp(p[2]) {
+				s.NodesUp++
 			}
-		}
-	}
-
-	// Nodes up: "%D|%t" — count nodes whose state is not down/drain/fail/*.
-	if raw, err := runner.Run(ctx, "sinfo", "-h", "-o", "%D|%t"); err == nil {
-		for _, line := range strings.Split(string(raw), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
-			}
-			parts := strings.Split(line, "|")
-			n := atoi(parts[0])
-			st := ""
-			if len(parts) > 1 {
-				st = strings.ToLower(parts[1])
-			}
-			if isNodeUp(st) {
-				s.NodesUp += n
+			cpu := strings.Split(p[1], "/")
+			if len(cpu) == 4 {
+				s.CPUAlloc += atoi(cpu[0])
+				s.CPUIdle += atoi(cpu[1])
+				s.CPUTotal += atoi(cpu[3])
 			}
 		}
 	}
@@ -370,20 +423,26 @@ func Snapshot(ctx context.Context) ClusterSnapshot {
 
 	// Storage quotas (Alliance diskusage_report). Keep the raw rows — the tool
 	// already column-aligns them, so parsing is fragile and unnecessary.
-	if path, err := exec.LookPath("diskusage_report"); err == nil {
-		if out, err := exec.CommandContext(ctx, path).CombinedOutput(); err == nil {
-			for i, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
-				if i == 0 || strings.TrimSpace(line) == "" {
-					continue // header
-				}
-				s.Storage = append(s.Storage, strings.TrimSpace(line))
-				if len(s.Storage) >= 8 {
-					break
+	if time.Since(snapshotCache.quotaAt) >= 15*time.Minute {
+		snapshotCache.quotaAt = time.Now()
+		if path, err := exec.LookPath("diskusage_report"); err == nil {
+			if out, err := exec.CommandContext(ctx, path).CombinedOutput(); err == nil {
+				for i, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+					if i == 0 || strings.TrimSpace(line) == "" {
+						continue // header
+					}
+					s.Storage = append(s.Storage, strings.TrimSpace(line))
+					if len(s.Storage) >= 8 {
+						break
+					}
 				}
 			}
 		}
-	}
 
+		snapshotCache.quota = append([]string(nil), s.Storage...)
+	} else {
+		s.Storage = append([]string(nil), snapshotCache.quota...)
+	}
 	// Parsed storage usage (home/scratch/projects) for bars, from df.
 	s.StorageRows = gatherStorageRows(ctx, runner)
 
@@ -396,7 +455,8 @@ func Snapshot(ctx context.Context) ClusterSnapshot {
 // gatherGPUsAndMem fills GPUs / GPUsUsed / GPUType / MemTotalGB / MemAllocGB.
 func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 	// Alliance: GresUsed looks like "gpu:l40s:1(IDX:1)" — count is before (IDX.
-	raw, err := runner.Run(ctx, "sinfo", "-h", "-O", "Gres:80,GresUsed:80,Memory:12,AllocMem:12", "--Node")
+	raw, err := runner.Run(ctx, "sinfo", "-h", "-O", "NodeList:80,Gres:80,GresUsed:80,Memory:12,AllocMem:12", "--Node")
+	seen := map[string]bool{}
 	if err == nil && strings.TrimSpace(string(raw)) != "" {
 		var memMB, allocMB int
 		for _, line := range strings.Split(string(raw), "\n") {
@@ -406,6 +466,11 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 			}
 			// -O pads columns with spaces; split on 2+ spaces.
 			cols := splitSinfoCols(line)
+			if len(cols) < 5 || seen[cols[0]] {
+				continue
+			}
+			seen[cols[0]] = true
+			cols = cols[1:]
 			gres, usedStr := "", ""
 			if len(cols) > 0 {
 				gres = cols[0]
@@ -437,9 +502,9 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 	}
 
 	// Fallback: classic %G|%m|%e.
-	raw, err = runner.Run(ctx, "sinfo", "-h", "-o", "%G|%m|%e", "--Node")
+	raw, err = runner.Run(ctx, "sinfo", "-h", "-o", "%N|%G|%m|%e", "--Node")
 	if err != nil {
-		raw, err = runner.Run(ctx, "sinfo", "-h", "-o", "%G|%m", "--Node")
+		raw, err = runner.Run(ctx, "sinfo", "-h", "-o", "%N|%G|%m", "--Node")
 	}
 	if err != nil {
 		return
@@ -450,7 +515,12 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 		if line == "" {
 			continue
 		}
-		parts := strings.SplitN(line, "|", 3)
+		parts := strings.SplitN(line, "|", 4)
+		if len(parts) < 3 || seen[parts[0]] {
+			continue
+		}
+		seen[parts[0]] = true
+		parts = parts[1:]
 		gres := ""
 		if len(parts) > 0 {
 			gres = parts[0]

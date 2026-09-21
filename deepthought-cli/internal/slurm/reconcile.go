@@ -48,8 +48,8 @@ type Reconciler struct {
 }
 
 func (r *Reconciler) Run(ctx context.Context) error {
-	if r.Interval <= 0 {
-		r.Interval = 30 * time.Second
+	if r.Interval < 3*time.Minute {
+		r.Interval = 3 * time.Minute
 	}
 	if r.last == nil {
 		r.last = map[string]string{}

@@ -1,11 +1,13 @@
 package history
 
 import (
-	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"io"
+	"math"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -48,7 +50,10 @@ type Predicate struct {
 	ExitCode int           `json:"exit_code,omitempty"`
 }
 
-func (p Predicate) Evaluate(_ context.Context) (bool, error) {
+func (p Predicate) Evaluate(ctx context.Context) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	switch p.Kind {
 	case PredicateExitZero:
 		return p.ExitCode == 0, nil
@@ -56,20 +61,31 @@ func (p Predicate) Evaluate(_ context.Context) (bool, error) {
 		_, err := os.Stat(p.Path)
 		return err == nil, nil
 	case PredicateHashMatch:
-		raw, err := os.ReadFile(p.Path)
+		hash, err := hashArtifact(ctx, p.Path)
+		return hash == strings.ToLower(p.Expected) && err == nil, err
+	case PredicateRegexIn:
+		f, err := os.Open(p.Path)
 		if err != nil {
 			return false, err
 		}
-		sum := sha256.Sum256(raw)
-		return hex.EncodeToString(sum[:]) == strings.ToLower(p.Expected), nil
-	case PredicateRegexIn:
-		raw, err := os.ReadFile(p.Path)
+		defer f.Close()
+		info, err := f.Stat()
+		if err != nil {
+			return false, err
+		}
+		if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+			return false, fmt.Errorf("regex predicate needs a regular file of at most 1 MiB")
+		}
+		raw, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
 		if err != nil {
 			return false, err
 		}
 		expression, err := regexp.Compile(p.Pattern)
 		return err == nil && expression.Match(raw), err
 	case PredicateNumeric:
+		if math.IsNaN(p.Value) || math.IsInf(p.Value, 0) || (p.Min != nil && (math.IsNaN(*p.Min) || math.IsInf(*p.Min, 0))) || (p.Max != nil && (math.IsNaN(*p.Max) || math.IsInf(*p.Max, 0))) {
+			return false, fmt.Errorf("numeric predicate requires finite values")
+		}
 		if p.Min != nil && p.Value < *p.Min {
 			return false, nil
 		}
@@ -216,20 +232,24 @@ func (d *Directive) Supersede(diff string) *Directive {
 	next := NewDirective(d.SessionID, d.Title)
 	next.Version = d.Version + 1
 	next.Diff = diff
-	next.Objectives = append([]*Objective(nil), d.Objectives...)
+	raw, _ := json.Marshal(d.Objectives)
+	_ = json.Unmarshal(raw, &next.Objectives)
+	for _, o := range next.Objectives {
+		o.ParentID = next.ID
+		o.PlanID = next.ID
+	}
 	next.LinkTo(d, "supersedes")
 	return next
 }
 
 func NewArtifact(sessionID, path, tier string, purge *time.Time, consumed map[string]string) (*Artifact, error) {
-	raw, err := os.ReadFile(filepath.Clean(path))
+	hash, err := hashArtifact(context.Background(), filepath.Clean(path))
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(raw)
 	return &Artifact{
 		Vinculum: Vinculum{ID: newUUIDv7(), Kind: "artifact", SessionID: sessionID, CreatedAt: time.Now()},
-		State:    StateFull, Status: StatusSucceeded, Path: path, Hash: hex.EncodeToString(sum[:]),
+		State:    StateFull, Status: StatusSucceeded, Path: path, Hash: hash,
 		StorageTier: tier, PurgeExpiry: purge, ConsumedHashes: consumed,
 	}, nil
 }
@@ -277,16 +297,11 @@ func SpendApproval(sessionID, objectiveID, summary string, allowed bool) (*Drone
 }
 
 func HashParameters(values map[string]any) string {
-	var b bytes.Buffer
-	keys := make([]string, 0, len(values))
-	for key := range values {
-		keys = append(keys, key)
+	raw, err := json.Marshal(values)
+	if err != nil {
+		return ""
 	}
-	sortStrings(keys)
-	for _, key := range keys {
-		fmt.Fprintf(&b, "%s=%v\n", key, values[key])
-	}
-	sum := sha256.Sum256(b.Bytes())
+	sum := sha256.Sum256(raw)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -299,3 +314,39 @@ func sortStrings(values []string) {
 }
 
 func ParseNumeric(value string) (float64, error) { return strconv.ParseFloat(value, 64) }
+
+func hashArtifact(ctx context.Context, path string) (string, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 64<<20 {
+		return "", fmt.Errorf("hash validation is bounded to 64 MiB; hash larger artifacts inside a compute job")
+	}
+	h := sha256.New()
+	buf := make([]byte, 64<<10)
+	var total int
+	for {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		n, err := f.Read(buf)
+		total += n
+		if total > 64<<20 {
+			return "", fmt.Errorf("artifact grew beyond 64 MiB")
+		}
+		h.Write(buf[:n])
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return "", err
+		}
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
+}

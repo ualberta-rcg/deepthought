@@ -162,7 +162,8 @@ type Gate struct {
 	Custom []OpMode
 
 	// Task-scoped grants: keys like "bash:ls *" cleared when the incursion ends.
-	taskAllow map[string]bool
+	taskAllow   map[string]bool
+	constraints [][]string
 	// Session always-allow / always-deny (also persisted via OnPersist).
 	alwaysAllow map[string]bool
 	alwaysDeny  map[string]bool
@@ -276,6 +277,17 @@ func (g *Gate) ClearTaskGrants() {
 	g.mu.Lock()
 	defer g.mu.Unlock()
 	g.taskAllow = map[string]bool{}
+	g.constraints = nil
+}
+
+// Restrict narrows the current task. Restrictions can never grant permission.
+func (g *Gate) Restrict(allowed []string) {
+	if len(allowed) == 0 {
+		return
+	}
+	g.mu.Lock()
+	defer g.mu.Unlock()
+	g.constraints = append(g.constraints, append([]string(nil), allowed...))
 }
 
 // GrantTask allows matching calls until ClearTaskGrants (this incursion).
@@ -332,8 +344,16 @@ func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) D
 	defer g.mu.Unlock()
 
 	key := ruleKey(tool.Name(), args)
+	for _, allowed := range g.constraints {
+		if tool.Name() != "skill" && !matchRules(allowed, tool.Name(), args) {
+			return Deny
+		}
+	}
 	if g.alwaysDeny[key] || matchRules(g.Rules.Deny, tool.Name(), args) {
 		return Deny
+	}
+	if policy, ok := tool.(interface{ AlwaysAsk() bool }); ok && policy.AlwaysAsk() {
+		return Ask
 	}
 	if g.alwaysAllow[key] || g.taskAllow[key] {
 		return Allow

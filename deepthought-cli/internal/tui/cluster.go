@@ -10,7 +10,7 @@ import (
 
 // clusterBarW is the bar width for the Cluster sections (tuned for a ≥80-col
 // terminal). These are the vulcan-status-style block renderers the Status page
-// shows as sections (Cluster / Your jobs / Fairshare / Your dirs), gated on
+// shows as sections (Cluster / Your jobs / Fairshare / Filesystem capacity), gated on
 // Slurm being detected. They read the cached snapshot, so nothing blocks.
 const clusterBarW = 18
 
@@ -141,7 +141,7 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 // renderStorageBlock: how full the user's directories are (home/scratch/projects).
 func renderStorageBlock(c slurm.ClusterSnapshot) []string {
 	if len(c.StorageRows) == 0 {
-		return Section{Title: "Your dirs", Rows: []string{"  " + emptyRow("storage data")}}.Render()
+		return Section{Title: "Filesystem capacity", Rows: []string{"  " + emptyRow("storage data")}}.Render()
 	}
 	body := []string{}
 	for _, r := range c.StorageRows {
@@ -149,10 +149,10 @@ func renderStorageBlock(c slurm.ClusterSnapshot) []string {
 			truncatePad(r.Label, 14), diskBar(frac01(float64(r.Pct), 100), clusterBarW), r.Pct, r.Used, r.Size))
 	}
 	return Section{
-		Title:  "Your dirs",
+		Title:  "Filesystem capacity",
 		Rows:   body,
-		Note:   "scratch is fast but NOT backed up — idle files rotate out.",
-		Source: "diskusage_report",
+		Note:   "Mount-wide capacity, not your quota. Scratch is not backed up; idle files rotate out.",
+		Source: "df",
 	}.Render()
 }
 

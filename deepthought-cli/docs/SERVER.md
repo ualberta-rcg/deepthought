@@ -12,6 +12,11 @@ The CLI is the product; this server is additive. Nothing in the client dials or 
 it — the client's full functionality (chat loop, tools, skills, cron, status) runs
 client-side, and stays that way: capabilities land client-side first where feasible.
 
+The CLI now has a local resident session runner and layered settings resolver.
+The `DefaultsSource` interface is an inactive seam for eventual server settings;
+there is no settings fetch or server login in the current client. Local overrides
+remain authoritative over future server defaults. See [LOCAL-OPERATIONS.md](LOCAL-OPERATIONS.md).
+
 ## Where it lives today
 
 `deepthought-cli/cmd/deepthought-server` + `deepthought-cli/internal/server`. Go

@@ -111,13 +111,13 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	jobsRow := fmt.Sprintf(" %d running · %d pending", nr, np)
 	secs = append(secs, Section{Title: "Your jobs", Rows: []string{clipLine(jobsRow, w)}}.Render()...)
 
-	// » Your dirs — one compact line per filesystem when known.
+	// » Filesystem capacity — one compact line per filesystem when known.
 	if len(d.Cluster.StorageRows) > 0 {
 		rows := []string{}
 		for _, r := range d.Cluster.StorageRows {
 			rows = append(rows, clipLine(fmt.Sprintf(" %s %s/%s %d%%", truncatePad(r.Label, 8), r.Used, r.Size, r.Pct), w))
 		}
-		secs = append(secs, Section{Title: "Your dirs", Rows: rows}.Render()...)
+		secs = append(secs, Section{Title: "Filesystem capacity", Rows: rows}.Render()...)
 	}
 
 	// » Context

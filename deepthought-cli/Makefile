@@ -1,20 +1,27 @@
-.PHONY: build test vet deploy snapshot check
+.PHONY: build test vet deploy snapshot check compute
 
 GO ?= go
 SCRATCH ?= /scratch/$(USER)
 DEPLOY_DIR ?= $(SCRATCH)/deepthought-cli
-SNAPSHOT_DIR ?= $(HOME)/deepthought-cli-snapshots
+SNAPSHOT_DIR ?= $(SCRATCH)/deepthought-cli-snapshots
 BIN := $(DEPLOY_DIR)/deepthought-cli
+VERSION := $(shell git rev-parse HEAD)
 
-build:
+# Compile and test in a Slurm allocation on Vulcan. CI is an isolated runner.
+compute:
+	@test -n "$$SLURM_JOB_ID$$CI" || { echo "Run this target in a Slurm CPU allocation (or CI)." >&2; exit 1; }
+
+build: compute
 	mkdir -p "$(DEPLOY_DIR)"
-	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w" -o "$(BIN).new" ./cmd/deepthought-cli
+	CGO_ENABLED=0 $(GO) build -trimpath -ldflags="-s -w -X main.buildVersion=$(VERSION)" -o "$(BIN).new" ./cmd/deepthought-cli
 
 deploy: build
 	mkdir -p "$(DEPLOY_DIR)"
 	chmod 0700 "$(DEPLOY_DIR)"
+	chmod 0750 "$(BIN).new"
+	"$(BIN).new" --version
+	@if test -f "$(BIN)"; then cp -p "$(BIN)" "$(BIN).previous.new" && mv "$(BIN).previous.new" "$(BIN).previous"; fi
 	mv "$(BIN).new" "$(BIN)"
-	chmod 0750 "$(BIN)"
 	@echo "deployed $(BIN)"
 
 snapshot:
@@ -24,17 +31,17 @@ snapshot:
 	rsync -a --exclude='.tmp/' ./ "$$dest/"; \
 	echo "snapshot $$dest"
 
-test:
+test: compute
 	$(GO) test ./...
 
-vet:
+vet: compute
 	$(GO) vet ./...
 
 check: vet test
 
 DEPLOY_SERVER = $(DEPLOY_DIR)/deepthought-server
 
-deploy-server: ## Build + atomically deploy the server binary to DEPLOY_DIR.
+deploy-server: compute ## Build + atomically deploy the server binary to DEPLOY_DIR.
 	CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o "$(DEPLOY_SERVER).new" ./cmd/deepthought-server
 	mv "$(DEPLOY_SERVER).new" "$(DEPLOY_SERVER)"
 	@echo "deployed $(DEPLOY_SERVER)"

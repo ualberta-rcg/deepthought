@@ -51,7 +51,17 @@ test and race-check in Slurm, push tested commits to main without force, retain
 the previous executable during atomic deployment, and leave existing sessions
 running. Server login, identity federation and server deployment remain deferred.
 
-## Compatibility
+## Implemented follow-through (2026-09-20)
+
+The release gates above now have implementation paths: shared resident execution,
+layered local configuration, scientific manifest registration, durable scheduler
+submission and reconciliation, sequential workflow records, real predicates and
+artifact staleness. The accompanying tests exercise disconnect during approval,
+lost submission responses without duplicate sbatch calls, two objectives across
+a database reopen, invalid scientific input/output, and concurrent plan edits.
+See [local operations](../deepthought-cli/docs/LOCAL-OPERATIONS.md) for exact limits.
+
+## Storage compatibility
 
 The history identity migration retains existing table columns and legacy JSON
 for older processes, removing only the incorrect content uniqueness constraint.

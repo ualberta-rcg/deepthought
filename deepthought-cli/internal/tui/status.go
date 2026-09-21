@@ -178,6 +178,9 @@ func statusSections() []statusSection {
 		{slurmUp, StatusModel.slurmJobsRows},
 		{func(m StatusModel) bool { return slurmUp(m) && len(m.cluster.FairshareRows) > 0 }, StatusModel.slurmFairshareRows},
 		{func(m StatusModel) bool { return len(m.cluster.StorageRows) > 0 }, StatusModel.slurmDiskRows},
+		{func(m StatusModel) bool { return len(m.cluster.Storage) > 0 }, func(m StatusModel) []string {
+			return Section{Title: "Personal quota report", Rows: m.cluster.Storage, Source: "diskusage_report (cached up to 15 minutes)"}.Render()
+		}},
 	}
 }
 

@@ -1,4 +1,4 @@
-name: Build deepthought-server
+name: Build DeepThought CLI and server
 
 # Builds + tests the DeepThought server and publishes its container image.
 # Mirrors the aleph house pattern (deploy-gateway.yml): path-filtered push to
@@ -45,19 +45,24 @@ jobs:
           cd deepthought-cli
           go vet ./...
           go test ./...
+          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history ./internal/slurm ./internal/workflow ./internal/tools ./internal/transwarp ./internal/skills
 
       - name: Build static binary
         run: |
           set -euo pipefail
           cd deepthought-cli
+          mkdir -p ../out
+          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${GITHUB_SHA}" -o ../out/deepthought-cli ./cmd/deepthought-cli
           CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../out/deepthought-server ./cmd/deepthought-server
+          ../out/deepthought-cli --version
+          sha256sum ../out/deepthought-cli ../out/deepthought-server > ../out/SHA256SUMS
           ./../out/deepthought-server --help >/dev/null && echo "binary runs"
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
         with:
-          name: deepthought-server-${{ github.sha }}
-          path: out/deepthought-server
+          name: deepthought-${{ github.sha }}
+          path: out/
           if-no-files-found: error
 
       # --- Optional image publish (aleph secret conventions) ------------------

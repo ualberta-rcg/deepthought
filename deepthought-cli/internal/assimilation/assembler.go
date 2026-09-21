@@ -74,7 +74,7 @@ func (a Assembler) Assemble(ctx context.Context, sessionID, goal string, drones 
 	for estimate(candidates) > budget {
 		at := demotionCandidate(candidates)
 		if at < 0 {
-			break
+			return Result{}, fmt.Errorf("assimilation: pinned context exceeds token budget")
 		}
 		candidates[at].state = nextState(candidates[at].state)
 		text, err := a.render(ctx, candidates[at].drone, candidates[at].state)

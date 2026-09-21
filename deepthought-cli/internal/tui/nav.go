@@ -19,6 +19,8 @@ const (
 	ScreenContinue
 	ScreenGrid
 	ScreenStatus
+	ScreenJobs
+	ScreenPlans
 )
 
 // SplashAdvanceMsg is emitted by the splash on any keypress. The root decides

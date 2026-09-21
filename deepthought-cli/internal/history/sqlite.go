@@ -259,6 +259,7 @@ func legacyEntityDrone(obj Entity) (*Drone, error) {
 	// from the lifecycle status where possible; the rest are caller-set.
 	v := obj.GetVinculum()
 	drone.State = stateOrDefault(v.State, StateFull)
+	drone.Pinned = v.Pinned
 	drone.Outcome = outcomeFromEntity(obj)
 	if v.Producer != nil {
 		drone.Producer = *v.Producer

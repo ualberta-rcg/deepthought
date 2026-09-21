@@ -46,6 +46,7 @@ type Provider struct {
 	Jurisdiction  string   `json:"jurisdiction,omitempty"`
 	Clearance     string   `json:"clearance,omitempty"`
 	CatalogSource string   `json:"catalog_source,omitempty"`
+	Manifest      string   `json:"manifest,omitempty"`
 	MaxFailures   int      `json:"max_failures,omitempty"`
 	CooldownMS    int      `json:"cooldown_ms,omitempty"`
 	MaxUSD        float64  `json:"max_usd,omitempty"`
@@ -138,6 +139,7 @@ func (f File) TopBarLegendOn() bool {
 // read the lists directly; the Find*/RoleModel helpers do the lookups.
 type Config struct {
 	File
+	Origins map[string]string
 }
 
 // FindProvider returns the named provider.
@@ -273,7 +275,14 @@ func Load(path string) (*Config, error) {
 	if err != nil {
 		return nil, fmt.Errorf("parse config %s: %w", path, err)
 	}
-	return Validate(f)
+	var local map[string]any
+	if err := json.Unmarshal(raw, &local); err != nil {
+		return nil, err
+	}
+	if _, legacy := local["provider"]; legacy {
+		local = fileMap(f)
+	}
+	return ResolveLayers(nil, local, nil)
 }
 
 // parse decodes the settings JSON, transparently migrating the v1 shape

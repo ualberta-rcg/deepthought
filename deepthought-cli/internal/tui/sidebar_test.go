@@ -133,7 +133,7 @@ func TestSidebarV2Sections(t *testing.T) {
 	}
 	v := RenderSidebar(d, SidebarWidth, 60)
 	plain := stripTestANSI.ReplaceAllString(v, "")
-	for _, want := range []string{"Host", "login1", "Ubuntu 22.04", "Cluster", "Fairshare", "ahead", "Your jobs", "Your dirs", "scratch", "Context", "Providers", "Skills", "alliance-slurm"} {
+	for _, want := range []string{"Host", "login1", "Ubuntu 22.04", "Cluster", "Fairshare", "ahead", "Your jobs", "Filesystem capacity", "scratch", "Context", "Providers", "Skills", "alliance-slurm"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("sidebar v2 missing %q:\n%s", want, plain)
 		}
@@ -143,7 +143,7 @@ func TestSidebarV2Sections(t *testing.T) {
 	if !strings.Contains(plain2, "login1") {
 		t.Error("bare sidebar lost the Host section")
 	}
-	for _, absent := range []string{"Fairshare", "Your dirs", "Skills"} {
+	for _, absent := range []string{"Fairshare", "Filesystem capacity", "Skills"} {
 		if strings.Contains(plain2, absent) {
 			t.Errorf("bare sidebar should not show %q", absent)
 		}

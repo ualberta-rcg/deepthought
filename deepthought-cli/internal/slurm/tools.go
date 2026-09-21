@@ -27,18 +27,23 @@ func (*submitTool) Name() string { return "slurm_submit" }
 func (*submitTool) Description() string {
 	return "Submit a self-contained script with sbatch. Jobs run scripts, never DeepThought agents or model loops."
 }
-func (*submitTool) ReadOnly() bool { return false }
+func (*submitTool) ReadOnly() bool  { return false }
+func (*submitTool) AlwaysAsk() bool { return true }
 func (*submitTool) Parameters() map[string]any {
 	return objectSchema(map[string]any{
-		"script":  stringSchema("Absolute path to a self-contained batch script"),
-		"account": stringSchema("Optional Slurm account"),
-		"time":    stringSchema("Walltime; site skills define routing policy"),
-		"memory":  stringSchema("Memory request, for example 32G"),
-		"gres":    stringSchema("Exact discovered GRES string"),
-	}, "script")
+		"submission_id": stringSchema("Stable unique ID for this attempt; reuse it after a timeout to reconcile instead of submitting twice"),
+		"cpus":          map[string]any{"type": "integer", "minimum": 1},
+		"script":        stringSchema("Absolute path to a self-contained batch script"),
+		"account":       stringSchema("Discovered Slurm account"),
+		"time":          stringSchema("Walltime; site skills define routing policy"),
+		"memory":        stringSchema("Memory request, for example 32G"),
+		"gres":          stringSchema("Exact discovered GRES string"),
+	}, "script", "submission_id", "cpus", "account", "time", "memory")
 }
 func (t *submitTool) Run(ctx context.Context, args map[string]any) tools.Result {
+	cpus, _ := numArg(args["cpus"])
 	id, err := t.client.Submit(ctx, SubmitRequest{
+		SubmissionID: stringArg(args, "submission_id"), CPUs: cpus,
 		Script: stringArg(args, "script"), Account: stringArg(args, "account"),
 		Time: stringArg(args, "time"), Memory: stringArg(args, "memory"), GRES: stringArg(args, "gres"),
 	})
@@ -81,6 +86,7 @@ type cancelTool struct{ client *Client }
 func (*cancelTool) Name() string        { return "slurm_cancel" }
 func (*cancelTool) Description() string { return "Cancel one Slurm job by id." }
 func (*cancelTool) ReadOnly() bool      { return false }
+func (*cancelTool) AlwaysAsk() bool     { return true }
 func (*cancelTool) Parameters() map[string]any {
 	return objectSchema(map[string]any{"job_id": stringSchema("Job id")}, "job_id")
 }
@@ -105,6 +111,10 @@ func (*logTool) Parameters() map[string]any {
 }
 func (*logTool) Run(_ context.Context, args map[string]any) tools.Result {
 	path := stringArg(args, "path")
+	path, pathErr := tools.OwnedPath(path)
+	if pathErr != nil {
+		return failure("slurm_log_tail", pathErr)
+	}
 	if !strings.HasPrefix(path, "/") {
 		return failure("slurm_log_tail", fmt.Errorf("path must be absolute"))
 	}

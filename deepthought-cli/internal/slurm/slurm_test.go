@@ -63,7 +63,8 @@ func TestSplitSinfoCols(t *testing.T) {
 
 func TestSubmitUsesArgumentVector(t *testing.T) {
 	runner := &fakeRunner{out: "987;cluster\n"}
-	id, err := NewClient(runner).Submit(context.Background(), SubmitRequest{
+	id, err := NewClient(runner).submitCommand(context.Background(), SubmitRequest{
+		SubmissionID: "fixture", CPUs: 2,
 		Script: "/scratch/job.sh", Account: "def-x", Time: "01:00:00", Memory: "32G",
 	})
 	if err != nil || id != "987" {
