@@ -74,7 +74,7 @@ jobs:
               echo '```'
             } >> "$GITHUB_STEP_SUMMARY"
             # Annotations are readable via the public API (summaries are not).
-            grep -E "^--- FAIL|^    .*\.go:[0-9]+:|Error [0-9]+|panic" /tmp/test.log | head -10 | while IFS= read -r line; do
+            { grep -E "^--- FAIL|^    .*\.go:[0-9]+:|Error [0-9]+|panic" /tmp/test.log | head -10; echo "---- last lines ----"; tail -8 /tmp/test.log; } | while IFS= read -r line; do
               echo "::error::${line}"
             done
             exit "$status"
