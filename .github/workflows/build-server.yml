@@ -1,11 +1,14 @@
-name: Build DeepThought CLI and server
+name: Build & Push Server Image
 
-# Builds + tests the DeepThought server and publishes its container image.
-# Mirrors the aleph house pattern (deploy-gateway.yml): path-filtered push to
-# main + workflow_dispatch; Docker publish uses the same secret names
-# (DOCKER_HUB_USER / DOCKER_HUB_TOKEN) with an optional DOCKER_HUB_REPO
-# secret/Variable override (default: rkhoja/deepthought-server). Login and
-# push run unconditionally — missing credentials fail the job loudly.
+# Publishes the deepthought-server image to Docker Hub (default:
+# rkhoja/deepthought-server). Same shape as the aleph house pattern
+# (deploy-gateway.yml): path-filtered push to main + workflow_dispatch;
+# auth via DOCKER_HUB_USER / DOCKER_HUB_TOKEN secrets, optional
+# DOCKER_HUB_REPO secret or repository Variable override.
+#
+# Server-only: the Go compile happens inside docker build
+# (deepthought-cli/Dockerfile, multi-stage → distroless). No CLI checks,
+# binaries, or artifacts are produced here.
 
 on:
   push:
@@ -26,50 +29,14 @@ on:
         default: 'latest'
 
 jobs:
-  test-and-build:
-    name: Test + Build
+  build-and-push:
+    name: Build & Push Server
     runs-on: ubuntu-24.04
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version-file: deepthought-cli/go.mod
-
-      - name: Vet + Test
-        run: |
-          set -euo pipefail
-          cd deepthought-cli
-          go vet ./...
-          go test ./...
-          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history ./internal/slurm ./internal/workflow ./internal/tools ./internal/transwarp ./internal/skills
-
-      - name: Build static binary
-        run: |
-          set -euo pipefail
-          cd deepthought-cli
-          mkdir -p ../out
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${GITHUB_SHA}" -o ../out/deepthought-cli ./cmd/deepthought-cli
-          CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o ../out/deepthought-server ./cmd/deepthought-server
-          ../out/deepthought-cli --version
-          sha256sum ../out/deepthought-cli ../out/deepthought-server > ../out/SHA256SUMS
-          ./../out/deepthought-server --help >/dev/null && echo "binary runs"
-
-      - name: Upload binary artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: deepthought-${{ github.sha }}
-          path: out/
-          if-no-files-found: error
-
-      # --- Docker publish (aleph house pattern: deploy-gateway.yml) -----------
-      # Login and Push run unconditionally with the secrets inline; missing
-      # credentials fail the job loudly rather than skipping the push. (The
-      # previous env.HAS_DOCKER_CREDS gate never worked: a step-level `if`
-      # cannot see the step's own `env:` block.)
       - name: Resolve image repository
         id: repo
         env:
@@ -127,6 +94,13 @@ jobs:
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" \
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}" \
             deepthought-cli
+
+      - name: Verify image candidate
+        run: |
+          set -euo pipefail
+          # Distroless has no shell — invoke the server binary directly.
+          docker run --rm --entrypoint /deepthought-server \
+            "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" --help
 
       - name: Push image to DockerHub
         run: |

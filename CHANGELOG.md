@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — server CI is server-only (aleph shape)
+- Reduce build-server.yml to the aleph deploy-gateway.yml shape: checkout → resolve image repo/tags → Login to DockerHub → Build Docker image → verify the candidate (`docker run --entrypoint /deepthought-server … --help`) → Push. Drop the Go vet/test/race suite, the CLI+server static binary builds, and the binary artifact upload — the Go compile happens inside docker build (deepthought-cli/Dockerfile multi-stage). Rename the workflow "Build & Push Server Image".
+- Keep the broad `deepthought-cli/**` push trigger deliberately: the server binary links internal/{babel,alcove,tools,queen,history,unimatrix,config,cron,skills,server} (verified via go list -deps), so any module change can change the server image; a narrow per-package filter would go stale on new imports.
+- Files: .github/workflows/build-server.yml; this entry.
+- Verification: go list -deps ./cmd/deepthought-server confirms the internal dependency set; the push of this commit triggers the rewritten workflow — success criteria are the build/verify/push steps green and the tag appearing on rkhoja/deepthought-server.
+
 ## 2026-09-21 · deepthought-cli — adopt aleph publish pattern in server CI
 - The Docker publish never ran: the Push step gated on `env.HAS_DOCKER_CREDS`, but a step-level `if` cannot see the step's own `env:` block, so the gate was always false and the push skipped silently on green builds. Replace the gated publish with the aleph house pattern (deploy-gateway.yml): unconditional Login to DockerHub and Push steps with the secrets referenced inline, so missing credentials fail loudly instead of skipping.
 - Default the image repository to rkhoja/deepthought-server (the actual Docker Hub repo; still overridable via DOCKER_HUB_REPO secret/Variable) and support a STABLE_TAG repo Variable, both matching aleph.
