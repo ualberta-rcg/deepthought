@@ -18,6 +18,21 @@ Entry format:
 
 ---
 
+## 2026-09-20 · deepthought-cli — the one-line sidebar fixed (vertical gutter); F1 = Settings
+
+- **The sidebar bug:** `RenderSidebarGutter` repeated "│" *horizontally* — one giant row
+  h columns wide instead of h lines of one column. Joined between chat and sidebar, that
+  50-column "gutter" pushed every row past the terminal width, wrapping the screen and
+  collapsing the column to a sliver ("it takes up space but is only one line"). Now a
+  true vertical divider, with two regression tests: the gutter is exactly h lines × 1
+  column, and the full join (chat + gutter + sidebar) is exactly h lines × exactly the
+  terminal width.
+- **F1 = Settings, F2 = help** (F1-as-help made no sense to the user; settings is the
+  most common destination). Defaults rebound, legend order updated, the help notice and
+  /help key line updated; the Settings System tab's F-key table derives automatically.
+- Verified: TestSidebarGutterVertical + TestSidebarJoinExactRectangle; full suite green
+  (20 pkgs).
+
 ## 2026-09-20 · deepthought-cli — docs/DESIGN.md (the design quarry) + the client-independence invariant
 
 - **New `docs/DESIGN.md`:** curated capture of the architecture direction — the unification

@@ -572,7 +572,7 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		}
 		return m, nil
 	case val == "/help" || val == "?":
-		m.systemLine("keys: F1 help · F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status")
+		m.systemLine("keys: F1 settings · F2 help · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status")
 		m.systemLine("cmds: !cmd bash · /model · /effort · /settings · /status · /models · /cron · /context · /import · /resume · /quit")
 		return m, nil
 	case val == "/settings":

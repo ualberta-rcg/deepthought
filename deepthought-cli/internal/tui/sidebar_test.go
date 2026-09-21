@@ -79,3 +79,41 @@ func TestEnvBriefHostFacts(t *testing.T) {
 		t.Errorf("proxy negative capability missing:\n%s", b)
 	}
 }
+
+// The gutter is VERTICAL: exactly h lines of one column (the old horizontal
+// repeat made every joined row wider than the terminal — the "one-line
+// sidebar").
+func TestSidebarGutterVertical(t *testing.T) {
+	g := RenderSidebarGutter(20)
+	lines := strings.Split(g, "\n")
+	if len(lines) != 20 {
+		t.Fatalf("gutter has %d lines, want 20", len(lines))
+	}
+	for i, ln := range lines {
+		if lipgloss.Width(ln) != 1 {
+			t.Errorf("gutter line %d width %d, want 1", i, lipgloss.Width(ln))
+		}
+	}
+}
+
+// Join-level regression: chat + gutter + sidebar is EXACTLY h lines, each
+// exactly chatW+1+SidebarWidth — nothing wraps, nothing clips.
+func TestSidebarJoinExactRectangle(t *testing.T) {
+	const w, h = 160, 40
+	chatW := w - SidebarWidth - 1
+	chat := lipgloss.NewStyle().Width(chatW).Height(h).Render("chat body")
+	joined := lipgloss.JoinHorizontal(lipgloss.Top,
+		chat, RenderSidebarGutter(h),
+		RenderSidebar(SidebarData{
+			Env: EnvInfo{ShortName: "h1", OSName: "TestOS", Kernel: "1.2.3", Arch: "amd64", CPUs: 8},
+		}, SidebarWidth, h))
+	lines := strings.Split(joined, "\n")
+	if len(lines) != h {
+		t.Fatalf("join has %d lines, want %d", len(lines), h)
+	}
+	for i, ln := range lines {
+		if got := lipgloss.Width(ln); got != w {
+			t.Errorf("join line %d width %d, want exactly %d", i, got, w)
+		}
+	}
+}

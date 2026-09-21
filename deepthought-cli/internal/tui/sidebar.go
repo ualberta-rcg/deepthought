@@ -19,7 +19,10 @@ func RenderSidebarGutter(h int) string {
 	if h < 1 {
 		return ""
 	}
-	return lipgloss.NewStyle().Foreground(colBarBg).Render(strings.Repeat("│", h))
+	// h LINES of one column each — the old horizontal repeat ("│"×h on one
+	// row) made the join wider than the terminal on every line, wrapping the
+	// screen and collapsing the sidebar to a sliver.
+	return lipgloss.NewStyle().Foreground(colBarBg).Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
 }
 
 // SidebarData is everything the sidebar renders; the root caches it from the

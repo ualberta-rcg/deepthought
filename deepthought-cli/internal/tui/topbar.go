@@ -81,7 +81,7 @@ func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
 // order. Single source of truth so the row (and any future legend surface)
 // stays in sync with the actual bindings.
 var fKeyLegend = []struct{ key, label string }{
-	{"F1", "help"}, {"F2", "settings"}, {"F3", "model"}, {"F4", "effort"},
+	{"F1", "settings"}, {"F2", "help"}, {"F3", "model"}, {"F4", "effort"},
 	{"F5", "new"}, {"F6", "resume"}, {"F7", "grid"},
 	{"F8", "cron"}, {"F9", "mode"}, {"F10", "sidebar"}, {"F11", "models"}, {"F12", "status"},
 }

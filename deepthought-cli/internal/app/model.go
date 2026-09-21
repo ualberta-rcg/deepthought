@@ -550,7 +550,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F1 — accurate keys + where the commands live; visible wherever you
 		// are (the chat screen is pushed so the notice actually shows).
 		m.pushScreenOnce(tui.ScreenChat)
-		m.chat = m.chat.Notice("F2 settings · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status · esc back · /help for commands")
+		m.chat = m.chat.Notice("F1 settings · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status · esc back · /help for commands")
 	case keybindings.ContextView:
 		// F7 — push the context grid.
 		m.pushScreenOnce(tui.ScreenGrid)
