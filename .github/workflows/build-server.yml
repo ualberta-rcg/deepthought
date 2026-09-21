@@ -83,9 +83,16 @@ jobs:
           echo "Using STABLE_TAG=${STABLE_TAG}"
 
       - name: Login to DockerHub
+        env:
+          DHU: ${{ secrets.DOCKER_HUB_USER }}
+          DHT: ${{ secrets.DOCKER_HUB_TOKEN }}
         run: |
           set -euo pipefail
-          echo "${{ secrets.DOCKER_HUB_TOKEN }}" | docker login -u "${{ secrets.DOCKER_HUB_USER }}" --password-stdin
+          # Lengths only, never values: 0 means the secret is not visible to
+          # this job (wrong level/name); nonzero means a value problem.
+          echo "DOCKER_HUB_USER length: ${#DHU}"
+          echo "DOCKER_HUB_TOKEN length: ${#DHT}"
+          echo "${DHT}" | docker login -u "${DHU}" --password-stdin
 
       - name: Build Docker image
         run: |

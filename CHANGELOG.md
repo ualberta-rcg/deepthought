@@ -1,5 +1,10 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — diagnose Docker login failure in server CI
+- Runs 35644617325 and 35644908877 fail at "Login to DockerHub" with no detail in the unauthenticated API. Echo the resolved lengths (never values) of DOCKER_HUB_USER/DOCKER_HUB_TOKEN before docker login, so the log distinguishes "secret not visible to the job" (length 0 — wrong name/level) from a value problem (username format or invalid token).
+- Files: .github/workflows/build-server.yml; this entry.
+- Verification: this push triggers the workflow; the Login step log now shows both lengths ahead of the docker error line.
+
 ## 2026-09-21 · deepthought-cli — server CI is server-only (aleph shape)
 - Reduce build-server.yml to the aleph deploy-gateway.yml shape: checkout → resolve image repo/tags → Login to DockerHub → Build Docker image → verify the candidate (`docker run --entrypoint /deepthought-server … --help`) → Push. Drop the Go vet/test/race suite, the CLI+server static binary builds, and the binary artifact upload — the Go compile happens inside docker build (deepthought-cli/Dockerfile multi-stage). Rename the workflow "Build & Push Server Image".
 - Keep the broad `deepthought-cli/**` push trigger deliberately: the server binary links internal/{babel,alcove,tools,queen,history,unimatrix,config,cron,skills,server} (verified via go list -deps), so any module change can change the server image; a narrow per-package filter would go stale on new imports.
