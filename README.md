@@ -38,6 +38,15 @@ The CLI speaks both OpenAI- and Anthropic-compatible wire formats; configure
 providers, models, and roles in `~/.deepthought/config.json`
 (example in `deepthought-cli/configs/`).
 
+## Install
+
+```
+curl -fsSL https://raw.githubusercontent.com/ualberta-rcg/deepthought/main/install.sh | bash
+```
+
+One static binary into `~/.local/bin` — no root, nothing outside `$HOME`,
+SHA256-verified against the rolling `edge` release.
+
 ## Change log
 
 All changes are recorded in [`CHANGELOG.md`](CHANGELOG.md), newest first, tagged

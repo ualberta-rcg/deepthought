@@ -87,4 +87,4 @@ jobs:
           cd deepthought-cli
           gh release delete edge --yes --cleanup-tag 2>/dev/null || true
           NOTES="Rolling build from main @ ${GITHUB_SHA::7}. One static binary (linux/amd64). Install: curl -L -o deepthought-cli https://github.com/ualberta-rcg/deepthought/releases/download/edge/deepthought-cli && chmod +x deepthought-cli"
-          gh release create edge --title "deepthought-cli (edge)" --notes "$NOTES" --prerelease ../out/deepthought-cli
+          gh release create edge --title "deepthought-cli (edge)" --notes "$NOTES" --prerelease ../out/deepthought-cli ../out/SHA256SUMS

@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-21 · deepthought-cli — one-line curl installer (claude.ai pattern)
+- New install.sh at the repo root — `curl -fsSL https://raw.githubusercontent.com/ualberta-rcg/deepthought/main/install.sh | bash` — modeled on claude.ai's installer, backed by the rolling edge GitHub Release: linux/amd64 lane check, curl-or-wget download, SHA256 verification against the release's SHA256SUMS (hard fail on mismatch), atomic install into ~/.local/bin (no root; refuses sudo-from-user), `--version` smoke, ~/.deepthought data dir, and PATH + first-run guidance. DEEPTHOUGHT_INSTALL_DIR / DEEPTHOUGHT_CHANNEL overrides.
+- build-cli.yml now attaches SHA256SUMS alongside the binary on the edge release so the installer's verification is live.
+- Files: install.sh (new); .github/workflows/build-cli.yml; README.md (Install section); this entry.
+- Verification: bash -n syntax check; the push re-runs the CLI workflow (new edge release with both assets), then the one-liner is exercised end to end on the login node into a temp DEEPTHOUGHT_INSTALL_DIR.
+
 ## 2026-09-21 · deepthought-server — own module, zero CLI dependencies; two separate pipelines
 - The server is now its own Go module at deepthought-server/ (deps: stdlib + go-sql-driver only — no requires, no replaces, no CLI paths). The Borg-graph wire contract is deliberately copied into deepthought-server/graph/ (byte-compatible JSON shapes; change both products together). The MySQL store, HTTP surface, web UI, and k8s references all moved out of deepthought-cli/, whose internal/server and cmd/deepthought-server are deleted — the CLI keeps its local SQLite and reaches server data only over HTTP.
 - Vestigial CLI imports dropped server-side: data dir from --data/$DEEPTHOUGHT_DATA_DIR; /api/v1/crons is a documented 501 (fleet aggregation moves to the DB records later); /admin/reload reports server-only state.
