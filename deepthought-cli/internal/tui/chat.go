@@ -971,7 +971,7 @@ func (m ChatModel) newRequest(model unimatrix.Model) babel.ChatRequest {
 		effort = babel.Effort(model.Effort)
 	}
 	return babel.ChatRequest{
-		Model:          model.ID,
+		Model:          model.RequestID(),
 		Messages:       m.requestMessages(),
 		Tools:          m.reg.Schemas(),
 		MaxTokens:      maxTokens,
@@ -1036,6 +1036,9 @@ func (m ChatModel) SetEnv(e EnvInfo) ChatModel {
 // WHERE it runs. Hard-capped at envBriefMax lines ("not super big"); ""
 // when nothing was detected.
 func (m ChatModel) envBrief() string {
+	if !m.env.Observation.CollectedAt.IsZero() {
+		return m.env.Observation.Brief()
+	}
 	var facts []string
 	e := m.env
 	if e.ShortName != "" || e.Host != "" {
@@ -1763,7 +1766,7 @@ func generateTitleCmd(src InferenceSource, prompt, reply string, sensitivity his
 			return titleGeneratedMsg{err: err}
 		}
 		rep, err := client.Chat(context.Background(), babel.ChatRequest{
-			Model: model.ID,
+			Model: model.RequestID(),
 			Messages: []babel.Message{
 				{Role: "system", Content: "Generate a concise title (at most 6 words, no quotes, no trailing period) for this conversation. Reply with the title only."},
 				{Role: "user", Content: "User: " + truncate(prompt, 400) + "\nAssistant: " + truncate(reply, 400)},

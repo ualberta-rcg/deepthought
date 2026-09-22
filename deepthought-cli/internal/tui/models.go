@@ -45,11 +45,13 @@ type ModelsModel struct {
 	entityRef string // model id at open time
 
 	// async: test + discovery
-	testing    string
-	testResult string
-	listed     []string
-	listedProv string
-	listedSel  int
+	testing       string
+	testResult    string
+	listed        []string
+	catalog       []babel.CatalogEntry
+	catalogCancel context.CancelFunc
+	listedProv    string
+	listedSel     int
 
 	saved  string
 	vp     viewport.Model
@@ -82,6 +84,8 @@ type modelTestResultMsg struct {
 type modelsListedMsg struct {
 	provider string
 	ids      []string
+	entries  []babel.CatalogEntry
+	notice   string
 	err      error
 }
 
@@ -110,7 +114,8 @@ func (m ModelsModel) Update(msg tea.Msg) (ModelsModel, tea.Cmd) {
 			return m, nil
 		}
 		m.listed, m.listedProv, m.listedSel, m.view, m.cursor = msg.ids, msg.provider, 0, mvListed, 0
-		m.saved = ""
+		m.catalog = msg.entries
+		m.saved = msg.notice
 		return m, nil
 	}
 	// Blink ticks reach an open text editor.
@@ -369,21 +374,55 @@ func (m ModelsModel) pickProvider() (ModelsModel, tea.Cmd) {
 
 // listModels fetches /models from the named provider.
 func (m ModelsModel) listModels(name string) (ModelsModel, tea.Cmd) {
+	return m.discoverModels(name, true)
+}
+
+func (m ModelsModel) Discover(name string) (ModelsModel, tea.Cmd) {
+	return m.discoverModels(name, false)
+}
+
+func (m ModelsModel) discoverModels(name string, refresh bool) (ModelsModel, tea.Cmd) {
+	if m.catalogCancel != nil {
+		m.catalogCancel()
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
+	m.catalogCancel = cancel
 	m.saved = "listing " + name + "…"
 	store := m.store
 	return m, tea.Cmd(func() tea.Msg {
-		client, err := store.ProviderClient(name)
-		if err != nil {
-			return modelsListedMsg{provider: name, err: err}
+		defer cancel()
+		var entries []babel.CatalogEntry
+		var notice string
+		var err error
+		if cached, ok := store.(interface {
+			DiscoverCatalog(context.Context, string, bool) ([]babel.CatalogEntry, string, error)
+		}); ok {
+			entries, notice, err = cached.DiscoverCatalog(ctx, name, refresh)
+		} else {
+			client, err := store.ProviderClient(name)
+			if err != nil {
+				return modelsListedMsg{provider: name, err: err}
+			}
+			entries, err = client.ListCatalog(ctx)
 		}
-		ids, err := client.ListModels(context.Background())
-		return modelsListedMsg{provider: name, ids: ids, err: err}
+		var ids []string
+		for _, e := range entries {
+			ids = append(ids, e.ID)
+		}
+		return modelsListedMsg{provider: name, ids: ids, entries: entries, notice: notice, err: err}
 	})
 }
 
 // addFromList adds the discovered id as a chat-capable model.
 func (m ModelsModel) addFromList() (ModelsModel, tea.Cmd) {
-	id := m.listed[m.cursor]
+	wireID := m.listed[m.cursor]
+	id := m.listedProv + "::" + wireID
+	entry := babel.CatalogEntry{ID: wireID}
+	for _, e := range m.catalog {
+		if e.ID == wireID {
+			entry = e
+		}
+	}
 	m.view, m.cursor = mvList, 0
 	return m.freshSave(func(f *config.File) {
 		for _, mo := range f.Models {
@@ -391,10 +430,29 @@ func (m ModelsModel) addFromList() (ModelsModel, tea.Cmd) {
 				return // already present
 			}
 		}
-		f.Models = append(f.Models, unimatrix.Model{
-			ID: id, Label: id, Provider: m.listedProv,
-			Capabilities: []unimatrix.Capability{unimatrix.CapChat},
-		})
+		caps := []unimatrix.Capability{}
+		if entry.Type == "chat" {
+			caps = append(caps, unimatrix.CapChat)
+		}
+		for _, pair := range []struct {
+			key string
+			cap unimatrix.Capability
+		}{{"tools", unimatrix.CapTools}, {"reasoning", unimatrix.CapReasoning}, {"vision", unimatrix.CapVision}} {
+			if entry.Capabilities[pair.key] {
+				caps = append(caps, pair.cap)
+			}
+		}
+		model := unimatrix.Model{ID: id, WireID: wireID, Label: wireID, Provider: m.listedProv, Context: entry.Context, Capabilities: caps, ReasoningStyle: "none"}
+		f.Models = append(f.Models, model)
+		if f.Roles == nil {
+			f.Roles = map[string]string{}
+		}
+		if model.Can(unimatrix.CapChat) {
+			f.Roles[unimatrix.RoleChat] = id
+		}
+		if model.Agentic() {
+			f.Roles[unimatrix.RoleAgentic] = id
+		}
 	})
 }
 

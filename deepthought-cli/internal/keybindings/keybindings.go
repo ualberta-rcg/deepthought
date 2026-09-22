@@ -27,7 +27,35 @@ const (
 	Diagnostics Action = "app:diagnostics"
 )
 
-var reserved = map[string]bool{"ctrl+c": true, "ctrl+d": true}
+var reserved = map[string]bool{"ctrl+c": true, "ctrl+d": true, "ctrl+p": true}
+
+func WithOverrides(overrides map[string]Action) *Map {
+	m := Defaults()
+	for key, action := range overrides {
+		if Reserved(key) {
+			continue
+		}
+		for old, a := range m.bindings[Global] {
+			if a == action {
+				delete(m.bindings[Global], old)
+			}
+		}
+	}
+	for key, action := range overrides {
+		if !Reserved(key) {
+			m.bindings[Global][key] = action
+		}
+	}
+	return m
+}
+func (m *Map) KeyFor(action Action) string {
+	for k, a := range m.bindings[Global] {
+		if a == action {
+			return k
+		}
+	}
+	return ""
+}
 
 var defaults = map[string]Action{
 	"f1": Settings, "f2": Help, "f3": Model, "f4": Effort,

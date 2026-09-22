@@ -25,6 +25,7 @@ import (
 // change takes effect without a restart. Safe for concurrent use — one
 // instance is shared by every SSH session.
 type Settings struct {
+	local    *config.LocalStore
 	mu       sync.RWMutex
 	cfg      *config.Config
 	path     string
@@ -47,8 +48,14 @@ type providerBreaker struct {
 // NewSettings builds the handle from the loaded config and its file path.
 func NewSettings(cfg *config.Config, path string) *Settings {
 	raw, _ := os.ReadFile(path)
-	return &Settings{cfg: cfg, path: path, pool: unimatrix.NewPool(), breakers: map[string]*providerBreaker{}, revision: 1, diskHash: sha256.Sum256(raw)}
+	revision := cfg.Revision
+	if revision == 0 {
+		revision = 1
+	}
+	return &Settings{cfg: cfg, local: cfg.Local, path: path, pool: unimatrix.NewPool(), breakers: map[string]*providerBreaker{}, revision: revision, diskHash: sha256.Sum256(raw)}
 }
+
+func (s *Settings) LocalStore() *config.LocalStore { return s.local }
 
 // Path returns the resolved settings file path (for the Overview page).
 func (s *Settings) Path() string { return s.path }
@@ -129,6 +136,14 @@ func (s *Settings) saveLocked(f config.File) error {
 	if f.Revision != 0 && f.Revision != s.revision {
 		return fmt.Errorf("settings changed; reload and retry your edit")
 	}
+	if s.local != nil {
+		cfg, err := s.local.Save(s.cfg.File, f)
+		if err != nil {
+			return err
+		}
+		s.cfg, s.revision, s.pool = cfg, cfg.Revision, unimatrix.NewPool()
+		return nil
+	}
 	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
 		return err
 	}
@@ -183,6 +198,14 @@ func (s *Settings) Update(edit func(*config.File)) error {
 func (s *Settings) Reload() error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.local != nil {
+		cfg, err := s.local.Load()
+		if err != nil {
+			return err
+		}
+		s.cfg, s.revision, s.pool = cfg, cfg.Revision, unimatrix.NewPool()
+		return nil
+	}
 	cfg, err := config.Load(s.path)
 	if err != nil {
 		return err

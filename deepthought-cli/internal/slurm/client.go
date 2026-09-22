@@ -3,6 +3,7 @@
 package slurm
 
 import (
+	"bytes"
 	"context"
 	"deepthought-cli/internal/history"
 	"encoding/json"
@@ -24,11 +25,37 @@ type Runner interface {
 type ExecRunner struct{}
 
 func (ExecRunner) Run(ctx context.Context, name string, args ...string) ([]byte, error) {
-	out, err := exec.CommandContext(ctx, name, args...).CombinedOutput()
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, name, args...)
+	outbuf := &boundedOutput{}
+	cmd.Stdout = outbuf
+	cmd.Stderr = outbuf
+	err := cmd.Run()
+	out := outbuf.Bytes()
+	if outbuf.exceeded {
+		return nil, fmt.Errorf("%s: output exceeds 1 MiB", name)
+	}
 	if err != nil {
 		return out, fmt.Errorf("%s: %w: %s", name, err, strings.TrimSpace(string(out)))
 	}
 	return out, nil
+}
+
+type boundedOutput struct {
+	bytes.Buffer
+	exceeded bool
+}
+
+func (b *boundedOutput) Write(p []byte) (int, error) {
+	n := len(p)
+	remaining := (1 << 20) - b.Len()
+	if n > remaining {
+		b.exceeded = true
+		p = p[:max(remaining, 0)]
+	}
+	_, _ = b.Buffer.Write(p)
+	return n, nil
 }
 
 type Client struct {
@@ -306,18 +333,25 @@ type StorageRow struct {
 // vice versa; Err is set only if nothing could be gathered.
 var snapshotCache struct {
 	sync.Mutex
-	value   ClusterSnapshot
-	quotaAt time.Time
-	quota   []string
+	value     ClusterSnapshot
+	accountAt time.Time
+	quotaAt   time.Time
+	quota     []string
 }
 
 func Snapshot(ctx context.Context) ClusterSnapshot {
 	snapshotCache.Lock()
 	defer snapshotCache.Unlock()
-	if time.Since(snapshotCache.value.FetchedAt) < 3*time.Minute {
+	if time.Since(snapshotCache.value.FetchedAt) < 5*time.Minute {
 		return snapshotCache.value
 	}
 	value := snapshot(ctx)
+	if value.Err != nil && !snapshotCache.value.FetchedAt.IsZero() {
+		old := snapshotCache.value
+		old.Err = value.Err
+		old.FetchedAt = value.FetchedAt
+		value = old
+	}
 	snapshotCache.value = value
 	return value
 }
@@ -343,18 +377,6 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 				s.CPUAlloc += atoi(cpu[0])
 				s.CPUIdle += atoi(cpu[1])
 				s.CPUTotal += atoi(cpu[3])
-			}
-		}
-	}
-
-	// Cluster-wide job state counts.
-	if raw, err := runner.Run(ctx, "squeue", "-h", "-o", "%T"); err == nil {
-		for _, st := range strings.Fields(string(raw)) {
-			switch st {
-			case "RUNNING":
-				s.JobsRunning++
-			case "PENDING":
-				s.JobsPending++
 			}
 		}
 	}
@@ -400,6 +422,12 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 					j.Reason = f[5]
 				}
 				s.YourJobs = append(s.YourJobs, j)
+				if j.State == "RUNNING" {
+					s.JobsRunning++
+				}
+				if j.State == "PENDING" {
+					s.JobsPending++
+				}
 			}
 		}
 	}
@@ -413,12 +441,17 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 	s.GPUUsable = gatherGPUUsable(ctx, runner)
 
 	// Fairshare on the user's default account, plus per-account rows.
-	if user := os.Getenv("USER"); user != "" {
+	if user := os.Getenv("USER"); user != "" && time.Since(snapshotCache.accountAt) >= 15*time.Minute {
+		snapshotCache.accountAt = time.Now()
 		if acct := defaultAccount(ctx, runner, user); acct != "" {
 			s.DefaultAccount = acct
 			s.Fairshare = fairshare(ctx, runner, acct)
 		}
 		s.FairshareRows = gatherFairshareRows(ctx, runner, user)
+	} else {
+		s.DefaultAccount = snapshotCache.value.DefaultAccount
+		s.Fairshare = snapshotCache.value.Fairshare
+		s.FairshareRows = snapshotCache.value.FairshareRows
 	}
 
 	// Storage quotas (Alliance diskusage_report). Keep the raw rows — the tool
@@ -426,7 +459,7 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 	if time.Since(snapshotCache.quotaAt) >= 15*time.Minute {
 		snapshotCache.quotaAt = time.Now()
 		if path, err := exec.LookPath("diskusage_report"); err == nil {
-			if out, err := exec.CommandContext(ctx, path).CombinedOutput(); err == nil {
+			if out, err := runner.Run(ctx, path); err == nil {
 				for i, line := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
 					if i == 0 || strings.TrimSpace(line) == "" {
 						continue // header
@@ -653,7 +686,7 @@ func defaultAccount(ctx context.Context, runner Runner, user string) string {
 // leaf (user) association row is the one with a leading space; its last field is
 // the fairshare.
 func fairshare(ctx context.Context, runner Runner, acct string) float64 {
-	raw, err := runner.Run(ctx, "sshare", "-A", acct, "-o", "Fairshare", "-n")
+	raw, err := runner.Run(ctx, "sshare", "-A", acct, "-u", os.Getenv("USER"), "-o", "Fairshare", "-n")
 	if err != nil {
 		return 0
 	}

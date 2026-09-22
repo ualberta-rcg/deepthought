@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-22 · deepthought-cli — model-free startup and host-aware setup
+- Add review-first credential discovery, SQLite settings migration, portable settings sync, model catalog metadata, navigation and host/service inventory.
+- Update active Aleph defaults and add bounded scheduler queries, adaptive host views, and keyboard/settings controls.
+- Files: CLI configuration, application, TUI, host, credential, transport, scheduler and tool registry packages; CLI workflow; documentation and tests.
+- Verification: implementation in progress; GitHub Actions will run vet, tests, race checks and static build on the implementation branch before publication.
+
 ## 2026-09-21 · deepthought-cli — one-line curl installer (claude.ai pattern)
 - New install.sh at the repo root — `curl -fsSL https://raw.githubusercontent.com/ualberta-rcg/deepthought/main/install.sh | bash` — modeled on claude.ai's installer, backed by the rolling edge GitHub Release: linux/amd64 lane check, curl-or-wget download, SHA256 verification against the release's SHA256SUMS (hard fail on mismatch), atomic install into ~/.local/bin (no root; refuses sudo-from-user), `--version` smoke, ~/.deepthought data dir, and PATH + first-run guidance. DEEPTHOUGHT_INSTALL_DIR / DEEPTHOUGHT_CHANNEL overrides.
 - build-cli.yml now attaches SHA256SUMS alongside the binary on the edge release so the installer's verification is live.

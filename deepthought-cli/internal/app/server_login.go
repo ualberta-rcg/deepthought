@@ -139,7 +139,7 @@ func (s *ServerSession) pushUserSettings(settings map[string]any, revision int64
 
 // fileToMap projects a config File to a plain map for the wire.
 func fileToMap(f config.File) map[string]any {
-	raw, _ := json.Marshal(f)
+	raw, _ := json.Marshal(config.Portable(f))
 	var out map[string]any
 	_ = json.Unmarshal(raw, &out)
 	return out

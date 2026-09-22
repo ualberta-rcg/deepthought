@@ -75,7 +75,7 @@ func (s *Session) RunTurn(ctx context.Context, prompt string, stream babel.Strea
 			effort = babel.EffortOff
 		}
 		reply, err := client.ChatStream(ctx, babel.ChatRequest{
-			Model: model.ID, Messages: s.messages, Tools: s.Registry.Schemas(),
+			Model: model.RequestID(), Messages: s.messages, Tools: s.Registry.Schemas(),
 			MaxTokens: 8192, Effort: effort, ReasoningStyle: model.EffectiveReasoningStyle(),
 		}, stream)
 		if err != nil {

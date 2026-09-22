@@ -58,6 +58,7 @@ func Roles() []string {
 // provider; Provider names the config provider that serves it; everything else
 // is display metadata or capability flags the agent loop keys off.
 type Model struct {
+	WireID         string       `json:"wire_id,omitempty"`
 	ID             string       `json:"id"`
 	Label          string       `json:"label"`
 	Provider       string       `json:"provider"` // config provider name
@@ -67,6 +68,13 @@ type Model struct {
 	Tags           []string     `json:"tags,omitempty"`            // free-form: "coding", "fast", "local", …
 	ReasoningStyle string       `json:"reasoning_style,omitempty"` // gptoss/qwen/gemma4/deepseek/anthropic/none
 	Effort         string       `json:"effort,omitempty"`          // optional per-model override
+}
+
+func (m Model) RequestID() string {
+	if m.WireID != "" {
+		return m.WireID
+	}
+	return m.ID
 }
 
 // Can reports whether the model has capability c.

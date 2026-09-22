@@ -13,6 +13,7 @@
 package config
 
 import (
+	"deepthought-cli/internal/credential"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -26,7 +27,7 @@ import (
 // prefix baked in so callers append "/chat/completions" directly. (The gateway's
 // per-model metadata advertises a bare /v1/... path that 404s off the host root —
 // the real prefix is /serving/api. See memory: vulcan-inference-endpoint.)
-const DefaultBaseURL = "https://inference.kubeflow.vulcan.alliancecan.ca/serving/api/v1"
+const DefaultBaseURL = "https://inference.vulcan.alliancecan.ca/v1"
 
 // DefaultModelID is used when nothing assigns the chat role.
 const DefaultModelID = "qwen35-122b"
@@ -64,7 +65,7 @@ type Route struct {
 // ExpandedKey returns the API key with $VAR / ${VAR} environment references
 // resolved. Expansion happens at use time, never before Save — the file must
 // keep the "$VAR" form rather than baking in the resolved secret.
-func (p Provider) ExpandedKey() string { return os.ExpandEnv(p.APIKey) }
+func (p Provider) ExpandedKey() string { return credential.Resolve(p.APIKey) }
 
 // ServerConfig is the optional server connection: where the settings-defaults
 // server lives and how this client logs in (phase-1 shared password). The
@@ -77,11 +78,12 @@ type ServerConfig struct {
 }
 
 // ExpandedPassword resolves "$ENV_VAR" password references.
-func (s *ServerConfig) ExpandedPassword() string { return os.ExpandEnv(s.Password) }
+func (s *ServerConfig) ExpandedPassword() string { return credential.Resolve(s.Password) }
 
 // File is the on-disk JSON shape, v2 (the lowercase struct tags map to
 // config.json).
 type File struct {
+	Keybindings    map[string]string `json:"keybindings,omitempty"`
 	Revision       uint64            `json:"-"`
 	Providers      []Provider        `json:"providers"`
 	Models         []unimatrix.Model `json:"models"`
@@ -133,6 +135,7 @@ type StatusLine struct {
 // Appearance is the visual-customization block. Pointers so "absent" is
 // distinguishable from a set value and each field keeps its own default.
 type Appearance struct {
+	SidebarWidth int `json:"sidebar_width,omitempty"`
 	// TopBarLegend toggles the F-key legend row under the top bar. nil = on
 	// (the default — the legend is the least-surprising state for a new user).
 	TopBarLegend *bool `json:"top_bar_legend,omitempty"`
@@ -155,7 +158,9 @@ func (f File) TopBarLegendOn() bool {
 // read the lists directly; the Find*/RoleModel helpers do the lookups.
 type Config struct {
 	File
-	Origins map[string]string
+	Origins       map[string]string
+	Local         *LocalStore
+	StartupNotice string
 }
 
 // FindProvider returns the named provider.
@@ -383,7 +388,7 @@ func migrateV1(old v1File) File {
 
 // Defaults builds a Config from the built-in gateway + the seed catalog, for
 // use when no settings file is present.
-func Defaults() *Config {
+func CatalogDefaults() *Config {
 	return &Config{File: File{
 		Temperature: 0.7,
 		Providers: []Provider{{
@@ -397,12 +402,14 @@ func Defaults() *Config {
 	}}
 }
 
+// Defaults deliberately contains no provider, credential, or model assumptions.
+func Defaults() *Config {
+	return &Config{File: File{Temperature: 0.7, Roles: map[string]string{}}}
+}
+
 // Validate checks a File's internal references and returns it as a Config.
 // Used by Load and by the settings editor before anything is written to disk.
 func Validate(f File) (*Config, error) {
-	if len(f.Providers) == 0 {
-		return nil, fmt.Errorf("config: no providers")
-	}
 	seenP := make(map[string]bool, len(f.Providers))
 	for i := range f.Providers {
 		p := &f.Providers[i]
@@ -428,9 +435,6 @@ func Validate(f File) (*Config, error) {
 		default:
 			return nil, fmt.Errorf("config: provider %q: unknown clearance %q", p.Name, p.Clearance)
 		}
-	}
-	if len(f.Models) == 0 {
-		return nil, fmt.Errorf("config: no models")
 	}
 	seenM := make(map[string]bool, len(f.Models))
 	for _, m := range f.Models {

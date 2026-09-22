@@ -122,6 +122,7 @@ func versionString() string {
 // file yields built-in defaults; a present-but-invalid file is fatal. A missing
 // API key is non-fatal but warned: the chat loop needs it.
 func loadConfig(path string) (*config.Config, string, error) {
+	explicit := path != ""
 	if path == "" {
 		var err error
 		path, err = config.DefaultPath()
@@ -129,17 +130,9 @@ func loadConfig(path string) (*config.Config, string, error) {
 			return nil, "", fmt.Errorf("resolve config path: %w", err)
 		}
 	}
-	if err := config.LoadSecrets(path); err != nil {
-		return nil, "", fmt.Errorf("load provider secrets: %w", err)
-	}
-	cfg, err := config.Load(path)
+	cfg, err := config.OpenLocal(path, explicit)
 	if err != nil {
 		return nil, "", fmt.Errorf("load config: %w", err)
-	}
-	for _, p := range cfg.Providers {
-		if p.ExpandedKey() == "" {
-			fmt.Fprintf(os.Stderr, "deepthought-cli: warning: provider %q has an empty api_key — its models will fail until it's set\n", p.Name)
-		}
 	}
 	return cfg, path, nil
 }
@@ -274,13 +267,6 @@ func buildRuntime(cfg *config.Config, cfgPath, attachID string) (app.Deps, *hist
 	nativeTools = append(nativeTools, (slurm.ToolSet{Client: scheduler}).Tools()...)
 	workflows := &workflow.Service{Store: droneStore, Scheduler: scheduler, Version: buildVersion}
 	nativeTools = append(nativeTools, &workflow.Tool{Service: workflows})
-	catalogCtx, catalogCancel := context.WithTimeout(context.Background(), 20*time.Second)
-	scientific, scienceErr := science.Configured(catalogCtx, cfg.File.Providers, nativeTools)
-	catalogCancel()
-	if scienceErr != nil {
-		fmt.Fprintln(os.Stderr, "deepthought-cli: scientific tools:", scienceErr)
-	}
-	nativeTools = append(nativeTools, scientific...)
 
 	// Load skills from every install location (user, project codex/claude dirs,
 	// and org-managed system roots) and expose them to the model: a compact index
@@ -313,6 +299,10 @@ func buildRuntime(cfg *config.Config, cfgPath, attachID string) (app.Deps, *hist
 	}
 	permMode := permissionModeLabel(cfg)
 	deps := app.Deps{
+		StartupNotice: cfg.StartupNotice,
+		DiscoverTools: func(ctx context.Context) ([]tools.Tool, error) {
+			return science.Configured(ctx, live.Snapshot().Providers, nativeTools)
+		},
 		Status: tui.StatusInfo{
 			Model:  statusModel,
 			Mode:   permMode,

@@ -13,6 +13,7 @@ import (
 	"context"
 	"io"
 	"sort"
+	"sync"
 
 	"deepthought-cli/internal/babel"
 )
@@ -38,8 +39,23 @@ type Tool interface {
 // Registry is the set of tools advertised to the model. The zero value is not usable;
 // build with NewRegistry.
 type Registry struct {
+	mu     sync.RWMutex
 	byName map[string]Tool
 	order  []string // stable iteration order for cache-friendly tool arrays
+}
+
+func (r *Registry) Register(ts ...Tool) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	for _, t := range ts {
+		if _, ok := r.byName[t.Name()]; !ok {
+			r.order = append(r.order, t.Name())
+		}
+		r.byName[t.Name()] = t
+	}
 }
 
 // NewRegistry builds a registry holding the given tools. Duplicate names keep the
@@ -60,6 +76,8 @@ func (r *Registry) Lookup(name string) (Tool, bool) {
 	if r == nil {
 		return nil, false
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	t, ok := r.byName[name]
 	return t, ok
 }
@@ -69,6 +87,8 @@ func (r *Registry) Fork() *Registry {
 	if r == nil {
 		return NewRegistry()
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	var ts []Tool
 	files := map[*Files]*Files{}
 	for _, name := range r.order {
@@ -93,6 +113,8 @@ func (r *Registry) Close() {
 	if r == nil {
 		return
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	for _, t := range r.byName {
 		if c, ok := t.(io.Closer); ok {
 			_ = c.Close()
@@ -103,9 +125,11 @@ func (r *Registry) Close() {
 // Schemas renders the registry as the OpenAI request `tools` array, in stable order
 // so the request body is byte-stable across turns (helps server-side prompt caching).
 func (r *Registry) Schemas() []babel.ToolDef {
-	if r == nil || len(r.order) == 0 {
+	if r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := make([]babel.ToolDef, 0, len(r.order))
 	for _, name := range r.order {
 		t := r.byName[name]
@@ -119,6 +143,8 @@ func (r *Registry) Names() []string {
 	if r == nil {
 		return nil
 	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
 	out := append([]string(nil), r.order...)
 	sort.Strings(out)
 	return out

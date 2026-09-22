@@ -45,6 +45,12 @@ type settingsTab struct {
 }
 
 var settingsTabs = []settingsTab{
+	{"setup", "Setup"},
+	{"models", "Models"},
+	{"keyboard", "Shortcuts"},
+	{"hosts", "Hosts & Services"},
+	{"files", "Import / Export"},
+	{"server", "Server"},
 	{"overview", "Overview"},   // config at a glance: health, roles, counts
 	{"general", "General"},     // profile + behavior (effort/max-tokens/temperature)
 	{"providers", "Providers"}, // backends (advanced fields in the entity editor)
@@ -265,6 +271,22 @@ func (m SettingsModel) activate() (SettingsModel, tea.Cmd) {
 		return m.openField()
 	}
 	switch m.tabKeyOf() {
+	case "setup":
+		return m, func() tea.Msg { return WorkspaceAction{Kind: "discover"} }
+	case "models":
+		return m, Goto(ScreenModels)
+	case "hosts":
+		return m, func() tea.Msg { return WorkspaceAction{Kind: "hosts"} }
+	case "keyboard":
+		return m.openScalarField()
+	case "server":
+		return m.openScalarField()
+	case "files":
+		kind := "export-settings"
+		if m.cursor == 1 {
+			kind = "import-settings"
+		}
+		return m, func() tea.Msg { return WorkspaceAction{Kind: kind} }
 	case "overview", "system", "skills", "tools":
 		return m, nil // read-only tabs
 	case "routing":
@@ -689,6 +711,12 @@ func (m SettingsModel) rowCount() int {
 		return len(m.fieldDefs())
 	}
 	switch m.tabKeyOf() {
+	case "setup", "models", "hosts":
+		return 1
+	case "files":
+		return 2
+	case "keyboard", "server":
+		return len(m.fieldDefs())
 	case "overview":
 		return len(m.overviewRows())
 	case "routing":
@@ -752,6 +780,16 @@ func (m SettingsModel) rows() []string {
 		return m.entityRows()
 	}
 	switch m.tabKeyOf() {
+	case "setup":
+		return []string{m.mark(0, "Discover providers again"), "Review local candidates before saving or connecting."}
+	case "models":
+		return []string{m.mark(0, "Open models: discover, select, or enter a model ID")}
+	case "hosts":
+		return []string{m.mark(0, "Open host and service inventory")}
+	case "files":
+		return []string{m.mark(0, "Export portable settings to config.export.json"), m.mark(1, "Review import from the original config.json / --config file")}
+	case "keyboard", "server":
+		return m.fieldRows()
 	case "overview":
 		return m.overviewRows()
 	case "routing":
@@ -1204,6 +1242,10 @@ type fieldDef struct {
 // General/Appearance tab's flat list, or the open entity's fields.
 func (m SettingsModel) fieldDefs() []fieldDef {
 	switch {
+	case m.tabKeyOf() == "keyboard":
+		return keyboardFields()
+	case m.tabKeyOf() == "server":
+		return serverFields()
 	case m.view == viewEntity && m.entityKind == "route":
 		return routeFieldDefs(m.entityRef)
 	case m.view == viewEntity:
@@ -1679,6 +1721,20 @@ func modelFieldDefs(ref string, provNames []string) []fieldDef {
 
 func (m SettingsModel) appearanceFieldDefs() []fieldDef {
 	return []fieldDef{
+		{label: "sidebar width", kind: fText, get: func(f *config.File) string {
+			if f.Appearance != nil && f.Appearance.SidebarWidth != 0 {
+				return strconv.Itoa(f.Appearance.SidebarWidth)
+			}
+			return "44"
+		}, set: func(f *config.File, e *fieldEdit) error {
+			n, err := strconv.Atoi(e.value())
+			if err != nil || n < 32 || n > 60 {
+				return fmt.Errorf("sidebar width must be 32–60")
+			}
+			ensureAppearance(f)
+			f.Appearance.SidebarWidth = n
+			return nil
+		}},
 		{"enabled", fEnum, false, []string{"on", "off"},
 			func(f *config.File) string {
 				ensureStatusLine(f)

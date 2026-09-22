@@ -2,12 +2,15 @@ package config
 
 import (
 	"bufio"
+	"deepthought-cli/internal/credential"
 	"encoding/json"
 	"fmt"
+	"golang.org/x/sys/unix"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"deepthought-cli/internal/unimatrix"
@@ -152,7 +155,7 @@ func MergeImports(file *File, candidates []ImportCandidate, configPath string) (
 		}
 		if candidate.SecretID != "" && candidate.Secret != "" {
 			secrets[candidate.SecretID] = candidate.Secret
-			_ = os.Setenv(candidate.SecretID, candidate.Secret)
+			credential.Register("$"+candidate.SecretID, candidate.Secret)
 		}
 	}
 	if len(secrets) > 0 {
@@ -164,6 +167,18 @@ func MergeImports(file *File, candidates []ImportCandidate, configPath string) (
 }
 
 func writeSecrets(path string, additions map[string]string) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0600)
+	if err != nil {
+		return err
+	}
+	defer lock.Close()
+	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
+		return err
+	}
+	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
 	existing := map[string]string{}
 	// A read failure here must abort the merge: writing with an empty
 	// "existing" map would clobber previously imported secrets. (A missing
@@ -186,7 +201,23 @@ func writeSecrets(path string, additions map[string]string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, []byte(b.String()), 0o600)
+	f, err := os.CreateTemp(filepath.Dir(path), ".credentials-*")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(f.Name())
+	if _, err := f.WriteString(b.String()); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return err
+	}
+	if err := f.Close(); err != nil {
+		return err
+	}
+	return os.Rename(f.Name(), path)
 }
 
 // LoadSecrets loads the sibling secrets.env before provider $VAR expansion.
@@ -213,10 +244,13 @@ func loadSecretsInto(path string, capture map[string]string) error {
 		if !ok {
 			continue
 		}
-		value = strings.Trim(value, "\"")
-		value = strings.ReplaceAll(value, `\"`, `"`)
-		value = strings.ReplaceAll(value, `\\`, `\`)
-		_ = os.Setenv(key, value)
+		if decoded, err := strconv.Unquote(value); err == nil {
+			value = decoded
+		}
+		credential.Register("secret:"+key, value)
+		if os.Getenv(key) == "" {
+			credential.Register("$"+key, value)
+		}
 		if capture != nil {
 			capture[key] = value
 		}

@@ -12,6 +12,7 @@ import (
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/host"
 	"deepthought-cli/internal/slurm"
 	"deepthought-cli/internal/unimatrix"
 )
@@ -30,6 +31,7 @@ type ProviderRow struct {
 // the chat env brief, the sidebar, Settings › System all render this).
 // Failed probes leave "" — never an error, never a crash.
 type EnvInfo struct {
+	Observation          host.Record
 	CVMFS, Module, Slurm bool
 	Shell, User, TZ      string
 
@@ -43,6 +45,8 @@ type EnvInfo struct {
 	CPUs      int
 	MemGB     int
 }
+
+func (m StatusModel) SetEnv(e EnvInfo) StatusModel { m.env = e; return m }
 
 // StatusInputs bundles the Status page's external inputs (kept out of the model
 // so the constructor stays readable).
@@ -272,6 +276,7 @@ func (m StatusModel) hostRows() []string {
 		styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",
 			detChip(e.CVMFS), detChip(e.Module), detChip(e.Slurm))),
 	)
+	rows = append(rows, observationRows(e)...)
 	return Section{Title: "Host", Rows: rows}.Render()
 }
 

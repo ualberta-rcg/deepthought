@@ -21,6 +21,7 @@ const (
 	ScreenStatus
 	ScreenJobs
 	ScreenPlans
+	ScreenWorkspace
 )
 
 // SplashAdvanceMsg is emitted by the splash on any keypress. The root decides

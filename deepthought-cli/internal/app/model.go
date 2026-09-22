@@ -18,6 +18,7 @@ import (
 
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/credential"
 	"deepthought-cli/internal/history"
 	"deepthought-cli/internal/keybindings"
 	"deepthought-cli/internal/queen"
@@ -50,6 +51,8 @@ const statusCmdInterval = 30 * time.Second
 // screen to start on. Built once in main (the settings/registry/gate pointers
 // are shared, concurrency-safe); the SSH handler copies it per connection.
 type Deps struct {
+	StartupNotice     string
+	DiscoverTools     func(context.Context) ([]tools.Tool, error)
 	Workflows         *workflow.Service
 	SkillListing      func() string
 	ReloadSkills      func() error
@@ -75,32 +78,35 @@ type Deps struct {
 // delegates to the active sub-model. Sub-models return their own concrete type
 // from Update, so the root stores the result directly with no type assertion.
 type RootModel struct {
-	deps              Deps
-	screen            tui.Screen
-	status            tui.StatusInfo // feeds the top bar
-	clock             time.Time      // live clock; updated by TickMsg
-	lastCtrlC         time.Time
-	width             int
-	height            int
-	sessionID         string
-	healthOK          bool // last model-health ping (drives the Status dashboard)
-	healthMsg         string
-	lastCluster       slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
-	clusterGeneration uint64
-	splash            tui.SplashModel
-	server            *ServerSession // non-nil after a successful splash server login
-	wasBusy           bool           // last observed chat busy state (turn-end push edge)
-	chat              tui.ChatModel
-	continue_         tui.ContinueModel
-	settings          tui.SettingsModel
-	grid              tui.GridModel
-	statusScr         tui.StatusModel
-	modelsScr         tui.ModelsModel
-	cronScr           tui.CronModel
-	jobsScr           tui.JobsModel
-	plansScr          tui.PlansModel
-	env               tui.EnvInfo
-	sidebar           tui.SidebarData
+	workspace                       tui.WorkspaceModel
+	candidates                      []config.Candidate
+	bootstrapStarted, discoveryBusy bool
+	deps                            Deps
+	screen                          tui.Screen
+	status                          tui.StatusInfo // feeds the top bar
+	clock                           time.Time      // live clock; updated by TickMsg
+	lastCtrlC                       time.Time
+	width                           int
+	height                          int
+	sessionID                       string
+	healthOK                        bool // last model-health ping (drives the Status dashboard)
+	healthMsg                       string
+	lastCluster                     slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
+	clusterGeneration               uint64
+	splash                          tui.SplashModel
+	server                          *ServerSession // non-nil after a successful splash server login
+	wasBusy                         bool           // last observed chat busy state (turn-end push edge)
+	chat                            tui.ChatModel
+	continue_                       tui.ContinueModel
+	settings                        tui.SettingsModel
+	grid                            tui.GridModel
+	statusScr                       tui.StatusModel
+	modelsScr                       tui.ModelsModel
+	cronScr                         tui.CronModel
+	jobsScr                         tui.JobsModel
+	plansScr                        tui.PlansModel
+	env                             tui.EnvInfo
+	sidebar                         tui.SidebarData
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -152,6 +158,11 @@ func NewRootModel(d Deps) RootModel {
 	}
 	m.settings = m.settings.SetEnv(env).SetSkills(skillPacks(d.Skills))
 	m.chat = m.chat.SetParentContext(d.Context).SetSkillListing(d.SkillListing)
+	if d.StartupNotice != "" {
+		m.chat = m.chat.Notice(d.StartupNotice)
+		m.splash = m.splash.WithNotice(d.StartupNotice)
+	}
+	m.refreshBindings()
 	if d.ResumeCollective != "" {
 		if resumed, err := tui.ResumeChatModel(d.Live, d.Registry, d.Gate, d.ChatSource, d.ResumeCollective); err == nil {
 			m.chat = resumed.SetParentContext(d.Context).SetEnv(env).SetSkills(d.Skills).SetSkillListing(d.SkillListing)
@@ -283,19 +294,13 @@ func commandExists(name string) bool {
 // stack); otherwise land in Settings at the add-provider area.
 func (m RootModel) advanceFromSplash() (RootModel, tea.Cmd) {
 	m.screenStack = nil
-	if m.deps.Live != nil && m.deps.Live.HasAgenticModel() {
-		m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetParentContext(m.deps.Context).SetEnv(m.env).
-			SetCluster(m.lastCluster).
-			SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing).
-			Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
-		m.screen = tui.ScreenChat
-		m.chatResize()
-		return m, m.chat.Init()
-	}
-	m.settings = tui.NewSettingsModelAt(m.deps.Live, m.deps.Settings, "providers", true).
-		Resize(m.width, m.height)
-	m.screen = tui.ScreenSettings
-	return m, m.settings.Init()
+	m.chat = tui.NewChatModel(m.deps.Live, m.deps.Registry, m.deps.Gate, m.sessionID, m.deps.ChatSource).SetParentContext(m.deps.Context).SetEnv(m.env).
+		SetCluster(m.lastCluster).
+		SetSkills(m.deps.Skills).SetSkillListing(m.deps.SkillListing).
+		Resize(m.width, m.height-tui.ChatChromeHeight(m.legendOn()))
+	m.screen = tui.ScreenChat
+	m.chatResize()
+	return m, m.chat.Init()
 }
 
 // splashBoot resolves the chat role's model + provider for the splash status
@@ -320,9 +325,6 @@ func (m RootModel) Init() tea.Cmd {
 	// Background Slurm poll: fetch immediately at login (only where Slurm
 	// exists), then re-arm every 5 min from the handler. The Status page reads
 	// the cached snapshot, so opening it never blocks.
-	if slurm.Detected() && !m.deps.DisableMonitoring {
-		cmds = append(cmds, pollClusterCmd())
-	}
 	if cmd := m.statusLineCommand(); cmd != "" {
 		cmds = append(cmds, pollStatusCmd(cmd))
 	}
@@ -371,6 +373,63 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch event := msg.(type) {
+	case startupMsg:
+		if m.deps.DisableMonitoring {
+			return m, nil
+		}
+		m.discoveryBusy = true
+		cmds := []tea.Cmd{m.discoverCmd(true), m.collectHostCmd()}
+		if slurm.Detected() {
+			cmds = append(cmds, pollClusterCmd())
+		}
+		return m, tea.Batch(cmds...)
+	case candidatesMsg:
+		m.discoveryBusy = false
+		if event.Skip {
+			return m, nil
+		}
+		m.candidates = event.Candidates
+		if m.deps.Live != nil && (!event.Auto || m.screen == tui.ScreenSplash) {
+			m.showCandidates()
+		} else {
+			m.chat = m.chat.Notice("Provider discovery complete. Ctrl+P → Discover AI providers to review.")
+		}
+		return m, nil
+	case providerSavedMsg:
+		if event.Err != nil {
+			m.workspace.Notice = credential.Redact(event.Err.Error())
+			return m, nil
+		}
+		m.modelsScr = tui.NewModelsModel(m.deps.Live).Resize(m.width, m.height)
+		var cmd tea.Cmd
+		m.modelsScr, cmd = m.modelsScr.Discover(event.Name)
+		m.pushScreenOnce(tui.ScreenModels)
+		return m, cmd
+	case hostMsg:
+		m.env.Observation = event.Record
+		m.sidebar.Env = m.env
+		m.settings = m.settings.SetEnv(m.env)
+		m.statusScr = m.statusScr.SetEnv(m.env)
+		m.chat = m.chat.SetEnv(m.env)
+		if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Hosts & Services" {
+			m.showHosts()
+		}
+		return m, tea.Tick(30*time.Second, func(time.Time) tea.Msg { return hostTimerMsg{} })
+	case hostTimerMsg:
+		return m, m.collectHostCmd()
+	case toolsReadyMsg:
+		if event.Err != nil {
+			m.workspace.Notice = "Scientific endpoint discovery failed; existing tools remain available."
+			return m, nil
+		}
+		m.deps.Registry.Register(event.Tools...)
+		m.settings = m.settings.SetTools(m.deps.Registry.Names())
+		m.workspace.Notice = "Scientific tools refreshed"
+		return m, nil
+	case tui.WorkspaceAction:
+		return m.workspaceAction(event)
+	}
 	if tui.IsPlansEvent(msg) {
 		var cmd tea.Cmd
 		m.plansScr, cmd = m.plansScr.Update(msg)
@@ -467,6 +526,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// Cache size and fan it out to every sub-model so each is sized before
 		// it is first shown. Chat loses TopBarHeight rows to the top bar.
 		m.width, m.height = msg.Width, msg.Height
+		m.workspace = m.workspace.Resize(msg.Width, msg.Height)
 		m.splash = m.splash.Resize(msg.Width, msg.Height)
 		m.chatResize()
 		m.continue_ = m.continue_.Resize(msg.Width, msg.Height)
@@ -481,6 +541,10 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			SetSession(m.sessionIn, m.sessionOut, m.lastContext, m.sessionCycles, m.sessionMsgs)
 		if m.overlay != nil {
 			m.overlay = m.overlay.Resize(msg.Width, msg.Height)
+		}
+		if !m.bootstrapStarted {
+			m.bootstrapStarted = true
+			return m, tea.Tick(50*time.Millisecond, func(time.Time) tea.Msg { return startupMsg{} })
 		}
 		return m, nil
 	case tui.SplashAdvanceMsg:
@@ -581,6 +645,11 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyPressMsg:
+		if msg.String() == "ctrl+p" && !m.screenCapturesKeys() {
+			m.showMenu()
+			return m, nil
+		}
+		m.refreshBindings()
 		// An open overlay owns all keys (it swallows F-keys too) until done.
 		if m.overlay != nil {
 			var cmd tea.Cmd
@@ -617,6 +686,8 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// screen and capture its concrete return type.
 	var cmd tea.Cmd
 	switch m.screen {
+	case tui.ScreenWorkspace:
+		m.workspace, cmd = m.workspace.Update(msg)
 	case tui.ScreenSplash:
 		m.splash, cmd = m.splash.Update(msg)
 	case tui.ScreenChat:
@@ -699,10 +770,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F4 — the effort picker overlay.
 		return m, func() tea.Msg { return tui.OpenEffortMsg{} }
 	case keybindings.Help:
-		// F1 — accurate keys + where the commands live; visible wherever you
-		// are (the chat screen is pushed so the notice actually shows).
-		m.pushScreenOnce(tui.ScreenChat)
-		m.chat = m.chat.Notice("F1 settings · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status · esc back · /help for commands")
+		return m.workspaceAction(tui.WorkspaceAction{Kind: "help"})
 	case keybindings.ContextView:
 		// F7 — push the context grid.
 		m.pushScreenOnce(tui.ScreenGrid)
@@ -799,7 +867,7 @@ func checkModelCmd(live *Settings) tea.Cmd {
 			return modelHealthMsg{reason: err.Error() + " — F2 to configure"}
 		}
 		_, err = client.Chat(context.Background(), babel.ChatRequest{
-			Model:          model.ID,
+			Model:          model.RequestID(),
 			Messages:       []babel.Message{{Role: "user", Content: "Reply with OK."}},
 			MaxTokens:      4,
 			Effort:         babel.EffortOff,
@@ -820,6 +888,8 @@ func (m RootModel) legendOn() bool { return m.deps.Live != nil && m.deps.Live.To
 func (m RootModel) View() tea.View {
 	var s string
 	switch m.screen {
+	case tui.ScreenWorkspace:
+		s = m.workspace.View()
 	case tui.ScreenSplash:
 		s = m.splash.View()
 	case tui.ScreenChat:
@@ -831,7 +901,9 @@ func (m RootModel) View() tea.View {
 		body := m.chat.View()
 		if m.sidebarOn() {
 			gutter := tui.RenderSidebarGutter(m.height - tui.ChatChromeHeight(m.legendOn()))
-			body = lipgloss.JoinHorizontal(lipgloss.Top, body, gutter, tui.RenderSidebar(m.sidebar, tui.SidebarWidth, m.height-tui.ChatChromeHeight(m.legendOn())))
+			body = lipgloss.JoinHorizontal(lipgloss.Top, body, gutter, tui.RenderSidebar(m.sidebar, m.sidebarWidth(), m.height-tui.ChatChromeHeight(m.legendOn())))
+		} else {
+			top += "\n" + tui.CompactHost(m.env, m.width)
 		}
 		s = top + "\n" + body + "\n" + bottom
 	case tui.ScreenContinue:
@@ -857,7 +929,7 @@ func (m RootModel) View() tea.View {
 	if m.overlay != nil {
 		s = tui.OverlayCenter(s, m.overlay.View())
 	}
-	v := tea.NewView(s)
+	v := tea.NewView(credential.Redact(s))
 	v.AltScreen = true // declarative in v2 — no tea.WithAltScreen()
 	// Place the input's real cursor when the chat is active and uncovered. (The
 	// textinputs use a virtual cursor rendered in their own View, so this is a
@@ -1121,9 +1193,24 @@ func activeModelOf(f config.File) (unimatrix.Model, bool) {
 func (m *RootModel) chatResize() {
 	chatW := m.width
 	if m.sidebarOn() {
-		chatW = m.width - tui.SidebarWidth - 1 // 1-col gutter
+		chatW = m.width - m.sidebarWidth() - 1
 	}
-	m.chat = m.chat.Resize(chatW, m.height-tui.ChatChromeHeight(m.legendOn()))
+	height := m.height - tui.ChatChromeHeight(m.legendOn())
+	if !m.sidebarOn() {
+		height--
+	}
+	m.chat = m.chat.Resize(chatW, height)
+}
+
+func (m RootModel) sidebarWidth() int {
+	w := tui.SidebarWidth
+	if m.deps.Live != nil {
+		f := m.deps.Live.Snapshot()
+		if f.Appearance != nil && f.Appearance.SidebarWidth >= 32 && f.Appearance.SidebarWidth <= 60 {
+			w = f.Appearance.SidebarWidth
+		}
+	}
+	return w
 }
 
 // sidebarOn reports whether the chat screen's live info column is showing:
@@ -1138,9 +1225,9 @@ func (m RootModel) sidebarOn() bool {
 	case "off":
 		return false
 	case "on":
-		return m.width >= 120
+		return m.width >= m.sidebarWidth()+61
 	default: // auto
-		return m.width >= 120
+		return m.width >= m.sidebarWidth()+61
 	}
 }
 

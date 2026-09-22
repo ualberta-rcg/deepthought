@@ -11,7 +11,7 @@ import (
 )
 
 // SidebarWidth is the live info column's width on the chat screen.
-const SidebarWidth = 36
+const SidebarWidth = 44
 
 // RenderSidebarGutter paints the 1-column divider between the chat and the
 // live column, from the palette (a retheme touches only styles.go).
@@ -53,6 +53,9 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	// » Host — always (the descriptor's compact render).
 	e := d.Env
 	hostRows := []string{clipLine(" "+orDefault(e.ShortName, e.Host), w)}
+	if e.User != "" {
+		hostRows = append(hostRows, clipLine(" user "+e.User, w))
+	}
 	if e.OSName != "" {
 		hostRows = append(hostRows, clipLine(" "+e.OSName, w))
 	}
@@ -66,7 +69,32 @@ func RenderSidebar(d SidebarData, w, h int) string {
 		}
 		hostRows = append(hostRows, clipLine(" "+spec, w))
 	}
+	r := e.Observation
+	if !r.CollectedAt.IsZero() {
+		hostRows = append(hostRows, clipLine(" "+r.Kind+" · "+r.CollectedAt.Format("15:04:05"), w))
+		if r.Stale() {
+			hostRows = append(hostRows, " stale observations")
+		}
+		if r.MemoryTotal > 0 {
+			hostRows = append(hostRows, clipLine(fmt.Sprintf(" RAM %s %d/%d GiB", healthBar(float64(r.MemoryUsed)/float64(r.MemoryTotal), max(4, w-24)), r.MemoryUsed>>30, r.MemoryTotal>>30), w))
+		}
+		if r.CPUKnown {
+			hostRows = append(hostRows, clipLine(fmt.Sprintf(" CPU %s %.0f%% host", healthBar(r.CPUPercent/100, max(4, w-20)), r.CPUPercent), w))
+		}
+		if r.Allocation.ID != "" {
+			hostRows = append(hostRows, clipLine(" job "+r.Allocation.ID+" · "+r.Allocation.CPUs+" CPUs", w), clipLine(" allocation "+r.Allocation.Memory, w))
+		}
+	}
 	secs = append(secs, Section{Title: "Host", Rows: hostRows}.Render()...)
+	if len(r.Services) > 0 {
+		rows := []string{}
+		for _, s := range r.Services {
+			if s.Availability != "not detected" {
+				rows = append(rows, clipLine(" "+s.Kind+" · "+s.Availability, w))
+			}
+		}
+		secs = append(secs, Section{Title: "Services", Rows: rows}.Render()...)
+	}
 
 	// » Cluster — live when polled.
 	if d.ClusterOK && d.Cluster.GPUs > 0 {
@@ -95,6 +123,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 				lipgloss.NewStyle().Foreground(col).Bold(bold).Render(truncatePad(label, 9)),
 				fmt.Sprintf("%.2f", r.Fairshare)), w))
 		}
+		rows = append(rows, clipLine(" scheduling factor, not queue position", w))
 		secs = append(secs, Section{Title: "Fairshare", Rows: rows}.Render()...)
 	}
 
@@ -109,7 +138,22 @@ func RenderSidebar(d SidebarData, w, h int) string {
 		}
 	}
 	jobsRow := fmt.Sprintf(" %d running · %d pending", nr, np)
-	secs = append(secs, Section{Title: "Your jobs", Rows: []string{clipLine(jobsRow, w)}}.Render()...)
+	if e.Slurm || d.ClusterOK {
+		rows := []string{clipLine(jobsRow, w)}
+		if d.Cluster.Err != nil {
+			rows = append(rows, " scheduler unavailable / stale")
+		}
+		for i, j := range d.Cluster.YourJobs {
+			if i >= 3 {
+				break
+			}
+			rows = append(rows, clipLine(" "+j.ID+" "+j.Name+" "+j.State+" "+j.Elapsed, w))
+			if j.State == "PENDING" {
+				rows = append(rows, clipLine(" "+j.Reason, w))
+			}
+		}
+		secs = append(secs, Section{Title: "Your jobs", Rows: rows}.Render()...)
+	}
 
 	// » Filesystem capacity — one compact line per filesystem when known.
 	if len(d.Cluster.StorageRows) > 0 {
@@ -143,7 +187,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 		secs = append(secs, Section{Title: "Skills", Extra: fmt.Sprintf("%d packs", len(d.Skills)), Rows: rows}.Render()...)
 	}
 
-	secs = append(secs, styleSettingsFoot.Render("  F12 for detail"))
+	secs = append(secs, styleSettingsFoot.Render("  Ctrl+P → Status for detail"))
 	// Exactly w wide (the caller budgets w + a 1-col gutter — the old extra
 	// PaddingLeft made every join one column wider than the terminal).
 	return padBlock(strings.Join(secs, "\n"), w, h)
