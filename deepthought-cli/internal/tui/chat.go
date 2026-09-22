@@ -1136,22 +1136,23 @@ func (m ChatModel) clusterBlurb() string {
 		facts = append(facts, fmt.Sprintf("nodes %d/%d up", c.NodesUp, c.NodesTotal))
 	}
 	if c.CPUTotal > 0 {
-		facts = append(facts, fmt.Sprintf("CPUs %d%% used", int(frac01(float64(c.CPUAlloc), float64(c.CPUTotal))*100+0.5)))
+		facts = append(facts, fmt.Sprintf("CPUs %d%% allocated", int(frac01(float64(c.CPUAlloc), float64(c.CPUTotal))*100+0.5)))
 	}
 	if c.GPUs > 0 {
-		g := fmt.Sprintf("GPUs %d/%d in use", c.GPUsUsed, c.GPUs)
-		if c.GPUUsable > 0 {
-			g += fmt.Sprintf(", %d usable now", c.GPUUsable)
+		g := fmt.Sprintf("GPUs %d capacity; allocation unknown", c.GPUs)
+		if c.GPUAllocKnown {
+			g = fmt.Sprintf("GPUs %d/%d allocated", c.GPUsUsed, c.GPUs)
 		}
 		facts = append(facts, g)
 	}
-	facts = append(facts, fmt.Sprintf("cluster queue %d running / %d pending", c.JobsRunning, c.JobsPending))
+	if c.QueueKnown {
+		facts = append(facts, fmt.Sprintf("cluster queue %d running / %d pending", c.ClusterRunning, c.ClusterPending))
+	}
 	if len(c.YourJobs) > 0 {
 		facts = append(facts, fmt.Sprintf("you have %d job(s)", len(c.YourJobs)))
 	}
 	if c.Fairshare > 0 {
-		label, _ := slurm.FairshareTier(c.Fairshare)
-		facts = append(facts, fmt.Sprintf("your fairshare %.2f (%s)", c.Fairshare, label))
+		facts = append(facts, fmt.Sprintf("your fairshare %.2f (scheduling factor, not queue position)", c.Fairshare))
 	}
 	for _, r := range c.StorageRows {
 		if r.Label == "scratch" {

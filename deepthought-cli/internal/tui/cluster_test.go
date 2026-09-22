@@ -15,6 +15,8 @@ func testSnapshot() slurm.ClusterSnapshot {
 		CPUAlloc: 7078, CPUTotal: 15808,
 		GPUs: 980, GPUsUsed: 935, GPUUsable: 44, GPUType: "l40s",
 		MemTotalGB: 5000, MemAllocGB: 2400,
+		GPUAllocKnown: true, MemoryAllocKnown: true, QueueKnown: true,
+		ClusterRunning: 1048, ClusterPending: 1093,
 		JobsRunning: 1048, JobsPending: 1093,
 		Fairshare: 0.67,
 		YourJobs: []slurm.Job{
@@ -45,7 +47,7 @@ func TestClusterSectionRenderers(t *testing.T) {
 	want := map[string]string{
 		"cluster":   "l40s",
 		"jobs":      "held: Priority",
-		"fairshare": "ahead",
+		"fairshare": "0.67",
 		"dirs":      "scratch",
 	}
 	for name, rows := range cases {
@@ -61,11 +63,24 @@ func TestClusterBlurb(t *testing.T) {
 	}
 	got := ChatModel{cluster: testSnapshot()}.clusterBlurb()
 	for _, want := range []string{
-		"GPUs 935/980", "44 usable", "fairshare 0.67", "ahead",
+		"GPUs 935/980 allocated", "fairshare 0.67", "scheduling factor", "cluster queue 1048 running / 1093 pending",
 		"scratch 16% used", "stale",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("clusterBlurb missing %q:\n%s", want, got)
 		}
+	}
+}
+
+func TestClusterUnknownAllocationRemainsUnknown(t *testing.T) {
+	s := testSnapshot()
+	s.GPUAllocKnown, s.MemoryAllocKnown, s.QueueKnown = false, false, false
+	got := strings.Join(renderClusterBlock(s), "\n")
+	if strings.Count(got, "allocation unavailable") != 2 || !strings.Contains(got, "queue unavailable") {
+		t.Fatal(got)
+	}
+	brief := (ChatModel{cluster: s}).clusterBlurb()
+	if strings.Contains(brief, "usable now") || strings.Contains(brief, "935/980") || strings.Contains(brief, "cluster queue") {
+		t.Fatal("unknown allocation presented as known", brief)
 	}
 }

@@ -97,6 +97,9 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 		body, _ := json.Marshal(f)
 		if !importedFile {
 			body = []byte(`{}`)
+			if len(f.Keybindings) > 0 {
+				body, _ = json.Marshal(map[string]any{"keybindings": f.Keybindings})
+			}
 		}
 		_, err = db.Exec("INSERT OR IGNORE INTO app_settings(profile,revision,body) VALUES(?,1,?)", s.profile, body)
 	}
@@ -106,6 +109,9 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 	}
 	// --config selects a persistent profile, not a frozen override of future edits.
 	_ = explicit
+	if err := s.migrateCachedDefaults(); err != nil {
+		notice = "Previous server settings were preserved but could not be loaded; reconnect in Settings → Server."
+	}
 	s.initMirror(notice != "")
 	s.RepairMirror()
 	cfg, err := s.Load()
@@ -124,52 +130,27 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 
 func (s *LocalStore) Close() error { return s.db.Close() }
 
-// Override only keys actually present in an explicit document, using normalized
-// values so credentials stay references and nested defaults do not mask saves.
-func explicitFields(selected, normalized map[string]any) map[string]any {
-	out := map[string]any{}
-	for k, value := range selected {
-		n, ok := normalized[k]
-		if !ok {
-			continue
-		}
-		if nested, ok := value.(map[string]any); ok {
-			if nm, ok := n.(map[string]any); ok {
-				out[k] = explicitFields(nested, nm)
-				continue
-			}
-		}
-		out[k] = n
+// Retain the previous cached layer while moving user synchronization onto the
+// ordinary save path. Never re-import this cache after migration.
+func (s *LocalStore) migrateCachedDefaults() error {
+	var current map[string]any
+	if err := s.ReadRecord("fleet-defaults", s.profile, &current); err == nil {
+		return nil
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
-	return out
-}
-
-func (s *LocalStore) SetServerDefaults(defaults, remote map[string]any) error {
-	clean := func(m map[string]any) (map[string]any, error) {
-		b, err := json.Marshal(m)
-		if err != nil {
-			return nil, err
-		}
-		var f File
-		if err = json.Unmarshal(b, &f); err != nil {
-			return nil, err
-		}
-		return fileMap(Portable(f)), nil
+	var old map[string]any
+	if err := s.ReadRecord("server-defaults", s.profile, &old); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
 	}
-	// Never allow a server to install credential references or local settings files.
-	d, err := clean(defaults)
+	clean, err := ReadShared(old)
 	if err != nil {
 		return err
 	}
-	r, err := clean(remote)
-	if err != nil {
+	if _, err := ResolveLayers(map[string]any(clean), nil, nil); err != nil {
 		return err
 	}
-	mergeLayer(d, r)
-	if _, err := ResolveLayers(d, nil, nil); err != nil {
-		return err
-	}
-	return s.WriteRecord("server-defaults", s.profile, d)
+	return s.WriteRecord("fleet-defaults", s.profile, clean)
 }
 func (s *LocalStore) Load() (*Config, error) {
 	s.mu.Lock()

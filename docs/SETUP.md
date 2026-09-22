@@ -63,8 +63,17 @@ by their original configuration-file path, so `--config` profiles remain distinc
 On first migration, valid JSON settings are imported and the original is retained
 as `config.json.before-database` beside the source. Existing keybindings are
 imported. Invalid source files remain untouched and produce a startup notice.
-Reopening the application does not repeatedly import the old JSON. Use Settings →
-Import / Export to explicitly import changed files or export portable settings.
+Reopening the application does not repeatedly import the old JSON. SQLite owns
+mutable settings; every successful edit or server download also atomically
+updates the active `config.json` with private permissions. A missing mirror is
+recreated. `--config` selects a persistent profile and its mirror, rather than
+overriding every subsequent Settings edit.
+
+Changes made externally to that file are preserved and flagged. Use Settings →
+Import / Export to review and import the file, or export portable settings. A
+failed mirror write leaves the database save intact and displays a retry notice.
+The running application retries pending mirror writes once a minute; retry is
+also available in Settings. A corrupt file is never silently overwritten.
 
 Mutable settings save to SQLite with revision checks. A stale editor must reload
 rather than overwrite another process's changes. Existing history is retained.
@@ -82,17 +91,48 @@ telemetry are local and do not synchronize to the server.
 Highest to lowest:
 
 1. Session choices, including an explicit Settings edit of an overridden value.
-2. An explicit `--config` document.
-3. Supported application environment overrides (`DEEPTHOUGHT_EFFORT`).
-4. Saved local database settings.
-5. Cached server settings/defaults after explicit server login.
-6. Built-in defaults, which contain no assumed provider or model.
+2. Supported application environment overrides (`DEEPTHOUGHT_EFFORT`).
+3. Saved local database settings, including reviewed file imports and merged
+   server changes.
+4. Previously cached defaults retained during migration.
+5. Built-in defaults, which contain no assumed provider or model.
 
 A discovery candidate has no precedence until accepted. Provider credential
 references are resolved separately: an explicitly selected environment reference
 uses that environment variable; an accepted file credential uses its private
 stored reference. Settings displays source labels. A Settings edit is saved
 locally, but an external override can take precedence again on the next launch.
+
+## Client and server synchronization
+
+Open Settings → Server to enter the URL, user and password, then choose
+**Connection / Sync now / conflicts**. The navigation menu also opens Server
+synchronization. Connect once to enable background reconnection on later launches;
+Disconnect disables it. Authentication and synchronization happen after the
+interface loads. Offline operation remains available.
+
+On connection, the client fetches the user's server settings, merges local changes,
+uploads the combined document if needed, and reads back the accepted result. That
+result updates live settings, SQLite, and the config file. An empty server starts
+from fleet defaults merged with the client's configuration. Subsequent merges use
+a durable baseline, including deletions; named providers and models can be added
+independently by different clients. Conflicting edits offer local/server choices
+in the synchronization screen. They are never silently resolved by last writer.
+
+Saved edits trigger a debounced transfer; connected clients also check every five
+minutes and offer **Sync now**. Revision conflicts retry against a fresh server
+document. Offline changes survive restarts. Edits made during a transfer stay
+pending for the next transfer. Disconnect cancels outstanding network work and
+prevents a late download from applying; it cannot undo a request already accepted
+by the server.
+
+Shared settings include inference providers/endpoints, model definitions, roles,
+routing, language, appearance, shortcuts, and inference preferences. Credentials,
+server login, executable hooks, permissions, scientific tool bindings, host
+inventory, and transient environment/session overrides stay local. A provider
+downloaded onto another client needs a local credential binding. Changing its
+endpoint or protocol clears the old binding so a key is not sent to a new service.
+The synchronization view shows pending work, last success, and recoverable errors.
 
 ## Navigation
 

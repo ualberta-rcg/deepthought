@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 
 	"golang.org/x/sys/unix"
 )
@@ -133,6 +135,40 @@ func (s *LocalStore) writeMirrorLocked() error {
 
 // ImportFile acknowledges exactly the bytes validated; concurrent external edits
 // still prevent replacement. Invalid input leaves both local copies intact.
+func (s *LocalStore) ImportChanges() ([]string, error) {
+	raw, err := readDiscoveryFile(s.path)
+	if err != nil {
+		return nil, fmt.Errorf("could not read config file")
+	}
+	f, err := parse(raw)
+	if err != nil {
+		return nil, fmt.Errorf("invalid config file; original preserved")
+	}
+	if _, err = Validate(f); err != nil {
+		return nil, fmt.Errorf("invalid settings; review the file before importing")
+	}
+	saved, err := s.Saved()
+	if err != nil {
+		return nil, err
+	}
+	a, b := fileMap(saved.File), fileMap(f)
+	keys := map[string]bool{}
+	for k := range a {
+		keys[k] = true
+	}
+	for k := range b {
+		keys[k] = true
+	}
+	var changed []string
+	for k := range keys {
+		if !reflect.DeepEqual(a[k], b[k]) {
+			changed = append(changed, k)
+		}
+	}
+	sort.Strings(changed)
+	return changed, nil // Field names only; never expose credential values.
+}
+
 func (s *LocalStore) ImportFile() (*Config, error) {
 	raw, err := readDiscoveryFile(s.path)
 	if err != nil {

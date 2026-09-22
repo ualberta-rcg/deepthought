@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-22 · deepthought-cli, docs — complete sync recovery and release verification
+- Fix the CI sidebar fixture destination to use an absolute path. Include installer edits in the CLI release trigger.
+- Cancel synchronization on disconnect, reject transfers bound to changed endpoints, and remove the obsolete asynchronous upload hook. Preserve earlier cached settings and standalone shortcut files during migration; show changed sections before file import.
+- Keep unavailable scheduler allocations unknown in Status and chat context, and describe fairshare as a factor. Document the database/file mirror, two-way sync controls, minimal visual sidebar and main-only installer release flow.
+- Files: CLI app/config/TUI implementations and regressions; build-cli workflow; install.sh; README, setup/host/operations guides and CLI CLAUDE.md.
+- Verification: CI 35689291065 passed vet and functional tests but failed writing its visual fixture to a relative path. Added disconnect/endpoint-change, legacy migration and unknown-allocation regressions. Local gofmt, shell syntax and diff checks; all execution/build checks run in the next main CI run.
+
 ## 2026-09-22 · deepthought-cli — main-only delivery, durable settings sync and visual host sidebar
 - Preserve the earlier implementation on main and remove its temporary branch; record the user's permanent main-only workflow and publish only tested main builds.
 - Maintain a private config mirror from SQLite, recover missing files, protect external edits, and add serialized two-way server synchronization with durable baselines, conflict choices, visible status and pending changes. Separate credentials and transient overrides from shared settings.

@@ -98,5 +98,5 @@ case ":$PATH:" in
 esac
 
 echo ""
-echo "Next: run 'deepthought-cli' — pick \"Log in to server\" after adding a"
-echo "\"server\" {url, user, password} section to ~/.deepthought/config.json."
+echo "Next: run 'deepthought-cli'. Review discovered providers or open Settings."
+echo "Optional server sync: Settings → Server → Connection. No model is needed to start."

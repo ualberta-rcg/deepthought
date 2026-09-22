@@ -209,3 +209,49 @@ func TestSettingsSyncConflictsOfflineAndInFlightEdits(t *testing.T) {
 		t.Fatal("pending change not retried", st)
 	}
 }
+
+func TestSettingsSyncDisconnectAndEndpointChange(t *testing.T) {
+	remote := config.Defaults().File
+	remote.Language = "fr"
+	endpoint := &settingsEndpoint{doc: map[string]any(config.Shared(remote)), revision: 1}
+	server := httptest.NewServer(http.HandlerFunc(endpoint.serve))
+	defer server.Close()
+	live := syncClient(t, server.URL)
+	w := worker(live, server.URL)
+	before := live.Snapshot().Language
+	endpoint.beforeGet = w.Stop // disconnect while the readback is in flight
+	w.Run()
+	if live.Snapshot().Language != before {
+		t.Fatal("disconnected transfer applied a late download")
+	}
+	endpoint.mu.Lock()
+	gets := endpoint.gets
+	endpoint.beforeGet = nil
+	endpoint.mu.Unlock()
+	w.Run()
+	endpoint.mu.Lock()
+	if endpoint.gets != gets {
+		t.Error("disconnected worker contacted server")
+	}
+	endpoint.mu.Unlock()
+	w = worker(live, server.URL)
+	if st := w.Run(); st.State != "Synced" || live.Snapshot().Language != "fr" {
+		t.Fatal("reconnect failed", st)
+	}
+	f := live.Snapshot()
+	f.Server.URL = "https://other.invalid"
+	if err := live.Save(f); err != nil {
+		t.Fatal(err)
+	}
+	endpoint.mu.Lock()
+	gets = endpoint.gets
+	endpoint.mu.Unlock()
+	if st := w.Run(); st.State != "Disconnected" {
+		t.Fatal("manual sync ignored changed endpoint", st)
+	}
+	endpoint.mu.Lock()
+	defer endpoint.mu.Unlock()
+	if endpoint.gets != gets {
+		t.Fatal("changed endpoint still contacted old server")
+	}
+}

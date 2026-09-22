@@ -68,7 +68,7 @@ The OpenAI-compatible base is `https://inference.vulcan.alliancecan.ca/v1`.
 | See my scheduler work | Jobs and the chat sidebar |
 | Keep a session across disconnects | `deepthought-cli --towel`; Ctrl+\ detaches |
 | Reattach | `deepthought-cli ls`, then `deepthought-cli attach <id>` |
-| Connect to DeepThought Server | Settings → Server, then welcome-screen server login |
+| Connect / synchronize settings | Settings → Server → Connection, or navigation → Server synchronization |
 | Install elsewhere | Navigation → Help / install on another machine |
 
 ## Capabilities
@@ -76,11 +76,13 @@ The OpenAI-compatible base is `https://inference.vulcan.alliancecan.ca/v1`.
 - **Settings-driven setup** — reviewed credential discovery, provider editing,
   advertised model capabilities, manual model entry, and cached catalogs.
 - **Local persistence** — SQLite settings and history, migration from existing
-  configuration, separate credentials, and explicit file overrides.
+  configuration, separate credentials, and an automatically updated config file.
+- **Two-way settings sync** — merge client/server changes with conflict review,
+  durable offline changes, and updates to the local database and config file.
 - **Research assistance** — OpenAI- and Anthropic-compatible inference, workspace
   tools, skills, context management, and permission-gated shell actions.
-- **Host awareness** — host/service inventory, freshness indicators, memory and
-  CPU measurements, current allocation, and filesystem capacity.
+- **Host awareness** — a persistent chat sidebar with resource bars, host/service
+  inventory, freshness indicators, current allocation, and filesystem capacity.
 - **Slurm awareness** — the user's jobs, pending reasons, accounts, fairshare,
   and cluster summaries, collected with conservative caching and timeouts.
 - **Resident sessions** — continue local sessions across terminal disconnects;
@@ -124,8 +126,9 @@ clients are not implemented by this inventory layer.
 ## Builds and releases
 
 GitHub Actions vets, tests, race-checks, and builds the CLI. Successful main
-builds publish the rolling `edge` binary and checksum. Feature-branch checks do
-not publish releases. The separate server workflow builds and pushes its Docker
+builds publish the rolling `edge` binary and checksum, then verify the installer
+retrieves that exact build. Development takes place directly on `main`; no extra
+branches are used. The separate server workflow builds and pushes its Docker
 image; publishing an image does not change the deployed Kubernetes image pin.
 
 Do not build or run heavy workloads on shared HPC login nodes. Development

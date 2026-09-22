@@ -586,6 +586,9 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.connecting = true
 		return m, serverLoginCmd(m.deps.Live)
 	case ServerLoginResultMsg:
+		if !m.connecting {
+			return m, nil
+		}
 		m.connecting = false
 		if msg.Err != "" {
 			m.connectionNotice = msg.Err
@@ -596,6 +599,14 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.splash = m.splash.WithNotice("⚠ " + msg.Err)
 			return m, nil
 		}
+		f := m.deps.Live.Snapshot()
+		if msg.Session == nil || f.Server == nil || f.Server.URL != msg.Session.URL || f.Server.User != msg.Session.User {
+			m.connectionNotice = "Connection settings changed; reconnect to continue."
+			return m, nil
+		}
+		if m.syncWorker != nil {
+			m.syncWorker.Stop()
+		}
 		m.server = msg.Session
 		m.connectionNotice = ""
 		m.syncWorker = m.deps.Live.SyncWorker(m.server)
@@ -604,8 +615,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), true)
 		}
 		m.splash = m.splash.WithNotice("")
-		// Local settings edits push back to the roving document (fire-and-
-		// forget; chat-sync errors surface via serverSyncResultMsg).
+		// Settings use the serialized worker; chat transfers have their own notice.
 		if m.screen == tui.ScreenSplash {
 			m.screen = tui.ScreenChat
 		}

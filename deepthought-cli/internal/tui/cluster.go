@@ -44,8 +44,10 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 		nodesLine,
 		fmt.Sprintf("  cpus   %s  %d%%  (%d/%d)", healthBar(cpuF, clusterBarW), fracPct(cpuF), c.CPUAlloc, c.CPUTotal),
 	}
-	if c.MemTotalGB > 0 {
+	if c.MemTotalGB > 0 && c.MemoryAllocKnown {
 		body = append(body, fmt.Sprintf("  mem    %s  %d%%  (%d/%d GB)", healthBar(memF, clusterBarW), fracPct(memF), c.MemAllocGB, c.MemTotalGB))
+	} else if c.MemTotalGB > 0 {
+		body = append(body, fmt.Sprintf("  mem    allocation unavailable · %d GB capacity", c.MemTotalGB))
 	}
 	if c.GPUs > 0 {
 		avail := c.GPUs - c.GPUsUsed
@@ -53,15 +55,23 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 		if c.GPUType != "" {
 			typ = " " + c.GPUType
 		}
-		body = append(body, fmt.Sprintf("  gpus   %s  %d%% allocated (%d/%d%s · %d unallocated)",
-			healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail))
+		if c.GPUAllocKnown {
+			body = append(body, fmt.Sprintf("  gpus   %s  %d%% allocated (%d/%d%s · %d unallocated)",
+				healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail))
+		} else {
+			body = append(body, fmt.Sprintf("  gpus   allocation unavailable · %d%s capacity", c.GPUs, typ))
+		}
+	}
+	queue := "Cluster queue unavailable"
+	if c.QueueKnown {
+		queue = fmt.Sprintf("%d running · %d pending", c.ClusterRunning, c.ClusterPending)
 	}
 	return Section{
-		Title:  "Cluster",
-		Extra:  fmt.Sprintf("your jobs: %d running · %d pending", c.JobsRunning, c.JobsPending),
+		Title:  "Slurm · " + orDefault(c.ClusterName, "cluster name unavailable"),
+		Extra:  queue,
 		Rows:   body,
 		Note:   "Cluster allocations, not measured utilization or a guarantee that a job can start.",
-		Source: "sinfo · squeue --me",
+		Source: "sinfo · squeue (aggregate states only)",
 	}.Render()
 }
 
@@ -115,15 +125,11 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 		return Section{Title: "Fairshare", Rows: body}.Render()
 	}
 	for _, r := range c.FairshareRows {
-		label, p := slurm.FairshareTier(r.Fairshare)
-		col, bold := tierColor(label)
-		line := fmt.Sprintf("  %s  %s  %s  %s",
+		line := fmt.Sprintf("  %s  %s  %.2f",
 			truncatePad(r.Account, 14),
-			barFill(p, 12, col, bold),
-			lipgloss.NewStyle().Foreground(col).Bold(bold).Render(truncatePad(label, 9)),
-			fmt.Sprintf("%.2f", r.Fairshare))
+			barFill(fracPct(frac01(r.Fairshare, 1)), 12, barOK, false), r.Fairshare)
 		if r.LevelFS != "" {
-			line += "  " + dimNote("LevelFS "+r.LevelFS+" ("+slurm.LevelFSTier(r.LevelFS)+")")
+			line += "  " + dimNote("LevelFS "+r.LevelFS)
 		}
 		body = append(body, line)
 	}

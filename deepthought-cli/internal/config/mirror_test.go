@@ -141,3 +141,39 @@ func TestSharedMergeIndependentChangesConflictsAndDeletion(t *testing.T) {
 		t.Fatal("deleted providers resurrected")
 	}
 }
+
+func TestMigrationRetainsStandaloneShortcutsAndCachedDefaults(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("DEEPTHOUGHT_CLI_HOME", dir)
+	path := filepath.Join(dir, "config.json")
+	if err := os.WriteFile(filepath.Join(dir, "keybindings.json"), []byte(`{"global":{"f3":"settings"}}`), 0600); err != nil {
+		t.Fatal(err)
+	}
+	cfg, err := OpenLocal(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Keybindings["f3"] != "settings" {
+		t.Fatal("standalone keybindings discarded")
+	}
+	// Simulate the previous database layout, with only its cached server layer.
+	if _, err = cfg.Local.db.Exec("DELETE FROM app_inventory WHERE kind='fleet-defaults'"); err != nil {
+		t.Fatal(err)
+	}
+	if err = cfg.Local.WriteRecord("server-defaults", cfg.Local.profile, map[string]any{"language": "fr"}); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Local.Close()
+	cfg, err = OpenLocal(path, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer cfg.Local.Close()
+	if cfg.Language != "fr" {
+		t.Fatal("previous cached setting discarded")
+	}
+	disk, err := Load(path)
+	if err != nil || disk.Language != "fr" {
+		t.Fatal("migrated setting missing from file", err)
+	}
+}

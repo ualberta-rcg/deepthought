@@ -286,7 +286,18 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		}
 		m.screen = tui.ScreenChat
 	case "import-settings":
-		m.showWorkspace("Import settings", "Import replaces saved local settings; original file is retained. Credentials stay local.", []tui.WorkspaceItem{{Label: "Import " + m.deps.Live.Path(), Kind: "confirm-import"}, {Label: "Cancel", Kind: "home"}})
+		if s := m.localStore(); s != nil {
+			changed, err := s.ImportChanges()
+			if err != nil {
+				m.showWorkspace("Import settings", err.Error(), []tui.WorkspaceItem{{Label: "Back", Kind: "home"}})
+				return m, nil
+			}
+			notice := "Changed sections: " + strings.Join(changed, ", ") + ". Import updates saved settings and normalizes this file. Credentials stay local."
+			if len(changed) == 0 {
+				notice = "No settings differences. Import acknowledges this file as the current mirror."
+			}
+			m.showWorkspace("Import settings", notice, []tui.WorkspaceItem{{Label: "Import " + m.deps.Live.Path(), Kind: "confirm-import"}, {Label: "Cancel", Kind: "home"}})
+		}
 	case "confirm-import":
 		err := m.deps.Live.ImportFile()
 		if err != nil {

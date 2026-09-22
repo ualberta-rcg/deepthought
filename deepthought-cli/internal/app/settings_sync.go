@@ -1,6 +1,7 @@
 package app
 
 import (
+	"context"
 	"crypto/sha256"
 	"fmt"
 	"sync"
@@ -36,6 +37,9 @@ type SettingsSync struct {
 	record   syncRecord
 	next     time.Time
 	observed config.SharedDocument
+	ctx      context.Context
+	cancel   context.CancelFunc
+	stopped  bool
 }
 
 func (s *Settings) Saved() (config.File, error) {
@@ -78,16 +82,39 @@ func (s *Settings) SyncWorker(session *ServerSession) *SettingsSync {
 	}
 	if w := s.syncWorkers[key]; w != nil {
 		w.stateMu.Lock()
-		w.session = session
+		if !w.stopped {
+			w.session = session
+			w.stateMu.Unlock()
+			return w
+		}
 		w.stateMu.Unlock()
-		return w
 	}
 	w := &SettingsSync{live: s, session: session, key: key}
+	w.ctx, w.cancel = context.WithCancel(context.Background())
 	if s.local != nil {
 		_ = s.local.ReadRecord("settings-sync", key, &w.record)
 	}
 	s.syncWorkers[key] = w
 	return w
+}
+
+// Stop cancels network work and serializes with local application of a response.
+// A request already accepted by the server cannot be undone by disconnecting.
+func (w *SettingsSync) Stop() {
+	w.live.mu.Lock()
+	defer w.live.mu.Unlock()
+	w.stateMu.Lock()
+	defer w.stateMu.Unlock()
+	w.stopped = true
+	w.cancel()
+}
+
+func (w *SettingsSync) connected(session *ServerSession) bool {
+	if w.ctx.Err() != nil {
+		return false
+	}
+	f, err := w.live.Saved()
+	return err == nil && f.Server != nil && f.Server.URL == session.URL && f.Server.User == session.User
 }
 func (w *SettingsSync) persist() error {
 	if w.live.local == nil {
@@ -122,7 +149,7 @@ func (w *SettingsSync) Due(now time.Time) bool {
 	}
 	// A connection is bound to the explicitly selected account and endpoint.
 	w.stateMu.Lock()
-	matches := f.Server != nil && f.Server.URL == w.session.URL && f.Server.User == w.session.User
+	matches := !w.stopped && f.Server != nil && f.Server.URL == w.session.URL && f.Server.User == w.session.User
 	w.stateMu.Unlock()
 	if !matches {
 		return false
@@ -160,9 +187,13 @@ func (w *SettingsSync) Run() SyncStatus {
 	}
 	defer w.mu.Unlock()
 	w.stateMu.Lock()
-	session := w.session
+	session := *w.session
+	session.ctx = w.ctx
 	w.stateMu.Unlock()
 	for attempt := 0; attempt < 3; attempt++ {
+		if !w.connected(&session) {
+			return SyncStatus{State: "Disconnected", Detail: "Connection changed; reconnect to synchronize."}
+		}
 		remote, revision, err := session.fetchUserSettings()
 		if err != nil {
 			return w.failed(err)
@@ -206,6 +237,9 @@ func (w *SettingsSync) Run() SyncStatus {
 			return w.failed(err)
 		}
 		if remote == nil || !config.SameShared(merged, r) {
+			if !w.connected(&session) {
+				return SyncStatus{State: "Disconnected", Detail: "Connection changed; reconnect to synchronize."}
+			}
 			_, err = session.pushUserSettings(map[string]any(merged), revision)
 			if isRevisionConflict(err) {
 				continue
@@ -226,7 +260,7 @@ func (w *SettingsSync) Run() SyncStatus {
 		ack = config.SharedWithDefaults(ack)
 		// Apply while holding the live settings lock. Edits made during network I/O
 		// are merged against the original local snapshot and remain pending if needed.
-		if err = w.live.applySynced(local, ack); err != nil {
+		if err = w.live.applySynced(local, ack, &session); err != nil {
 			return w.failed(err)
 		}
 		w.stateMu.Lock()
@@ -250,7 +284,7 @@ func (w *SettingsSync) failed(err error) SyncStatus {
 	w.stateMu.Unlock()
 	return w.Status()
 }
-func (s *Settings) applySynced(start, remote config.SharedDocument) error {
+func (s *Settings) applySynced(start, remote config.SharedDocument, session *ServerSession) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.local == nil {
@@ -259,6 +293,9 @@ func (s *Settings) applySynced(start, remote config.SharedDocument) error {
 	saved, err := s.local.Saved()
 	if err != nil {
 		return err
+	}
+	if session.ctx.Err() != nil || saved.Server == nil || saved.Server.URL != session.URL || saved.Server.User != session.User {
+		return fmt.Errorf("connection changed; downloaded settings were not applied")
 	}
 	// Concurrent local conflicts deliberately stay local and become the next delta.
 	merged, _ := config.MergeShared(start, config.Shared(saved.File), remote, nil)

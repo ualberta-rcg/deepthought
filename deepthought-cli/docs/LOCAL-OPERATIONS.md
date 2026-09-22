@@ -25,11 +25,15 @@ not an HPC batch allocation or a system service with guaranteed uptime.
 
 ## Settings and skills
 
-Effective settings resolve built-in defaults → cached server defaults/settings →
-saved local database settings → supported environment overrides → explicit config
-file keys → session edits. Server settings are fetched only after explicit login.
-The editor shows source labels and uses revision checks. Portable server settings
-exclude credentials and local paths. Server defaults cannot supply API keys.
+Effective settings resolve built-in defaults → migrated cached defaults → saved
+local database settings → supported environment overrides → session edits.
+`--config` selects the persistent profile and automatically maintained JSON mirror.
+External edits require reviewed import. The editor uses revision checks.
+Settings → Server controls connection, sync and conflict resolution. Connecting
+enables background reconnection; Disconnect disables it. A serialized three-way
+merge applies server changes to live settings, SQLite and the mirror, preserving
+concurrent local edits and durable offline changes. Shared settings exclude
+credentials, executable hooks, permissions and host-specific bindings.
 Anonymous providers require the explicit `anonymous` setting.
 
 The daemon's `refresh_config` and `refresh_skills` controls update shared state.

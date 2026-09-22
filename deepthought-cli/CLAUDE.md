@@ -31,7 +31,7 @@ service containers in CLI CI.
   with `AltScreen = true`. Route asynchronous chat/model/cron results to their
   owners even when their screen is inactive. Reject stale catalog/turn results.
 - `internal/config` owns defaults, validation, SQLite settings, legacy migration,
-  explicit layer precedence, reviewed discovery, and portable exports.
+  documented layer precedence, reviewed discovery, and portable exports.
 - `internal/credential` owns private process-local resolution and known-value
   redaction. Never place resolved credentials in snapshots, model context, status,
   logs, portable exports, or server settings. No shell sourcing for discovery.

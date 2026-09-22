@@ -2,6 +2,7 @@ package app
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -20,6 +21,7 @@ type ServerSession struct {
 	URL, User, Token string
 	Defaults         map[string]any
 	LoginTime        time.Time
+	ctx              context.Context
 }
 type ServerLoginResultMsg struct {
 	Session *ServerSession
@@ -62,7 +64,11 @@ func LoginToServer(cfg *config.ServerConfig) (user, token string, err error) {
 	return out.User, out.Token, nil
 }
 func (s *ServerSession) do(method, path string, body []byte, out any) error {
-	req, err := http.NewRequest(method, strings.TrimRight(s.URL, "/")+path, bytes.NewReader(body))
+	ctx := s.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	req, err := http.NewRequestWithContext(ctx, method, strings.TrimRight(s.URL, "/")+path, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("invalid server URL")
 	}

@@ -36,8 +36,21 @@ Host type remains unknown unless an allocation or explicit evidence supports a
 classification. Merely finding Slurm commands does not identify a login node.
 
 The sidebar defaults to 44 columns and can be adjusted from 32 to 60 in Settings.
-When space is insufficient, chat retains a compact host/allocation strip. Status
-has the detailed observations and timestamps. Ctrl+P gives access at any width.
+It prioritizes four compact sections:
+
+1. **Host:** the machine running this client, with CPU, RAM, GPU/VRAM and filesystem
+   bars where measurements are available. It does not assume a cluster login node.
+2. **Slurm:** the detected cluster name, a running/pending queue bar, and allocated
+   CPU, GPU and memory versus capacity. These are scheduler allocations.
+3. **Your fairshare:** per-account factor and bar, without queue-position claims.
+4. **Your jobs:** active jobs, elapsed time and pending reasons. A successful empty
+   result hides this section; an unavailable query is labeled.
+
+Providers, skills and context counters no longer occupy sidebar space. Short
+terminals preserve section summaries before adding details. The sidebar shrinks
+to preserve at least 60 chat columns; below that, chat retains a compact
+host/allocation strip. ASCII indicators are available for plain terminals. Status
+has the deeper observations and timestamps. Ctrl+P gives access at any width.
 
 ## Scheduler and refresh discipline
 
@@ -49,6 +62,7 @@ snapshot has a bounded deadline. Manual refresh respects cache intervals.
 
 Queries for jobs and accounts are scoped to the current user. Cluster summaries
 contain resource/partition information, not other researchers' job details.
+Cluster queue totals request only job states, never names, users, IDs or commands.
 Fairshare is a scheduling factor, not an estimated queue position or start time.
 
 A failed controller query preserves the last snapshot with an unavailable/stale

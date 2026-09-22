@@ -16,9 +16,6 @@ func (m *RootModel) showServerSync() {
 	if m.connecting {
 		notice = "Connecting…"
 	}
-	if m.connectionNotice != "" {
-		notice = m.connectionNotice
-	}
 	if m.syncWorker != nil {
 		st := m.syncWorker.Status()
 		notice = st.State
@@ -41,6 +38,9 @@ func (m *RootModel) showServerSync() {
 			}
 			items = append(items, tui.WorkspaceItem{Label: c.Path + " — keep local", Detail: lv, Kind: "resolve-local", ID: strconv.Itoa(i)}, tui.WorkspaceItem{Label: c.Path + " — use server", Detail: rv, Kind: "resolve-remote", ID: strconv.Itoa(i)})
 		}
+	}
+	if m.connectionNotice != "" {
+		notice += " · " + m.connectionNotice
 	}
 	if s := m.deps.Live; s != nil && s.MirrorNotice() != "" {
 		items = append(items, tui.WorkspaceItem{Label: "Config file needs attention", Detail: s.MirrorNotice(), Kind: "settings-tab", ID: "files"})
@@ -75,6 +75,10 @@ func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		m.showServerSync()
 		return m, settingsSyncCmd(m.syncWorker)
 	case "disconnect-server":
+		if m.syncWorker != nil {
+			m.syncWorker.Stop()
+		}
+		m.connecting = false
 		m.server = nil
 		m.syncWorker = nil
 		m.syncBusy = false
