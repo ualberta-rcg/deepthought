@@ -70,7 +70,7 @@ jobs:
             -ldflags="-s -w -X main.buildVersion=${GITHUB_SHA}" \
             -o ../out/deepthought-cli ./cmd/deepthought-cli
           ../out/deepthought-cli --version
-          sha256sum ../out/deepthought-cli > ../out/SHA256SUMS
+          (cd ../out && sha256sum deepthought-cli > SHA256SUMS)
 
       - name: Upload binary artifact
         uses: actions/upload-artifact@v4
