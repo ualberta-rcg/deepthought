@@ -10,18 +10,17 @@ on:
   push:
     branches:
       - main
-      - 'improve/**'
     paths:
       - 'deepthought-cli/**'
       - '.github/workflows/build-cli.yml'
   workflow_dispatch:
-  pull_request:
-    paths:
-      - 'deepthought-cli/**'
-      - '.github/workflows/build-cli.yml'
 
 permissions:
   contents: write
+
+concurrency:
+  group: deepthought-cli-main
+  cancel-in-progress: true
 
 jobs:
   test-and-build:
@@ -48,6 +47,8 @@ jobs:
         run: |
           set -uo pipefail
           cd deepthought-cli
+          mkdir -p ../out
+          export DEEPTHOUGHT_FIXTURE_PATH=../out/sidebar-fixtures.txt
           go test ./... -count=1 2>&1 | tee /tmp/test.log
           status=${PIPESTATUS[0]}
           if [ "$status" -ne 0 ]; then
@@ -63,6 +64,7 @@ jobs:
             done
             exit "$status"
           fi
+          cat ../out/sidebar-fixtures.txt
 
       - name: Race checks
         run: |
@@ -85,7 +87,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: deepthought-cli-${{ github.sha }}
-          path: out/deepthought-cli
+          path: out/
           if-no-files-found: error
 
       - name: Publish to the rolling edge release (curl-able)
@@ -98,3 +100,14 @@ jobs:
           gh release delete edge --yes --cleanup-tag 2>/dev/null || true
           NOTES="Rolling build from main @ ${GITHUB_SHA::7}. One static binary (linux/amd64). Install: curl -L -o deepthought-cli https://github.com/ualberta-rcg/deepthought/releases/download/edge/deepthought-cli && chmod +x deepthought-cli"
           gh release create edge --title "deepthought-cli (edge)" --notes "$NOTES" --prerelease ../out/deepthought-cli ../out/SHA256SUMS
+
+      - name: Verify published installer version
+        if: github.ref == 'refs/heads/main'
+        run: |
+          set -euo pipefail
+          export DEEPTHOUGHT_INSTALL_DIR="$RUNNER_TEMP/deepthought-install-check"
+          bash install.sh
+          expected="$(out/deepthought-cli --version)"
+          actual="$("$DEEPTHOUGHT_INSTALL_DIR/deepthought-cli" --version)"
+          test "$actual" = "$expected"
+          cmp out/deepthought-cli "$DEEPTHOUGHT_INSTALL_DIR/deepthought-cli"

@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"encoding/csv"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,11 @@ type Storage struct {
 	Total, Used uint64
 }
 type Allocation struct{ ID, CPUs, Memory, GPUs, Nodes string }
+type GPU struct {
+	Name                                       string
+	MemoryTotalMiB, MemoryUsedMiB, Utilization float64
+	MemoryKnown, UtilKnown                     bool
+}
 type Record struct {
 	ID, ClientID, ClusterID, Name, User, OS, Arch, Kind, IdentitySource string
 	CPUs                                                                int
@@ -42,6 +48,7 @@ type Record struct {
 	CPUPercent                                                          float64
 	CPUKnown                                                            bool
 	MemoryKnown                                                         bool
+	GPUs                                                                []GPU
 	Allocation                                                          Allocation
 	Services                                                            []Service
 	Storage                                                             []Storage
@@ -182,6 +189,7 @@ func Collect(ctx context.Context, store Store) Record {
 		cmd.Stderr = io.Discard
 		if cmd.Run() == nil {
 			r.GPU = clean(strings.ReplaceAll(strings.TrimSpace(b.s), "\n", "; "))
+			r.GPUs = parseGPUReadings(b.s)
 		}
 		cancel()
 	}
@@ -202,6 +210,7 @@ func Collect(ctx context.Context, store Store) Record {
 		inventory.CPUPercent, inventory.MemoryUsed = 0, 0
 		inventory.CPUKnown, inventory.MemoryKnown = false, false
 		inventory.Allocation, inventory.GPU, inventory.Storage, inventory.Services = Allocation{}, "", nil, nil
+		inventory.GPUs = nil
 		_ = store.WriteRecord("host", id, inventory)
 		_ = store.WriteRecord("telemetry", id, r)
 		for _, s := range r.Services {
@@ -213,6 +222,28 @@ func Collect(ctx context.Context, store Store) Record {
 }
 
 type limitedWriter struct{ s string }
+
+func parseGPUReadings(raw string) []GPU {
+	rows, err := csv.NewReader(strings.NewReader(raw)).ReadAll()
+	if err != nil {
+		return nil
+	}
+	var out []GPU
+	for _, row := range rows {
+		if len(row) != 4 {
+			continue
+		}
+		g := GPU{Name: clean(strings.TrimSpace(row[0]))}
+		total, e1 := strconv.ParseFloat(strings.TrimSpace(row[1]), 64)
+		used, e2 := strconv.ParseFloat(strings.TrimSpace(row[2]), 64)
+		util, e3 := strconv.ParseFloat(strings.TrimSpace(row[3]), 64)
+		g.MemoryTotalMiB, g.MemoryUsedMiB, g.Utilization = total, used, util
+		g.MemoryKnown = e1 == nil && e2 == nil && total > 0 && used >= 0
+		g.UtilKnown = e3 == nil && util >= 0 && util <= 100
+		out = append(out, g)
+	}
+	return out
+}
 
 func (w *limitedWriter) Write(p []byte) (int, error) {
 	n := len(p)

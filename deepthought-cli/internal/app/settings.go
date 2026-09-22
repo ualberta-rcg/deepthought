@@ -25,14 +25,15 @@ import (
 // change takes effect without a restart. Safe for concurrent use — one
 // instance is shared by every SSH session.
 type Settings struct {
-	local    *config.LocalStore
-	mu       sync.RWMutex
-	cfg      *config.Config
-	path     string
-	pool     *unimatrix.Pool
-	breakers map[string]*providerBreaker
-	revision uint64
-	diskHash [32]byte
+	local       *config.LocalStore
+	mu          sync.RWMutex
+	cfg         *config.Config
+	path        string
+	pool        *unimatrix.Pool
+	breakers    map[string]*providerBreaker
+	revision    uint64
+	diskHash    [32]byte
+	syncWorkers map[string]*SettingsSync
 
 	// OnSave, when set, fires (async, goroutine) after a successful local
 	// persist — the server-login hook that pushes edits to the roving

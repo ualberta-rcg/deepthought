@@ -281,29 +281,32 @@ func Detected() bool {
 // the background and refreshed every few minutes so opening the page never
 // blocks on a query.
 type ClusterSnapshot struct {
-	FetchedAt      time.Time
-	NodesTotal     int
-	NodesUp        int
-	CPUAlloc       int
-	CPUIdle        int
-	CPUTotal       int
-	JobsRunning    int
-	JobsPending    int
-	GPUs           int     // total GPUs across nodes
-	GPUsUsed       int     // allocated/used GPUs
-	GPUUsable      int     // GPUs schedulable RIGHT NOW (host feasibility: free CPU+mem too)
-	GPUType        string  // e.g. "l40s"
-	MemTotalGB     int     // total cluster memory (sum of per-node MB → GB)
-	MemAllocGB     int     // allocated memory GB
-	Fairshare      float64 // user's fairshare on their default account (0–1)
-	DefaultAccount string
-	FairshareRows  []FairshareRow // per-account fairshare + LevelFS (all the user's accounts)
-	Storage        []string       // raw diskusage_report rows (already column-aligned)
-	StorageRows    []StorageRow   // parsed home/scratch/project usage for bars
-	Partitions     []PartitionRow
-	YourJobs       []Job
-	JobsKnown      bool
-	Err            error
+	ClusterName                                 string
+	ClusterRunning, ClusterPending              int
+	QueueKnown, GPUAllocKnown, MemoryAllocKnown bool
+	FetchedAt                                   time.Time
+	NodesTotal                                  int
+	NodesUp                                     int
+	CPUAlloc                                    int
+	CPUIdle                                     int
+	CPUTotal                                    int
+	JobsRunning                                 int
+	JobsPending                                 int
+	GPUs                                        int     // total GPUs across nodes
+	GPUsUsed                                    int     // allocated/used GPUs
+	GPUUsable                                   int     // GPUs schedulable RIGHT NOW (host feasibility: free CPU+mem too)
+	GPUType                                     string  // e.g. "l40s"
+	MemTotalGB                                  int     // total cluster memory (sum of per-node MB → GB)
+	MemAllocGB                                  int     // allocated memory GB
+	Fairshare                                   float64 // user's fairshare on their default account (0–1)
+	DefaultAccount                              string
+	FairshareRows                               []FairshareRow // per-account fairshare + LevelFS (all the user's accounts)
+	Storage                                     []string       // raw diskusage_report rows (already column-aligned)
+	StorageRows                                 []StorageRow   // parsed home/scratch/project usage for bars
+	Partitions                                  []PartitionRow
+	YourJobs                                    []Job
+	JobsKnown                                   bool
+	Err                                         error
 }
 
 // PartitionRow is one Slurm partition line.
@@ -438,6 +441,7 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 	// GPUs + memory. Prefer long format with GresUsed (Alliance reports
 	// "gpu:l40s:1(IDX:1)" there); fall back to %G|%m|%e / %G|%m.
 	s.gatherGPUsAndMem(ctx, runner)
+	s.gatherOverview(ctx, runner)
 
 	// GPU "usable" (host feasibility): a free GPU only counts if its node also
 	// has the CPU and memory to back it. Computed per node from scontrol.
@@ -494,6 +498,7 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 	raw, err := runner.Run(ctx, "sinfo", "-h", "-O", "NodeList:80,Gres:80,GresUsed:80,Memory:12,AllocMem:12", "--Node")
 	seen := map[string]bool{}
 	if err == nil && strings.TrimSpace(string(raw)) != "" {
+		s.GPUAllocKnown, s.MemoryAllocKnown = true, true
 		var memMB, allocMB int
 		for _, line := range strings.Split(string(raw), "\n") {
 			line = strings.TrimSpace(line)
@@ -522,18 +527,26 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 			}
 			if used, ok := parseGPUsUsed(usedStr); ok {
 				s.GPUsUsed += used
-			} else if used, ok := parseGPUsUsed(gres); ok {
-				s.GPUsUsed += used
+			} else if n, _, ok := parseGPUs(gres); ok && n > 0 {
+				s.GPUAllocKnown = false
 			}
 			if len(cols) > 2 {
 				memMB += atoi(strings.TrimSuffix(cols[2], "+"))
 			}
 			if len(cols) > 3 {
-				allocMB += atoi(strings.TrimSuffix(cols[3], "+"))
+				value, e := strconv.Atoi(strings.TrimSuffix(cols[3], "+"))
+				if e != nil || value < 0 {
+					s.MemoryAllocKnown = false
+				} else {
+					allocMB += value
+				}
 			}
 		}
 		s.MemTotalGB = memMB / 1024
 		s.MemAllocGB = allocMB / 1024
+		if len(seen) == 0 {
+			s.GPUAllocKnown, s.MemoryAllocKnown = false, false
+		}
 		return
 	}
 
@@ -545,7 +558,7 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 	if err != nil {
 		return
 	}
-	var memMB, allocMB int
+	var memMB int
 	for _, line := range strings.Split(string(raw), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" {
@@ -573,12 +586,10 @@ func (s *ClusterSnapshot) gatherGPUsAndMem(ctx context.Context, runner Runner) {
 		if len(parts) > 1 {
 			memMB += atoi(strings.TrimSuffix(parts[1], "+"))
 		}
-		if len(parts) > 2 {
-			allocMB += atoi(strings.TrimSuffix(parts[2], "+"))
-		}
 	}
 	s.MemTotalGB = memMB / 1024
-	s.MemAllocGB = allocMB / 1024
+	// %e reports free physical memory, not scheduler allocation.
+	s.MemoryAllocKnown, s.GPUAllocKnown = false, false
 }
 
 // splitSinfoCols splits an sinfo -O line on runs of 2+ spaces.

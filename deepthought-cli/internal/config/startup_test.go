@@ -145,8 +145,8 @@ func TestLocalPrecedenceAndSessionOverride(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer cfg.Local.Close()
-	if cfg.Effort != "low" || cfg.Source("effort") != "explicit file" {
-		t.Fatal("explicit file must beat environment")
+	if cfg.Effort != "high" || cfg.Source("effort") != "environment" {
+		t.Fatal("environment override must be temporary above saved profile")
 	}
 	f := cfg.File
 	f.Effort = "medium"

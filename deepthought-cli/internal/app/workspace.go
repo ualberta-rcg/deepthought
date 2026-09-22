@@ -62,6 +62,7 @@ func (m *RootModel) showMenu() {
 		{Label: "Sidebar visibility", Kind: "action", ID: string(keybindings.Sidebar)},
 		{Label: "Status", Kind: "action", ID: string(keybindings.Diagnostics)},
 		{Label: "Hosts and services", Kind: "hosts"},
+		{Label: "Server connection and synchronization", Kind: "server-sync"},
 		{Label: "Refresh scientific endpoints", Detail: "Connect to explicitly configured tool servers", Kind: "tools"},
 		{Label: "Help / install on another machine", Kind: "help"},
 	}
@@ -91,6 +92,9 @@ func (m *RootModel) showCandidates() {
 func (m RootModel) discoverCmd(auto bool) tea.Cmd {
 	store := m.localStore()
 	return func() tea.Msg {
+		if auto && m.deps.Live != nil && len(m.deps.Live.Snapshot().Providers) > 0 {
+			return candidatesMsg{Auto: true, Skip: true}
+		}
 		if auto && store != nil {
 			id, _ := host.ID()
 			var done bool
@@ -157,6 +161,8 @@ func (m *RootModel) showHosts() {
 
 func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	switch a.Kind {
+	case "server-sync", "connect-server", "disconnect-server", "sync-now", "resolve-local", "resolve-remote", "retry-mirror":
+		return m.syncAction(a)
 	case "menu":
 		m.showMenu()
 	case "home":
@@ -282,11 +288,7 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	case "import-settings":
 		m.showWorkspace("Import settings", "Import replaces saved local settings; original file is retained. Credentials stay local.", []tui.WorkspaceItem{{Label: "Import " + m.deps.Live.Path(), Kind: "confirm-import"}, {Label: "Cancel", Kind: "home"}})
 	case "confirm-import":
-		cfg, err := config.Load(m.deps.Live.Path())
-		if err == nil {
-			cfg.Revision = m.deps.Live.Snapshot().Revision
-			err = m.deps.Live.Save(cfg.File)
-		}
+		err := m.deps.Live.ImportFile()
 		if err != nil {
 			m.workspace.Notice = "Import failed; existing settings retained."
 		} else {

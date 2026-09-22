@@ -20,10 +20,11 @@ import (
 // LocalStore shares history.db, but uses independent versioned settings and
 // inventory tables. A settings profile is scoped to its original config path.
 type LocalStore struct {
-	db                *sql.DB
-	path, profile     string
-	mu                sync.Mutex
-	explicit, session map[string]any
+	db            *sql.DB
+	path, profile string
+	mu            sync.Mutex
+	session       map[string]any
+	mirrorNotice  string
 }
 
 func OpenLocal(path string, explicit bool) (*Config, error) {
@@ -103,26 +104,10 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 		db.Close()
 		return nil, err
 	}
-	if explicit {
-		if f, e := Load(path); e == nil {
-			sf := f.File
-			if e = s.separateSecrets(&sf); e != nil {
-				db.Close()
-				return nil, e
-			}
-			raw, readErr := os.ReadFile(path)
-			var selected map[string]any
-			if readErr == nil && json.Unmarshal(raw, &selected) == nil {
-				if _, legacy := selected["provider"]; legacy {
-					s.explicit = fileMap(sf) // v1 normalization changes field names
-				} else {
-					s.explicit = explicitFields(selected, fileMap(sf))
-				}
-			}
-		} else {
-			notice = "Explicit configuration is invalid; using saved settings. Original preserved."
-		}
-	}
+	// --config selects a persistent profile, not a frozen override of future edits.
+	_ = explicit
+	s.initMirror(notice != "")
+	s.RepairMirror()
 	cfg, err := s.Load()
 	if err != nil {
 		db.Close()
@@ -130,6 +115,9 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 	}
 	if notice != "" {
 		cfg.StartupNotice = notice
+	}
+	if s.MirrorNotice() != "" {
+		cfg.StartupNotice = s.MirrorNotice()
 	}
 	return cfg, nil
 }
@@ -199,7 +187,7 @@ func (s *LocalStore) loadLocked() (*Config, error) {
 		return nil, err
 	}
 	var server map[string]any
-	_ = s.ReadRecord("server-defaults", s.profile, &server)
+	_ = s.ReadRecord("fleet-defaults", s.profile, &server)
 	cfg, err := ResolveLayers(server, local, nil)
 	if err != nil {
 		return nil, err
@@ -213,8 +201,6 @@ func (s *LocalStore) loadLocked() (*Config, error) {
 	}
 	mergeLayer(merged, env)
 	markOrigins(cfg.Origins, "", env, "environment")
-	mergeLayer(merged, s.explicit)
-	markOrigins(cfg.Origins, "", s.explicit, "explicit file")
 	mergeLayer(merged, s.session)
 	markOrigins(cfg.Origins, "", s.session, "session")
 	b, _ := json.Marshal(merged)
@@ -233,6 +219,12 @@ func (s *LocalStore) loadLocked() (*Config, error) {
 }
 
 func (s *LocalStore) Save(before, after File) (*Config, error) {
+	return s.save(before, after, true)
+}
+func (s *LocalStore) SaveSynced(before, after File) (*Config, error) {
+	return s.save(before, after, false)
+}
+func (s *LocalStore) save(before, after File, sessionEdit bool) (*Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if _, err := Validate(after); err != nil {
@@ -264,7 +256,10 @@ func (s *LocalStore) Save(before, after File) (*Config, error) {
 		return nil, fmt.Errorf("settings changed; reload before saving")
 	}
 	// An edit of an externally overridden value is also a session override.
-	patchDelta(s.session, fileMap(before), fileMap(after))
+	if sessionEdit && before.Effort != after.Effort && os.Getenv("DEEPTHOUGHT_EFFORT") != "" {
+		s.session["effort"] = after.Effort
+	}
+	s.repairMirrorLocked()
 	return s.loadLocked()
 }
 

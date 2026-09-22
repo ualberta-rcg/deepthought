@@ -30,6 +30,9 @@ identifiers must not reintroduce them.
 
 ## Working agreement
 
+- **Main only. Never create additional branches.** Make changes directly on
+  `main`; preserve work there before removing any old temporary branch. No PR workflow.
+
 - Update `CLAUDE.md` files and `docs/` as decisions land. Don't silently change
   recorded direction — if a north star shifts, edit the file to match and say so.
 - No secrets in the tree: API keys use explicit environment references or private
@@ -64,9 +67,9 @@ identifiers must not reintroduce them.
 
 ## Build & run (deepthought-cli)
 
-Edit → push implementation branch → GitHub Actions. The `improve/**` and PR
-lanes vet, test, race-check and build without publishing; only a push to main
-publishes the rolling CLI release. The server has its own module and workflow.
+Edit on main → push main → GitHub Actions. Vet, tests, race checks and the
+static build must pass before publishing the rolling CLI release. The server
+has its own module and workflow.
 
 Run `deepthought-cli` standalone, or serve the TUI over SSH with
 `deepthought-cli --sub-etha :2323`. Inference configuration is optional at startup.

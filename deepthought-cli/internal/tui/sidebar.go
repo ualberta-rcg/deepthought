@@ -2,196 +2,210 @@ package tui
 
 import (
 	"fmt"
+	"math"
+	"os"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
-
 	"deepthought-cli/internal/slurm"
 )
 
-// SidebarWidth is the live info column's width on the chat screen.
 const SidebarWidth = 44
 
-// RenderSidebarGutter paints the 1-column divider between the chat and the
-// live column, from the palette (a retheme touches only styles.go).
 func RenderSidebarGutter(h int) string {
 	if h < 1 {
 		return ""
 	}
-	// h LINES of one column each — the old horizontal repeat ("│"×h on one
-	// row) made the join wider than the terminal on every line, wrapping the
-	// screen and collapsing the sidebar to a sliver.
 	return lipgloss.NewStyle().Foreground(colBarBg).Render(strings.TrimSuffix(strings.Repeat("│\n", h), "\n"))
 }
 
-// SidebarData is everything the sidebar renders; the root caches it from the
-// existing ticks (clock, cluster poll, session usage) — no new timers.
 type SidebarData struct {
-	Clock         time.Time
-	Cluster       slurm.ClusterSnapshot
-	ClusterOK     bool    // Slurm snapshot gathered?
-	Env           EnvInfo // host descriptor (always rendered)
-	SessionIn     int
-	SessionOut    int
-	LastContext   int
-	ContextWindow int
-	Providers     []ProviderRow
-	Skills        []string // discovered skill pack names
+	Clock                                             time.Time
+	Cluster                                           slurm.ClusterSnapshot
+	ClusterOK                                         bool
+	Env                                               EnvInfo
+	SessionIn, SessionOut, LastContext, ContextWindow int
+	Providers                                         []ProviderRow
+	Skills                                            []string
+	ASCII                                             bool
+}
+type sidebarBlock struct {
+	title   string
+	rows    []string
+	minimum int
 }
 
-// RenderSidebar paints the compact live column: cluster one-liner + GPU bar,
-// your jobs, the context meter, provider chips, and a dim "F12 for detail"
-// footer. Everything is clipped to w — the padBlock safety net keeps the
-// column an exact rectangle.
+func sidebarMeter(label string, value, total float64, known bool, suffix string, w int, ascii bool) string {
+	if !known || total <= 0 || math.IsNaN(value) {
+		return fmt.Sprintf("%-4s --", label)
+	}
+	fraction := math.Max(0, math.Min(1, value/total))
+	n := max(4, min(12, w-22))
+	filled := int(math.Round(fraction * float64(n)))
+	full, empty := "█", "░"
+	if ascii {
+		full, empty = "#", "-"
+	}
+	col := colSuccess
+	if label == "" {
+		col = colPrimary
+	} else {
+		if fraction >= .85 {
+			col = colWarning
+		}
+		if fraction >= .95 {
+			col = colDanger
+		}
+	}
+	bar := lipgloss.NewStyle().Foreground(col).Render(strings.Repeat(full, filled) + strings.Repeat(empty, n-filled))
+	return fmt.Sprintf("%-4s %s %s", label, bar, suffix)
+}
+func sidebarAge(t, now time.Time, limit time.Duration) string {
+	if t.IsZero() {
+		return "unknown"
+	}
+	age := now.Sub(t)
+	if age < 0 {
+		age = 0
+	}
+	if age > limit {
+		return "stale"
+	}
+	if age < time.Minute {
+		return fmt.Sprintf("%ds", int(age.Seconds()))
+	}
+	return fmt.Sprintf("%dm", int(age.Minutes()))
+}
 func RenderSidebar(d SidebarData, w, h int) string {
 	if w < 10 || h < 1 {
 		return ""
 	}
-	var secs []string
-
-	// » Host — always (the descriptor's compact render).
-	e := d.Env
-	hostRows := []string{clipLine(" "+orDefault(e.ShortName, e.Host), w)}
-	if e.User != "" {
-		hostRows = append(hostRows, clipLine(" user "+e.User, w))
+	ascii := d.ASCII || os.Getenv("TERM") == "dumb"
+	now := d.Clock
+	if now.IsZero() {
+		now = time.Now()
 	}
-	if e.OSName != "" {
-		hostRows = append(hostRows, clipLine(" "+e.OSName, w))
+	r, c := d.Env.Observation, d.Cluster
+	name := orDefault(r.Name, orDefault(d.Env.ShortName, orDefault(d.Env.Host, "local host")))
+	host := sidebarBlock{title: "Host · " + name, minimum: 2, rows: []string{
+		sidebarMeter("CPU", r.CPUPercent, 100, r.CPUKnown, fmt.Sprintf("%.0f%%", r.CPUPercent), w, ascii),
+		sidebarMeter("RAM", float64(r.MemoryUsed), float64(r.MemoryTotal), r.MemoryKnown, fmt.Sprintf("%d/%d GiB", r.MemoryUsed>>30, r.MemoryTotal>>30), w, ascii),
+	}}
+	if len(r.GPUs) > 0 {
+		known := true
+		util := 0.0
+		used, total := 0.0, 0.0
+		memoryKnown := true
+		for _, g := range r.GPUs {
+			known = known && g.UtilKnown
+			memoryKnown = memoryKnown && g.MemoryKnown
+			util += g.Utilization
+			used += g.MemoryUsedMiB
+			total += g.MemoryTotalMiB
+		}
+		util /= float64(len(r.GPUs))
+		host.rows = append(host.rows, sidebarMeter("GPU", util, 100, known, fmt.Sprintf("%.0f%% · %d GPU", util, len(r.GPUs)), w, ascii), sidebarMeter("VRAM", used, total, memoryKnown, fmt.Sprintf("%.0f/%.0f GiB", used/1024, total/1024), w, ascii))
 	}
-	if e.Kernel != "" {
-		spec := e.Kernel
-		if e.Arch != "" {
-			spec += " " + e.Arch
-		}
-		if e.CPUs > 0 {
-			spec += fmt.Sprintf(" · %dc", e.CPUs)
-		}
-		hostRows = append(hostRows, clipLine(" "+spec, w))
+	if r.Allocation.ID != "" {
+		host.rows = append(host.rows, "Job "+r.Allocation.ID+" · "+r.Allocation.CPUs+" CPUs · "+r.Allocation.Memory)
 	}
-	r := e.Observation
-	if !r.CollectedAt.IsZero() {
-		hostRows = append(hostRows, clipLine(" "+r.Kind+" · "+r.CollectedAt.Format("15:04:05"), w))
-		if r.Stale() {
-			hostRows = append(hostRows, " stale observations")
-		}
-		if r.MemoryKnown {
-			hostRows = append(hostRows, clipLine(fmt.Sprintf(" RAM %s %d/%d GiB", healthBar(float64(r.MemoryUsed)/float64(r.MemoryTotal), max(4, w-24)), r.MemoryUsed>>30, r.MemoryTotal>>30), w))
-		}
-		if r.CPUKnown {
-			hostRows = append(hostRows, clipLine(fmt.Sprintf(" CPU %s %.0f%% host", healthBar(r.CPUPercent/100, max(4, w-20)), r.CPUPercent), w))
-		}
-		if r.Allocation.ID != "" {
-			hostRows = append(hostRows, clipLine(" job "+r.Allocation.ID+" · "+r.Allocation.CPUs+" CPUs", w), clipLine(" allocation "+r.Allocation.Memory, w))
-		}
+	if len(r.Storage) > 0 {
+		s := r.Storage[0]
+		host.rows = append(host.rows, sidebarMeter("Disk", float64(s.Used), float64(s.Total), s.Total > 0, fmt.Sprintf("%.0f%% fs", 100*float64(s.Used)/float64(max(uint64(1), s.Total))), w, ascii))
 	}
-	secs = append(secs, Section{Title: "Host", Rows: hostRows}.Render()...)
-	if len(r.Services) > 0 {
-		rows := []string{}
-		for _, s := range r.Services {
-			if s.Availability != "not detected" {
-				rows = append(rows, clipLine(" "+s.Kind+" · "+s.Availability, w))
+	host.title += " · " + sidebarAge(r.CollectedAt, now, 90*time.Second)
+	blocks := []sidebarBlock{host}
+	if d.Env.Slurm || d.ClusterOK {
+		title := "Slurm · " + clipLine(orDefault(c.ClusterName, "unknown cluster"), max(6, w-24)) + " · alloc"
+		if c.Err != nil {
+			title += " · unavailable"
+		} else {
+			title += " · " + sidebarAge(c.FetchedAt, now, 15*time.Minute)
+		}
+		queue := "Jobs --"
+		if c.QueueKnown {
+			total := c.ClusterRunning + c.ClusterPending
+			if total == 0 {
+				queue = "Jobs 0 running · 0 pending"
+			} else {
+				n := max(4, min(12, w-22))
+				running := int(math.Round(float64(c.ClusterRunning) / float64(total) * float64(n)))
+				rchar, pchar := "█", "░"
+				if ascii {
+					rchar, pchar = "R", "P"
+				}
+				queue = lipgloss.NewStyle().Foreground(colSuccess).Render(strings.Repeat(rchar, running)) + lipgloss.NewStyle().Foreground(colWarning).Render(strings.Repeat(pchar, n-running)) + fmt.Sprintf(" %d run / %d pend", c.ClusterRunning, c.ClusterPending)
 			}
 		}
-		secs = append(secs, Section{Title: "Services", Rows: rows}.Render()...)
-	}
-
-	// » Cluster — live when polled.
-	if d.ClusterOK && d.Cluster.GPUs > 0 {
-		frac := frac01(float64(d.Cluster.GPUsUsed), float64(d.Cluster.GPUs))
-		gpu := fmt.Sprintf(" GPU allocation %s %d%%", healthBar(frac, max(4, w-25)), fracPct(frac))
-		rows := []string{clipLine(gpu, w)}
-		if typ := d.Cluster.GPUType; typ != "" {
-			rows = append(rows, clipLine(fmt.Sprintf(" %s · %d run", typ, d.Cluster.JobsRunning), w))
-		}
-		secs = append(secs, Section{
-			Title: "Cluster",
-			Extra: fmt.Sprintf("%d run", d.Cluster.JobsRunning),
-			Rows:  rows,
-		}.Render()...)
-	}
-
-	// » Fairshare — when Slurm reports rows.
-	if len(d.Cluster.FairshareRows) > 0 {
-		rows := []string{}
-		for _, r := range d.Cluster.FairshareRows {
-			label, p := slurm.FairshareTier(r.Fairshare)
-			col, bold := tierColor(label)
-			rows = append(rows, clipLine(fmt.Sprintf(" %s %s %s %s",
-				truncatePad(r.Account, 10),
-				barFill(p, 10, col, bold),
-				lipgloss.NewStyle().Foreground(col).Bold(bold).Render(truncatePad(label, 9)),
-				fmt.Sprintf("%.2f", r.Fairshare)), w))
-		}
-		rows = append(rows, clipLine(" scheduling factor, not queue position", w))
-		secs = append(secs, Section{Title: "Fairshare", Rows: rows}.Render()...)
-	}
-
-	// » Your jobs
-	nr, np := 0, 0
-	for _, j := range d.Cluster.YourJobs {
-		switch j.State {
-		case "RUNNING":
-			nr++
-		case "PENDING":
-			np++
-		}
-	}
-	jobsRow := fmt.Sprintf(" %d running · %d pending", nr, np)
-	if !d.Cluster.JobsKnown {
-		jobsRow = " job query unavailable"
-	}
-	if e.Slurm || d.ClusterOK {
-		rows := []string{clipLine(jobsRow, w)}
-		if d.Cluster.Err != nil {
-			rows = append(rows, " scheduler unavailable / stale")
-		}
-		for i, j := range d.Cluster.YourJobs {
-			if i >= 3 {
-				break
-			}
-			rows = append(rows, clipLine(" "+j.ID+" "+j.Name+" "+j.State+" "+j.Elapsed, w))
-			if j.State == "PENDING" {
-				rows = append(rows, clipLine(" "+j.Reason, w))
+		cluster := sidebarBlock{title: title, minimum: 1, rows: []string{queue,
+			sidebarMeter("CPU", float64(c.CPUAlloc), float64(c.CPUTotal), c.CPUTotal > 0, fmt.Sprintf("%d/%d", c.CPUAlloc, c.CPUTotal), w, ascii),
+			sidebarMeter("GPU", float64(c.GPUsUsed), float64(c.GPUs), c.GPUAllocKnown, fmt.Sprintf("%d/%d", c.GPUsUsed, c.GPUs), w, ascii),
+			sidebarMeter("RAM", float64(c.MemAllocGB), float64(c.MemTotalGB), c.MemoryAllocKnown, fmt.Sprintf("%d/%d GiB", c.MemAllocGB, c.MemTotalGB), w, ascii),
+		}}
+		blocks = append(blocks, cluster)
+		fair := sidebarBlock{title: "Your fairshare", minimum: 1, rows: []string{"unavailable"}}
+		if len(c.FairshareRows) > 0 {
+			fair.rows = nil
+			for _, f := range c.FairshareRows {
+				fair.rows = append(fair.rows, sidebarMeter("", f.Fairshare, 1, true, fmt.Sprintf("%.2f %s", f.Fairshare, f.Account), w, ascii))
 			}
 		}
-		secs = append(secs, Section{Title: "Your jobs", Rows: rows}.Render()...)
-	}
-
-	// » Filesystem capacity — one compact line per filesystem when known.
-	if len(d.Cluster.StorageRows) > 0 {
-		rows := []string{}
-		for _, r := range d.Cluster.StorageRows {
-			rows = append(rows, clipLine(fmt.Sprintf(" %s %s/%s %d%%", truncatePad(r.Label, 8), r.Used, r.Size, r.Pct), w))
+		blocks = append(blocks, fair)
+		if !c.JobsKnown || len(c.YourJobs) > 0 {
+			jobs := sidebarBlock{title: "Your jobs", minimum: 1, rows: []string{fmt.Sprintf("%d running · %d pending", c.JobsRunning, c.JobsPending)}}
+			if !c.JobsKnown {
+				jobs.rows = []string{"unavailable"}
+			}
+			for _, j := range c.YourJobs {
+				state := j.State
+				detail := j.Elapsed
+				if state == "PENDING" {
+					detail = j.Reason
+				}
+				jobs.rows = append(jobs.rows, j.ID+" "+j.Name+" "+state+" "+detail)
+			}
+			blocks = append(blocks, jobs)
 		}
-		secs = append(secs, Section{Title: "Filesystem capacity", Rows: rows}.Render()...)
 	}
-
-	// » Context
-	ctx := "  " + contextMeter(d.LastContext, d.ContextWindow)
-	secs = append(secs, Section{Title: "Context", Rows: []string{clipLine(ctx, w)}}.Render()...)
-
-	// » Providers
-	prow := "  "
-	for i, p := range d.Providers {
-		if i > 0 {
-			prow += " "
+	// Reserve one summary per section before distributing optional details. Jobs
+	// never disappear just because the host or cluster has many resource rows.
+	counts := make([]int, len(blocks))
+	remaining := h - 1
+	for i, b := range blocks {
+		if remaining < 2 {
+			break
 		}
-		prow += p.Name + " " + stateChip(p.State)
+		counts[i] = 1 + min(b.minimum, remaining-1)
+		remaining -= counts[i]
 	}
-	secs = append(secs, Section{Title: "Providers", Rows: []string{clipLine(prow, w)}}.Render()...)
-
-	// » Skills — the discovered packs.
-	if len(d.Skills) > 0 {
-		rows := []string{}
-		for _, name := range d.Skills {
-			rows = append(rows, clipLine(" "+name, w))
+	// Cluster allocations, host detail, job rows, then additional accounts.
+	order := []int{1, 0, 3, 2}
+	for _, i := range order {
+		if i >= len(blocks) || counts[i] == 0 {
+			continue
 		}
-		secs = append(secs, Section{Title: "Skills", Extra: fmt.Sprintf("%d packs", len(d.Skills)), Rows: rows}.Render()...)
+		extra := min(remaining, len(blocks[i].rows)+1-counts[i])
+		counts[i] += extra
+		remaining -= extra
 	}
-
-	secs = append(secs, styleSettingsFoot.Render("  Ctrl+P → Status for detail"))
-	// Exactly w wide (the caller budgets w + a 1-col gutter — the old extra
-	// PaddingLeft made every join one column wider than the terminal).
-	return padBlock(strings.Join(secs, "\n"), w, h)
+	var lines []string
+	for i, b := range blocks {
+		if counts[i] == 0 {
+			continue
+		}
+		lines = append(lines, styleSettingsTitle.Render(clipLine(b.title, w)))
+		for _, line := range b.rows[:min(len(b.rows), counts[i]-1)] {
+			lines = append(lines, clipLine(line, w))
+		}
+	}
+	if len(lines) < h {
+		lines = append(lines, styleSettingsFoot.Render("Ctrl+P → Status"))
+	}
+	if ascii {
+		for i := range lines {
+			lines[i] = strings.NewReplacer("·", "|", "→", ">").Replace(lines[i])
+		}
+	}
+	return padBlock(strings.Join(lines, "\n"), w, h)
 }

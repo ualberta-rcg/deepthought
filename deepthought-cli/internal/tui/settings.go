@@ -289,11 +289,17 @@ func (m SettingsModel) activate() (SettingsModel, tea.Cmd) {
 	case "keyboard":
 		return m.openScalarField()
 	case "server":
+		if m.cursor >= len(m.fieldDefs()) {
+			return m, func() tea.Msg { return WorkspaceAction{Kind: "server-sync"} }
+		}
 		return m.openScalarField()
 	case "files":
 		kind := "export-settings"
 		if m.cursor == 1 {
 			kind = "import-settings"
+		}
+		if m.cursor == 2 {
+			kind = "retry-mirror"
 		}
 		return m, func() tea.Msg { return WorkspaceAction{Kind: kind} }
 	case "overview", "system", "skills", "tools":
@@ -723,8 +729,10 @@ func (m SettingsModel) rowCount() int {
 	case "setup", "models", "hosts":
 		return 1
 	case "files":
-		return 2
-	case "keyboard", "server":
+		return 3
+	case "server":
+		return len(m.fieldDefs()) + 1
+	case "keyboard":
 		return len(m.fieldDefs())
 	case "overview":
 		return len(m.overviewRows())
@@ -796,8 +804,14 @@ func (m SettingsModel) rows() []string {
 	case "hosts":
 		return []string{m.mark(0, "Open host and service inventory")}
 	case "files":
-		return []string{m.mark(0, "Export portable settings to config.export.json"), m.mark(1, "Review import from the original config.json / --config file")}
-	case "keyboard", "server":
+		rows := []string{m.mark(0, "Export portable settings"), m.mark(1, "Review import of external config file changes"), m.mark(2, "Retry saving the local config file")}
+		if s, ok := m.store.(interface{ MirrorNotice() string }); ok && s.MirrorNotice() != "" {
+			rows = append(rows, s.MirrorNotice())
+		}
+		return rows
+	case "server":
+		return append(m.fieldRows(), m.mark(len(m.fieldDefs()), "Connection / Sync now / conflicts"))
+	case "keyboard":
 		return m.fieldRows()
 	case "overview":
 		return m.overviewRows()

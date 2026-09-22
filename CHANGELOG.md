@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-22 · deepthought-cli — main-only delivery, durable settings sync and visual host sidebar
+- Preserve the earlier implementation on main and remove its temporary branch; record the user's permanent main-only workflow and publish only tested main builds.
+- Maintain a private config mirror from SQLite, recover missing files, protect external edits, and add serialized two-way server synchronization with durable baselines, conflict choices, visible status and pending changes. Separate credentials and transient overrides from shared settings.
+- Replace sidebar clutter with Host, Slurm cluster allocation/queue bars, user fairshare and active jobs. Add named cluster observations, aggregate state-only queue counts, accurate memory-allocation availability, host GPU meters and height-aware summaries.
+- Files: CLI config/app/TUI/host/Slurm implementation and regressions; main workflow; CLAUDE documentation and setup/host guides.
+- Verification: gofmt and git diff --check locally. Synthetic mirror, merge, two-client/offline/conflict/in-flight-edit and visual fixture regressions added; full vet/tests/race/static build and installer verification run in GitHub Actions after this commit.
+
 ## 2026-09-22 · deepthought-cli, docs — complete manual model setup and final validation
 - Add a visible manual model-ID entry for providers without discovery; retain unknown capabilities for explicit editing. Expose the remote wire ID, fix catalog error propagation, and point assistant guidance to Settings.
 - Bound private credential-file reads and finish scheduler availability wording and operational documentation.

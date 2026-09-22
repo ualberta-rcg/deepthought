@@ -23,10 +23,7 @@ import (
 	"deepthought-cli/internal/unimatrix"
 )
 
-// DefaultBaseURL is the Vulcan KServe inference gateway, with the /serving/api/v1
-// prefix baked in so callers append "/chat/completions" directly. (The gateway's
-// per-model metadata advertises a bare /v1/... path that 404s off the host root —
-// the real prefix is /serving/api. See memory: vulcan-inference-endpoint.)
+// DefaultBaseURL is Aleph's OpenAI-compatible endpoint.
 const DefaultBaseURL = "https://inference.vulcan.alliancecan.ca/v1"
 
 // DefaultModelID is used when nothing assigns the chat role.

@@ -19,8 +19,9 @@ This is a shared Vulcan login node. Edit and format here; all vet, test, race an
 build work runs in GitHub Actions. No login-node compilation or Slurm/CVMFS builds
 for this repository. The server deployment is Kubernetes-backed; any manual server
 operation is limited to the `deepthought` namespace. No deployment is implied by
-editing the CLI. CI builds a static Linux/amd64 binary; feature branches do not
-publish the rolling release. There are no database service containers in CLI CI.
+editing the CLI. Work directly on main; never create branches. CI builds and
+publishes a static Linux/amd64 binary after verification. There are no database
+service containers in CLI CI.
 
 ## Current architecture
 
@@ -62,11 +63,14 @@ returns through overlays/screens, and quitting remains `/quit` or two Ctrl+C.
 Inline text editors own their keystrokes. Operational jobs, plans, cron, status,
 context, and host views belong in navigation rather than configuration forms.
 
-Mutable settings use revision-checked SQLite writes. Preserve and import existing
-JSON once, retain its private backup, and separate literal credentials into a
-0600 secrets.env file. Explicit import/export is available in Settings. Precedence
-is session edits → explicit --config keys → supported application environment →
-saved local settings → cached server settings/defaults → empty built-in defaults.
+Mutable settings use revision-checked SQLite writes and an atomic config.json
+mirror. Preserve original JSON on migration and keep credentials in 0600 secrets.env.
+--config selects the file/profile; it is not an immutable override of saved edits.
+External file changes require reviewed import. Precedence is session choices →
+supported environment overrides → saved settings → fleet defaults → built-ins.
+Portable server settings are merged against a durable baseline and applied to the
+database, mirror and live config through one save path. Do not reintroduce
+fire-and-forget uploads or a permanently lower-priority user-settings cache.
 Credential-source choice is explicit and separate from ordinary settings layers.
 Concurrent stale revisions must not overwrite newer settings.
 

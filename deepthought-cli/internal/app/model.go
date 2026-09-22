@@ -96,7 +96,11 @@ type RootModel struct {
 	clusterGeneration               uint64
 	splash                          tui.SplashModel
 	server                          *ServerSession // non-nil after a successful splash server login
-	wasBusy                         bool           // last observed chat busy state (turn-end push edge)
+	syncWorker                      *SettingsSync
+	syncBusy, connecting            bool
+	connectionNotice                string
+	lastMirrorRetry                 time.Time
+	wasBusy                         bool // last observed chat busy state (turn-end push edge)
 	chat                            tui.ChatModel
 	continue_                       tui.ContinueModel
 	settings                        tui.SettingsModel
@@ -381,6 +385,13 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.discoveryBusy = true
 		cmds := []tea.Cmd{m.discoverCmd(true), m.collectHostCmd()}
+		if s := m.localStore(); s != nil {
+			var auto bool
+			if s.ReadRecord("server-autoconnect", s.ProfileKey(), &auto) == nil && auto {
+				m.connecting = true
+				cmds = append(cmds, serverLoginCmd(m.deps.Live))
+			}
+		}
 		if slurm.Detected() {
 			cmds = append(cmds, pollClusterCmd())
 		}
@@ -471,6 +482,18 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.statusScr = m.statusScr.SetClock(m.clock)
 		m.statusLine = m.renderStatusLine()
 		cmds := []tea.Cmd{tui.TickClock()}
+		if m.syncWorker != nil && !m.syncBusy && m.syncWorker.Due(m.clock) {
+			m.syncBusy = true
+			cmds = append(cmds, settingsSyncCmd(m.syncWorker))
+		}
+		if m.deps.Live != nil && m.deps.Live.LocalStore() != nil && time.Since(m.lastMirrorRetry) > time.Minute {
+			m.lastMirrorRetry = time.Now()
+			store := m.deps.Live.LocalStore()
+			cmds = append(cmds, func() tea.Msg { store.RepairMirror(); return nil })
+		}
+		if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
+			m.showServerSync()
+		}
 		// Refresh optional StatusLine.Command on an interval (never block the UI).
 		// Init already kicked the first poll; re-arm only after we've seen a result
 		// (lastStatusCmdPoll set) and the interval has elapsed.
@@ -557,25 +580,52 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tui.SplashServerLoginMsg:
 		// "Log in to server": async shared-password login; the result arrives
 		// as ServerLoginResultMsg.
+		if m.connecting {
+			return m, nil
+		}
+		m.connecting = true
 		return m, serverLoginCmd(m.deps.Live)
 	case ServerLoginResultMsg:
+		m.connecting = false
 		if msg.Err != "" {
+			m.connectionNotice = msg.Err
+			m.chat = m.chat.Notice(msg.Err)
+			if m.screen == tui.ScreenWorkspace {
+				m.showServerSync()
+			}
 			m.splash = m.splash.WithNotice("⚠ " + msg.Err)
 			return m, nil
 		}
 		m.server = msg.Session
+		m.connectionNotice = ""
+		m.syncWorker = m.deps.Live.SyncWorker(m.server)
+		m.syncBusy = true
+		if s := m.localStore(); s != nil {
+			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), true)
+		}
 		m.splash = m.splash.WithNotice("")
 		// Local settings edits push back to the roving document (fire-and-
 		// forget; chat-sync errors surface via serverSyncResultMsg).
-		if m.deps.Live != nil {
-			sess := m.server
-			m.deps.Live.SetOnSave(func(f config.File) { _ = sess.savePortable(f) })
+		if m.screen == tui.ScreenSplash {
+			m.screen = tui.ScreenChat
 		}
-		next, cmd := m.advanceFromSplash()
-		if s := msg.Session.SyncNotice; s != "" && next.screen == tui.ScreenChat {
-			next.chat = next.chat.Notice(s)
+		m.showServerSync()
+		return m, settingsSyncCmd(m.syncWorker)
+	case settingsSyncResultMsg:
+		if msg.Worker != m.syncWorker {
+			return m, nil
 		}
-		return next, cmd
+		m.syncBusy = false
+		m.settings = m.settings.Refresh()
+		m.modelsScr = m.modelsScr.Refresh()
+		m.chatResize()
+		if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
+			m.showServerSync()
+		}
+		if msg.Status.Detail != "" {
+			m.chat = m.chat.Notice("Settings sync: " + msg.Status.Detail)
+		}
+		return m, nil
 	case serverSyncResultMsg:
 		if msg.Err != "" {
 			m.chat = m.chat.Notice("⚠ " + msg.Err)
@@ -1225,7 +1275,7 @@ func (m RootModel) sidebarWidth() int {
 			w = f.Appearance.SidebarWidth
 		}
 	}
-	return w
+	return max(32, min(w, m.width-61))
 }
 
 // sidebarOn reports whether the chat screen's live info column is showing:
