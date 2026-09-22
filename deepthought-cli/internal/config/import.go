@@ -226,15 +226,14 @@ func LoadSecrets(configPath string) error {
 }
 
 func loadSecretsInto(path string, capture map[string]string) error {
-	f, err := os.Open(path)
+	raw, err := readDiscoveryFile(path)
 	if os.IsNotExist(err) {
 		return nil
 	}
 	if err != nil {
 		return err
 	}
-	defer f.Close()
-	sc := bufio.NewScanner(f)
+	sc := bufio.NewScanner(strings.NewReader(string(raw)))
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if line == "" || strings.HasPrefix(line, "#") {

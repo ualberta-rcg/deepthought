@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-22 · deepthought-cli, docs — complete manual model setup and final validation
+- Add a visible manual model-ID entry for providers without discovery; retain unknown capabilities for explicit editing. Expose the remote wire ID, fix catalog error propagation, and point assistant guidance to Settings.
+- Bound private credential-file reads and finish scheduler availability wording and operational documentation.
+- Files: CLI TUI models/settings/chat/sidebar, configuration import, server-login notice, local operations guide, tests and this changelog.
+- Verification: CI run 35683165687 at 91dce42 passed vet, all tests, race checks and static build. This follow-up adds manual-entry and unsupported-discovery regressions; gofmt/diff checks locally and a fresh branch CI run before handoff.
+
 ## 2026-09-22 · deepthought-cli, docs — harden setup navigation and observation semantics
 - Fix narrow-terminal clipping and visible Settings tabs; refresh settings when reopening, cancel catalog requests and ignore late results, prevent duplicate provider acceptance, and preserve explicit-file field precedence.
 - Label fairshare, allocations and unavailable jobs accurately; retain last-success timestamps, separate host inventory from telemetry, and record observed scheduler availability. Scrub known credentials at the model-request boundary and from stored tool results.

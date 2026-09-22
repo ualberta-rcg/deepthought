@@ -61,8 +61,9 @@ func chatSystemPrompt(cfgPath string) string {
 		"Use the bash and read tools to investigate and act rather than just describing. " +
 		"History may contain tombstones; call expand(id) whenever omitted full text could matter. " +
 		"Be concise and direct; say what you did. " +
-		"Your own settings (providers, models, roles) live in " + cfgPath + " — point users there " +
-		"to change models or configuration. Don't claim to be Claude or Anthropic."
+		"Configure providers, models and roles through Settings (Ctrl+P navigation). " +
+		"Settings persist in the local database; " + cfgPath + " is the legacy import/explicit override path. " +
+		"Never request or print credentials. Don't claim to be Claude or Anthropic."
 }
 
 // chatMaxTokens caps each completion. Conservative so we stay under per-model

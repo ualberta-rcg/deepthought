@@ -231,7 +231,7 @@ func serverLoginCmd(live *Settings) tea.Cmd {
 		case err != nil:
 			sess.SyncNotice = "logged in as " + user + " (settings sync failed: " + err.Error() + ")"
 		case len(diff) > 0:
-			sess.SyncNotice = fmt.Sprintf("logged in as %s — pulled %d setting change(s) from server: %s", user, len(diff), strings.Join(diff, ", "))
+			sess.SyncNotice = fmt.Sprintf("logged in as %s — cached %d server setting difference(s); explicit local choices take precedence", user, len(diff))
 		default:
 			sess.SyncNotice = "logged in as " + user
 		}

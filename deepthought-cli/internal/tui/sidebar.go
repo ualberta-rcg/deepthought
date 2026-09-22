@@ -99,7 +99,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	// » Cluster — live when polled.
 	if d.ClusterOK && d.Cluster.GPUs > 0 {
 		frac := frac01(float64(d.Cluster.GPUsUsed), float64(d.Cluster.GPUs))
-		gpu := fmt.Sprintf(" gpus  %s %d%%", healthBar(frac, w-14), fracPct(frac))
+		gpu := fmt.Sprintf(" GPU allocation %s %d%%", healthBar(frac, max(4, w-25)), fracPct(frac))
 		rows := []string{clipLine(gpu, w)}
 		if typ := d.Cluster.GPUType; typ != "" {
 			rows = append(rows, clipLine(fmt.Sprintf(" %s · %d run", typ, d.Cluster.JobsRunning), w))
@@ -138,6 +138,9 @@ func RenderSidebar(d SidebarData, w, h int) string {
 		}
 	}
 	jobsRow := fmt.Sprintf(" %d running · %d pending", nr, np)
+	if !d.Cluster.JobsKnown {
+		jobsRow = " job query unavailable"
+	}
 	if e.Slurm || d.ClusterOK {
 		rows := []string{clipLine(jobsRow, w)}
 		if d.Cluster.Err != nil {

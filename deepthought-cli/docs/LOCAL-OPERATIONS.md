@@ -1,7 +1,8 @@
 # Standalone and resident operation
 
-The CLI works without DeepThought Server. Welcome offers **Run standalone**;
-**Log in to server — coming soon** is informational. F1 opens Settings and F2 Help.
+The CLI starts without DeepThought Server or a model. Welcome offers standalone
+operation and optional server login. Ctrl+P opens navigation; F1 and F2 remain
+Settings and Help shortcuts. See [startup and configuration](../../docs/SETUP.md).
 
 ## Sessions
 
@@ -24,11 +25,11 @@ not an HPC batch allocation or a system service with guaranteed uptime.
 
 ## Settings and skills
 
-Effective settings resolve built-in defaults → optional server defaults → local
-overrides → session overrides. The resolver and `DefaultsSource` interface support
-future server integration; no server fetch or login is active. The editor shows
-source labels and saves changed local values with conflict detection. There is
-currently no session-override editor. Server defaults cannot supply API keys.
+Effective settings resolve built-in defaults → cached server defaults/settings →
+saved local database settings → supported environment overrides → explicit config
+file keys → session edits. Server settings are fetched only after explicit login.
+The editor shows source labels and uses revision checks. Portable server settings
+exclude credentials and local paths. Server defaults cannot supply API keys.
 Anonymous providers require the explicit `anonymous` setting.
 
 The daemon's `refresh_config` and `refresh_skills` controls update shared state.
@@ -82,7 +83,8 @@ path, or `rich_manifest` with a relative URL path. Manifest `models` entries nee
 `id`, `endpoint` and JSON `input_schema`; `output_schema` is optional. Tools register
 as `<provider>__<model>`, validate inputs and supplied output schemas, and require
 approval. Discovery and responses are bounded. OpenAPI import is explicitly
-unsupported. Endpoint configuration changes require a fresh runtime.
+unsupported. Refresh configured scientific endpoints through navigation after
+changing configuration; discovery is never on the startup path.
 
 ## Releases
 

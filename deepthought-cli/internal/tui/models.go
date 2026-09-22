@@ -28,6 +28,7 @@ const (
 	mvRole                       // role-assignment mini-picker
 	mvProvPick                   // pick a provider to list models from
 	mvListed                     // discovered model ids
+	mvManual                     // explicit model-ID entry, no network
 )
 
 // ModelsModel is the F11 Models screen.
@@ -43,6 +44,7 @@ type ModelsModel struct {
 
 	// mvEdit context
 	entityRef string // model id at open time
+	manual    bool
 
 	// async: test + discovery
 	testing        string
@@ -144,6 +146,9 @@ func (m ModelsModel) Update(msg tea.Msg) (ModelsModel, tea.Cmd) {
 		return m, nil
 	}
 	if m.edit != nil {
+		if m.view == mvManual {
+			return m.updateManual(key)
+		}
 		return m.updateField(key)
 	}
 	switch key.String() {
@@ -177,6 +182,10 @@ func (m ModelsModel) Update(msg tea.Msg) (ModelsModel, tea.Cmd) {
 			case "t":
 				return m.testModel()
 			case "L":
+				m.manual = false
+				return m.pickProvider()
+			case "n":
+				m.manual = true
 				return m.pickProvider()
 			case "r":
 				m.view, m.cursor = mvRole, 0
@@ -205,6 +214,7 @@ func (m ModelsModel) activate() (ModelsModel, tea.Cmd) {
 	switch m.view {
 	case mvList:
 		if m.cursor >= len(m.dirty.Models) {
+			m.manual = m.cursor > len(m.dirty.Models)
 			return m.pickProvider() // "+ Add from provider"
 		}
 		m.entityRef = m.dirty.Models[m.cursor].ID
@@ -217,6 +227,9 @@ func (m ModelsModel) activate() (ModelsModel, tea.Cmd) {
 	case mvProvPick:
 		if m.cursor >= len(m.dirty.Providers) {
 			return m, nil
+		}
+		if m.manual {
+			return m.manualEntry(m.dirty.Providers[m.cursor].Name)
 		}
 		return m.listModels(m.dirty.Providers[m.cursor].Name)
 	case mvListed:
@@ -386,6 +399,9 @@ func (m ModelsModel) pickProvider() (ModelsModel, tea.Cmd) {
 		m.saved = "add a provider first (Settings › Providers)"
 		return m, nil
 	case 1:
+		if m.manual {
+			return m.manualEntry(m.dirty.Providers[0].Name)
+		}
 		return m.listModels(m.dirty.Providers[0].Name)
 	}
 	m.view, m.cursor = mvProvPick, 0
@@ -421,7 +437,8 @@ func (m ModelsModel) discoverModels(name string, refresh bool) (ModelsModel, tea
 		}); ok {
 			entries, notice, err = cached.DiscoverCatalog(ctx, name, refresh)
 		} else {
-			client, err := store.ProviderClient(name)
+			var client *babel.Client
+			client, err = store.ProviderClient(name)
 			if err != nil {
 				return modelsListedMsg{request: request, provider: name, err: err}
 			}
@@ -446,15 +463,18 @@ func (m ModelsModel) addFromList() (ModelsModel, tea.Cmd) {
 		}
 	}
 	m.view, m.cursor = mvList, 0
-	return m.freshSave(func(f *config.File) {
+	next, cmd := m.freshSave(func(f *config.File) {
 		for _, mo := range f.Models {
 			if mo.ID == id {
 				return // already present
 			}
 		}
 		caps := []unimatrix.Capability{}
-		if entry.Type == "chat" {
+		if entry.Type == "chat" || entry.Capabilities["chat"] {
 			caps = append(caps, unimatrix.CapChat)
+		}
+		if entry.Type == "embedding" || entry.Capabilities["embedding"] {
+			caps = append(caps, unimatrix.CapEmbed)
 		}
 		for _, pair := range []struct {
 			key string
@@ -471,11 +491,17 @@ func (m ModelsModel) addFromList() (ModelsModel, tea.Cmd) {
 		}
 		if model.Can(unimatrix.CapChat) {
 			f.Roles[unimatrix.RoleChat] = id
+			delete(f.Roles, unimatrix.RoleAgentic)
 		}
 		if model.Agentic() {
 			f.Roles[unimatrix.RoleAgentic] = id
 		}
 	})
+	if next.saved == "saved" && len(entry.Capabilities) == 0 && entry.Type == "" {
+		next.view, next.entityRef = mvEdit, id
+		next.saved = "Capabilities unknown. Configure them here, then choose Settings → Roles."
+	}
+	return next, cmd
 }
 
 // freshSave mutates a FRESH snapshot, validates, saves, re-snapshots.
@@ -505,7 +531,7 @@ func (m ModelsModel) freshSave(mut func(f *config.File)) (ModelsModel, tea.Cmd) 
 func (m ModelsModel) rowCount() int {
 	switch m.view {
 	case mvList:
-		return len(m.dirty.Models) + 1 // + Add from provider
+		return len(m.dirty.Models) + 2 // discovery or explicit model ID
 	case mvEdit:
 		return len(modelFieldDefs(m.entityRef, m.providerNames()))
 	case mvRole:
@@ -557,6 +583,8 @@ func (m ModelsModel) Resize(w, h int) ModelsModel {
 // rows builds the rendered list for the current view.
 func (m ModelsModel) rows() []string {
 	switch m.view {
+	case mvManual:
+		return []string{"Provider: " + m.listedProv, "Model ID: " + m.edit.view(m.width-16), "Capabilities are configured after adding."}
 	case mvList:
 		rs := make([]string, 0, len(m.dirty.Models)+1)
 		if len(m.dirty.Models) == 0 {
@@ -567,6 +595,7 @@ func (m ModelsModel) rows() []string {
 				truncatePad(mo.ID, 20), truncatePad(mo.Provider, 12), truncatePad(strings.Join(mo.Caps(), "+"), 14), m.roleBadges(mo.ID))))
 		}
 		rs = append(rs, m.mark(len(m.dirty.Models), "+ Add from provider"))
+		rs = append(rs, m.mark(len(m.dirty.Models)+1, "+ Enter model ID manually"))
 		return rs
 	case mvEdit:
 		defs := modelFieldDefs(m.entityRef, m.providerNames())

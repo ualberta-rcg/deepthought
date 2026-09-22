@@ -1681,7 +1681,7 @@ func modelFieldDefs(ref string, provNames []string) []fieldDef {
 				f.Models[i].Context = n
 				return nil
 			}},
-		{"reasoning_style", fEnum, false, []string{"", "gptoss", "qwen", "gemma4", "deepseek", "anthropic"},
+		{"reasoning_style", fEnum, false, []string{"none", "", "gptoss", "qwen", "gemma4", "deepseek", "anthropic"},
 			func(f *config.File) string {
 				if i := find(f); i >= 0 {
 					return f.Models[i].ReasoningStyle
@@ -1724,6 +1724,25 @@ func modelFieldDefs(ref string, provNames []string) []fieldDef {
 					return fmt.Errorf("model was removed elsewhere")
 				}
 				f.Models[i].Tags = parseTags(e.value())
+				return nil
+			}},
+		{label: "provider model ID", kind: fText,
+			get: func(f *config.File) string {
+				if i := find(f); i >= 0 {
+					return f.Models[i].RequestID()
+				}
+				return ""
+			},
+			set: func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("model was removed elsewhere")
+				}
+				id := strings.TrimSpace(e.value())
+				if id == "" || len(id) > 512 || strings.ContainsAny(id, "\x1b\n\r\x00") {
+					return fmt.Errorf("enter a valid provider model ID")
+				}
+				f.Models[i].WireID = id
 				return nil
 			}},
 	}
