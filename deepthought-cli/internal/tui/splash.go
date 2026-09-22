@@ -95,12 +95,19 @@ func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 		return m, cmd
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "up", "down", "tab", "shift+tab":
-			m.selected = 1 - m.selected
+		case "down", "tab":
+			m.selected = (m.selected + 1) % 5
+			m.notice = ""
+		case "up", "shift+tab":
+			m.selected = (m.selected + 4) % 5
 			m.notice = ""
 		case "enter":
 			if m.selected == 0 {
 				return m, func() tea.Msg { return SplashAdvanceMsg{} }
+			}
+			if m.selected >= 2 {
+				kind := []string{"discover", "menu", "install"}[m.selected-2]
+				return m, func() tea.Msg { return WorkspaceAction{Kind: kind} }
 			}
 			return m, func() tea.Msg { return SplashServerLoginMsg{} }
 		}
@@ -129,8 +136,8 @@ func (m SplashModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	header := dontPanicHeader(m.width, m.height-footerRows-4)
-	choices := []string{"  Run standalone", "  Log in to server"}
+	header := dontPanicHeader(m.width, m.height-footerRows-7)
+	choices := []string{"  Run standalone", "  Log in to server", "  Set up AI providers", "  Explore / Settings", "  Install on another machine"}
 	choices[m.selected] = "› " + strings.TrimSpace(choices[m.selected])
 
 	block := lipgloss.JoinVertical(lipgloss.Center,
@@ -142,6 +149,9 @@ func (m SplashModel) View() string {
 		styleVersion.Render(splashVersion),
 		styleName.Render(choices[0]),
 		styleVersion.Render(choices[1]),
+		styleVersion.Render(choices[2]),
+		styleVersion.Render(choices[3]),
+		styleVersion.Render(choices[4]),
 		styleVersion.Render(m.notice),
 		"",
 		styleVersion.Render(splashHint),
@@ -152,7 +162,7 @@ func (m SplashModel) View() string {
 // statusLine renders the boot model + provider (or a not-ready hint).
 func (m SplashModel) statusLine() string {
 	if !m.boot.Ready {
-		return "⚠ no API key set — configure a provider in Settings"
+		return "Ready to explore · AI setup is optional · Ctrl+P menu"
 	}
 	if m.boot.Model == "" {
 		return "ready"

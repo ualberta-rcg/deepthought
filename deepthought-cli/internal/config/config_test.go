@@ -87,15 +87,15 @@ func TestLoadV1Migration(t *testing.T) {
 
 // v1 migration drops catalog IDs the seed catalog doesn't know (they'd have
 // been a load error before, but silently dropping beats stranding the user).
-func TestV1MigrationDropsUnknownIDs(t *testing.T) {
+func TestV1MigrationPreservesUnknownIDs(t *testing.T) {
 	t.Parallel()
 	path := writeFile(t, `{"provider": {"api_key": "k"}, "models": ["does-not-exist", "qwen35-122b"]}`)
 	cfg, err := Load(path)
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if len(cfg.Models) != 1 || cfg.Models[0].ID != "qwen35-122b" {
-		t.Errorf("models = %+v, want just qwen35-122b", cfg.Models)
+	if len(cfg.Models) != 2 || cfg.Models[0].ID != "does-not-exist" || len(cfg.Models[0].Capabilities) != 0 {
+		t.Errorf("models = %+v, unknown IDs must be preserved without capability guesses", cfg.Models)
 	}
 }
 
@@ -105,16 +105,11 @@ func TestLoadMissingFileReturnsDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load missing file: %v", err)
 	}
-	p, ok := cfg.FindProvider(unimatrix.SeedProvider)
-	if !ok || p.BaseURL != DefaultBaseURL {
-		t.Errorf("seed provider = %+v, %v", p, ok)
+	if len(cfg.Providers) != 0 || len(cfg.Models) != 0 {
+		t.Fatal("fresh startup must not assume a provider or model")
 	}
-	m, err := cfg.RoleModel(unimatrix.RoleChat)
-	if err != nil || m.ID != DefaultModelID {
-		t.Errorf("chat role = %v, %v; want %s", m.ID, err, DefaultModelID)
-	}
-	if len(cfg.Models) == 0 {
-		t.Error("default Models is empty; should be the seed catalog")
+	if _, err := Validate(cfg.File); err != nil {
+		t.Fatal(err)
 	}
 }
 
@@ -128,7 +123,6 @@ func TestValidateDanglingReferences(t *testing.T) {
 		f    File
 	}{
 		{"no providers", File{Models: goodModels}},
-		{"no models", File{Providers: good}},
 		{"dup provider", File{Providers: append(good, Provider{Name: "p", BaseURL: "http://y"}), Models: goodModels}},
 		{"bad wire", File{Providers: []Provider{{Name: "p", BaseURL: "http://x", Wire: "smoke-signals"}}, Models: goodModels}},
 		{"model → ghost provider", File{Providers: good, Models: []unimatrix.Model{{ID: "m", Provider: "ghost", Capabilities: []unimatrix.Capability{"chat"}}}}},

@@ -567,7 +567,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// forget; chat-sync errors surface via serverSyncResultMsg).
 		if m.deps.Live != nil {
 			sess := m.server
-			m.deps.Live.OnSave = func(config.File) { _, _ = sess.pushUserSettings(fileToMap(m.deps.Live.Snapshot()), sess.Revision) }
+			m.deps.Live.SetOnSave(func(f config.File) { _ = sess.savePortable(f) })
 		}
 		next, cmd := m.advanceFromSplash()
 		if s := msg.Session.SyncNotice; s != "" && next.screen == tui.ScreenChat {

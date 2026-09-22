@@ -57,6 +57,8 @@ func NewSettings(cfg *config.Config, path string) *Settings {
 
 func (s *Settings) LocalStore() *config.LocalStore { return s.local }
 
+func (s *Settings) SetOnSave(cb func(config.File)) { s.mu.Lock(); defer s.mu.Unlock(); s.OnSave = cb }
+
 // Path returns the resolved settings file path (for the Overview page).
 func (s *Settings) Path() string { return s.path }
 

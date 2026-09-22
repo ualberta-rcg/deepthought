@@ -2,7 +2,7 @@
   "providers": [
     {
       "name": "vulcan",
-      "base_url": "https://inference.kubeflow.vulcan.alliancecan.ca/serving/api/v1",
+      "base_url": "https://inference.vulcan.alliancecan.ca/v1",
       "api_key": "$TYK_KEY",
       "wire": "openai",
       "jurisdiction": "CA",

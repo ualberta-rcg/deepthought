@@ -106,10 +106,10 @@ func DiscoverClaudeProviders(home string) ([]ImportCandidate, error) {
 func importedModel(id, provider string) unimatrix.Model {
 	model := unimatrix.Model{
 		ID: id, Label: id, Provider: provider, Capabilities: []unimatrix.Capability{
-			unimatrix.CapChat, unimatrix.CapTools, unimatrix.CapReasoning,
+			unimatrix.CapChat,
 		},
 	}
-	model.ReasoningStyle = model.EffectiveReasoningStyle()
+	model.ReasoningStyle = "none"
 	return model
 }
 

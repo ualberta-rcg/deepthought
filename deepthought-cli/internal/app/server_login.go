@@ -16,16 +16,19 @@ import (
 	"net/http"
 	"sort"
 	"strings"
+	"sync"
 	"time"
 
 	"charm.land/bubbletea/v2"
 
 	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/credential"
 	"deepthought-cli/internal/history"
 )
 
 // ServerSession is a logged-in server connection held for the app lifetime.
 type ServerSession struct {
+	mu         sync.Mutex
 	URL        string
 	User       string
 	Token      string
@@ -67,14 +70,12 @@ func LoginToServer(cfg *config.ServerConfig) (user, token string, err error) {
 	case resp.StatusCode == http.StatusServiceUnavailable:
 		return "", "", fmt.Errorf("server auth not configured")
 	case resp.StatusCode != http.StatusOK:
-		if out.Error != "" {
-			return "", "", fmt.Errorf("login failed: %s", out.Error)
-		}
 		return "", "", fmt.Errorf("login failed: HTTP %d", resp.StatusCode)
 	}
 	if out.Token == "" {
 		return "", "", fmt.Errorf("login failed: no session token")
 	}
+	credential.Register("server-session:"+cfg.URL, out.Token)
 	return out.User, out.Token, nil
 }
 
@@ -94,11 +95,10 @@ func (s *ServerSession) do(method, path string, body []byte, out any) error {
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode >= 300 {
-		msg, _ := io.ReadAll(io.LimitReader(resp.Body, 4096))
-		return fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(msg)))
+		return fmt.Errorf("server returned HTTP %d", resp.StatusCode)
 	}
 	if out != nil {
-		return json.NewDecoder(resp.Body).Decode(out)
+		return json.NewDecoder(io.LimitReader(resp.Body, 4<<20)).Decode(out)
 	}
 	return nil
 }
@@ -209,7 +209,7 @@ func serverLoginCmd(live *Settings) tea.Cmd {
 	return func() tea.Msg {
 		f := live.Snapshot()
 		if f.Server == nil || f.Server.URL == "" || f.Server.User == "" {
-			return ServerLoginResultMsg{Err: `no server configured — add a "server" {url, user, password} section to ~/.deepthought/config.json`}
+			return ServerLoginResultMsg{Err: "Configure the server in Settings → Server, then retry login."}
 		}
 		user, token, err := LoginToServer(f.Server)
 		if err != nil {
@@ -235,7 +235,13 @@ func serverLoginCmd(live *Settings) tea.Cmd {
 		default:
 			sess.SyncNotice = "logged in as " + user
 		}
-		_ = pulled
+		if live.LocalStore() != nil {
+			if err := live.LocalStore().SetServerDefaults(defaults, pulled); err != nil {
+				sess.SyncNotice = "Logged in; server settings could not be applied. Local settings retained."
+			} else if err := live.Reload(); err != nil {
+				sess.SyncNotice = "Logged in; settings reload failed. Local settings retained."
+			}
+		}
 		return ServerLoginResultMsg{Session: sess}
 	}
 }
@@ -257,11 +263,20 @@ func pushChatCmd(source history.ChatStoreSource, sess *ServerSession, collective
 // pushSettingsCmd uploads the local document after a local edit (OnSave hook).
 func pushSettingsCmd(live *Settings, sess *ServerSession) tea.Cmd {
 	return func() tea.Msg {
-		rev, err := sess.pushUserSettings(fileToMap(live.Snapshot()), sess.Revision)
+		err := sess.savePortable(live.Snapshot())
 		if err != nil {
 			return serverSyncResultMsg{Err: "server settings sync: " + err.Error()}
 		}
-		sess.Revision = rev
 		return serverSyncResultMsg{}
 	}
+}
+
+func (s *ServerSession) savePortable(f config.File) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	rev, err := s.pushUserSettings(fileToMap(f), s.Revision)
+	if err == nil {
+		s.Revision = rev
+	}
+	return err
 }

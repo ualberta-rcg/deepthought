@@ -339,6 +339,7 @@ func (m ModelsModel) testModel() (ModelsModel, tea.Cmd) {
 		return m, nil
 	}
 	id := m.dirty.Models[m.cursor].ID
+	wireID := m.dirty.Models[m.cursor].RequestID()
 	m.testing = id
 	m.saved = "testing " + id + "…"
 	store := m.store
@@ -349,7 +350,7 @@ func (m ModelsModel) testModel() (ModelsModel, tea.Cmd) {
 		}
 		start := time.Now()
 		rep, err := client.Chat(context.Background(), babel.ChatRequest{
-			Model: id, Messages: []babel.Message{{Role: "user", Content: "Reply with exactly: OK"}}, MaxTokens: 16,
+			Model: wireID, Messages: []babel.Message{{Role: "user", Content: "Reply with exactly: OK"}}, MaxTokens: 16,
 		})
 		if err != nil {
 			return modelTestResultMsg{modelID: id, latency: time.Since(start), err: err}

@@ -36,6 +36,7 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version-file: deepthought-cli/go.mod
+          cache-dependency-path: deepthought-cli/go.sum
 
       - name: Vet
         run: |
@@ -67,7 +68,7 @@ jobs:
         run: |
           set -euo pipefail
           cd deepthought-cli
-          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history
+          go test -race ./internal/app ./internal/tui ./internal/queen ./internal/history ./internal/config ./internal/host ./internal/babel ./internal/slurm ./internal/tools
 
       - name: Build static binary
         run: |

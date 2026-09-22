@@ -34,7 +34,7 @@ func TestLocalPatchDoesNotSaveMergedDefaults(t *testing.T) {
 		t.Fatalf("stored merged settings: %s", raw)
 	}
 	cfg, err := Load(path)
-	if err != nil || cfg.Language != "fr" || len(cfg.Providers) == 0 {
+	if err != nil || cfg.Language != "fr" || len(cfg.Providers) != 0 {
 		t.Fatalf("reload: %v", err)
 	}
 }

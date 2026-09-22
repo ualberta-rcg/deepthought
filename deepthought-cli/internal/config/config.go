@@ -363,7 +363,7 @@ func migrateV1(old v1File) File {
 	for _, id := range ids {
 		m, ok := unimatrix.Lookup(id)
 		if !ok {
-			continue // unknown seed IDs drop out of the migrated list
+			m = unimatrix.Model{ID: id, Label: id, ReasoningStyle: "none"} // preserve unknown IDs without guessing capabilities
 		}
 		m.Provider = "default"
 		models = append(models, m)

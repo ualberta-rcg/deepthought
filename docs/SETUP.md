@@ -1,0 +1,111 @@
+# Startup and configuration
+
+Install the Linux/amd64 rolling release:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ualberta-rcg/deepthought/main/install.sh | bash
+```
+
+The destination defaults to `~/.local/bin`; `DEEPTHOUGHT_INSTALL_DIR` overrides it.
+`DEEPTHOUGHT_CHANNEL` overrides the release tag. The installer verifies the checksum
+when published and rejects mismatches. It does not configure your shell PATH.
+
+## First use
+
+The interface starts without inference. On a new host, local discovery runs after
+the first screen. Review a candidate's endpoint and source, then choose **Accept
+and discover models**. No provider request happens merely because a key was found.
+Skip is persistent for that host. Retry or repeat discovery through Ctrl+P or
+Settings → Setup. A shared home directory can contain records for multiple hosts.
+
+Supported discovery sources are the process environment; `~/.aleph_tyk.env`;
+literal assignments in `~/.bashrc`, `~/.bash_profile`, and `~/.profile`; `.env` in the
+launch directory and repository root; and the supported Claude settings files.
+Inputs are bounded to 512 KiB and must be regular files owned by the current user.
+Shell expansion, commands, sourcing, and recursive searches are not supported.
+Project candidates are explicitly labeled untrusted. Conflicting candidates are
+shown individually, never silently selected.
+
+Discovery recognizes `TYK_KEY`, `OPENAI_API_KEY`, `ANTHROPIC_API_KEY`,
+`ANTHROPIC_AUTH_TOKEN`, and `DEEPSEEK_API_KEY`, with their corresponding supported
+base-URL variables. Credential values remain masked. Shell expressions such as
+`KEY=$(command)` and `$OTHER_VARIABLE` assignments are deliberately not evaluated.
+
+On Vulcan, `~/.aleph_tyk.env` can take several minutes to appear after first login.
+Retry later; no shell sourcing is required. One key covers all Aleph models.
+
+| Interface | Base URL |
+|---|---|
+| OpenAI-compatible | `https://inference.vulcan.alliancecan.ca/v1` |
+| Anthropic-compatible | `https://inference.vulcan.alliancecan.ca/anthropic` |
+
+Aleph model metadata comes from `/v1/models`. Discovery preserves advertised
+capabilities and context limits, and does not infer capabilities from model names.
+For catalogs without metadata, configure capabilities explicitly in the model
+editor. Models without tool support use chat without advertising tools.
+
+Catalog requests are cancellable and limited to 120 seconds. The last successful
+catalog is cached for 24 hours; explicit refresh bypasses its age. A failed refresh
+can show a stale catalog. Unsupported discovery does not prevent manual model-ID
+entry. Catalog model identities include the provider, avoiding collisions between
+providers serving the same wire ID.
+
+The exact recognized old Aleph URL is offered for migration during setup. Custom
+endpoints are preserved. Discovery never transmits credentials across an HTTP
+redirect to a different origin.
+
+## State and migration
+
+`DEEPTHOUGHT_CLI_HOME` overrides `~/.deepthought`. `history.db` stores chats plus
+separate `app_settings` and `app_inventory` tables. Settings profiles are identified
+by their original configuration-file path, so `--config` profiles remain distinct.
+
+On first migration, valid JSON settings are imported and the original is retained
+as `config.json.before-database` beside the source. Existing keybindings are
+imported. Invalid source files remain untouched and produce a startup notice.
+Reopening the application does not repeatedly import the old JSON. Use Settings →
+Import / Export to explicitly import changed files or export portable settings.
+
+Mutable settings save to SQLite with revision checks. A stale editor must reload
+rather than overwrite another process's changes. Existing history is retained.
+Literal credentials are moved to `secrets.env` (mode 0600); database settings carry
+references. Existing environment references remain supported. Discovered keys
+are never exported into the application's process environment.
+
+The original migration backup can contain old credentials: keep it private.
+Portable export and server settings synchronization exclude provider credentials,
+server login details, and local scientific manifest paths. Host inventory and
+telemetry are local and do not synchronize to the server.
+
+## Precedence
+
+Highest to lowest:
+
+1. Session choices, including an explicit Settings edit of an overridden value.
+2. An explicit `--config` document.
+3. Supported application environment overrides (`DEEPTHOUGHT_EFFORT`).
+4. Saved local database settings.
+5. Cached server settings/defaults after explicit server login.
+6. Built-in defaults, which contain no assumed provider or model.
+
+A discovery candidate has no precedence until accepted. Provider credential
+references are resolved separately: an explicitly selected environment reference
+uses that environment variable; an accepted file credential uses its private
+stored reference. Settings displays source labels. A Settings edit is saved
+locally, but an external override can take precedence again on the next launch.
+
+## Navigation
+
+Ctrl+P opens navigation from the welcome screen or any operational screen.
+Settings contains Setup, Models, Providers, Shortcuts, Hosts & Services, Server,
+Import / Export, and existing advanced sections. F-keys remain shortcuts.
+Shortcut editing accepts F1–F12 and modifier keys, rejects collisions, and supports
+reset. Ctrl+P remains reserved so navigation cannot be lost.
+
+Scientific tool catalogs are refreshed after startup through the explicit
+navigation action. This can contact configured scientific endpoints; it never
+runs during construction of the application.
+
+The welcome screen includes an installation details entry. Its copy action uses
+terminal clipboard support (OSC 52); the full command is always available in this
+guide. DeepThought never executes the installer itself.

@@ -22,7 +22,7 @@ func (f *fakeStore) Snapshot() config.File {
 	if f.saved != nil {
 		return *f.saved
 	}
-	return config.Defaults().File
+	return config.CatalogDefaults().File
 }
 func (f *fakeStore) Save(file config.File) error {
 	cp := file

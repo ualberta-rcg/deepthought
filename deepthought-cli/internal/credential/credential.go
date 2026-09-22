@@ -23,6 +23,13 @@ func Register(ref, value string) {
 }
 
 func Resolve(ref string) string {
+	if strings.HasPrefix(ref, "$") {
+		name := strings.Trim(strings.TrimPrefix(ref, "$"), "{}")
+		if value, ok := os.LookupEnv(name); ok {
+			Register(ref, value)
+			return value
+		}
+	}
 	vault.RLock()
 	value, ok := vault.values[ref]
 	vault.RUnlock()
@@ -45,7 +52,7 @@ func Redact(text string) string {
 	vault.RLock()
 	defer vault.RUnlock()
 	for _, value := range vault.values {
-		if value != "" {
+		if len(value) >= 4 {
 			text = strings.ReplaceAll(text, value, "[redacted]")
 		}
 	}

@@ -12,7 +12,6 @@ import (
 	"path/filepath"
 	"runtime/debug"
 	"syscall"
-	"time"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/wish/v2"

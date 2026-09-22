@@ -714,15 +714,9 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 	case val == "/effort":
 		return m, func() tea.Msg { return OpenEffortMsg{} }
 	case val == "/import":
-		if source, ok := m.src.(behaviorMutator); ok {
-			n, err := source.ImportProviders()
-			if err != nil {
-				m.systemLine("✗ " + err.Error())
-			} else {
-				m.systemLine(fmt.Sprintf("imported %d provider(s)", n))
-			}
-		}
-		return m, nil
+		return m, func() tea.Msg { return WorkspaceAction{Kind: "discover"} }
+	case val == "/menu":
+		return m, func() tea.Msg { return WorkspaceAction{Kind: "menu"} }
 	case strings.HasPrefix(val, "/"):
 		m.systemLine("unknown command: " + val + " — try /help")
 		return m, nil
@@ -848,7 +842,12 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 		m.systemLine("Configure an agentic model in Settings (F1).")
 		return m, nil
 	}
-	client, model, err := m.src.RoleClient(unimatrix.RoleAgentic)
+	role := unimatrix.RoleAgentic
+	client, model, err := m.src.RoleClient(role)
+	if err != nil {
+		role = unimatrix.RoleChat
+		client, model, err = m.src.RoleClient(role)
+	}
 	if err != nil {
 		m.failTurn(err)
 		return m, nil
@@ -896,7 +895,7 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 				}
 			}
 		}
-		client, model, err = resolver.ResolveRequest(unimatrix.RoleAgentic, sensitivity, estimateUsage(req.Messages, "", "").PromptTokens+req.MaxTokens)
+		client, model, err = resolver.ResolveRequest(role, sensitivity, estimateUsage(req.Messages, "", "").PromptTokens+req.MaxTokens)
 		if err != nil {
 			m.failTurn(err)
 			return m, nil
@@ -970,10 +969,14 @@ func (m ChatModel) newRequest(model unimatrix.Model) babel.ChatRequest {
 	if model.Effort != "" {
 		effort = babel.Effort(model.Effort)
 	}
+	var schemas []babel.ToolDef
+	if model.Agentic() {
+		schemas = m.reg.Schemas()
+	}
 	return babel.ChatRequest{
 		Model:          model.RequestID(),
 		Messages:       m.requestMessages(),
-		Tools:          m.reg.Schemas(),
+		Tools:          schemas,
 		MaxTokens:      maxTokens,
 		Temperature:    temperature,
 		Effort:         effort,

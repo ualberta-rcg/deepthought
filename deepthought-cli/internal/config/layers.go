@@ -68,7 +68,7 @@ func containsCredential(value any) bool {
 	switch v := value.(type) {
 	case map[string]any:
 		for k, x := range v {
-			if k == "api_key" {
+			if (k == "api_key" || k == "password" || k == "token") && x != "" && x != nil {
 				return true
 			}
 			if containsCredential(x) {

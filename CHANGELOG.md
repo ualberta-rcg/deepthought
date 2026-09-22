@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-22 · deepthought-cli, docs — setup acceptance tests and research-computing README
+- Adapt Aleph's institutional README header, support, license and Research Computing footer into a self-contained DeepThought README; copy only the university logo. Add setup and host guides.
+- Add synthetic discovery, migration, precedence, offline navigation and model-catalog tests; fix the first CI compile error, preserve unknown legacy model IDs, and prevent credential-bearing server synchronization.
+- Files: README/assets/docs, CLI configuration/application/TUI/catalog tests and runtime, CLI workflow cache and race coverage.
+- Verification: gofmt and git diff --check locally; branch CI run 35681435270 identified an unused time import, now removed. Full tests run in the next branch workflow; no login-node compilation and no Aleph changes.
+
 ## 2026-09-22 · deepthought-cli — model-free startup and host-aware setup
 - Add review-first credential discovery, SQLite settings migration, portable settings sync, model catalog metadata, navigation and host/service inventory.
 - Update active Aleph defaults and add bounded scheduler queries, adaptive host views, and keyboard/settings controls.

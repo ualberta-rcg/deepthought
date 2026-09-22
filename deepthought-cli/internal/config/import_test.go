@@ -41,8 +41,8 @@ func TestDiscoverAndMergeClaudeProviders(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if added != 1 || os.Getenv("DEEPTHOUGHT_CLI_Z_AI_API_KEY") != "secret" {
-		t.Fatalf("added=%d env=%q", added, os.Getenv("DEEPTHOUGHT_CLI_Z_AI_API_KEY"))
+	if added != 1 || os.Getenv("DEEPTHOUGHT_CLI_Z_AI_API_KEY") != "" || candidates[0].Provider.ExpandedKey() != "secret" {
+		t.Fatal("import should resolve a private secret without exporting it")
 	}
 	info, err := os.Stat(filepath.Join(filepath.Dir(configPath), "secrets.env"))
 	if err != nil {

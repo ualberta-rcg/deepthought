@@ -225,7 +225,10 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	case "help":
 		m.showWorkspace("Help", "Ctrl+P opens navigation; Settings contains configuration and shortcuts.", []tui.WorkspaceItem{{Label: "Install on another machine (copy only)", Detail: tui.InstallCommand, Kind: "install"}, {Label: "Keyboard shortcuts", Kind: "settings-tab", ID: "keyboard"}, {Label: "Configure providers", Kind: "discover"}, {Label: "Open Settings", Kind: "action", ID: string(keybindings.Settings)}})
 	case "install":
-		m.showWorkspace("Install on another machine", "Copy the command below; DeepThought will not run it.", []tui.WorkspaceItem{{Label: tui.InstallCommand}, {Label: "Full command is also in README.md and docs/SETUP.md"}})
+		m.showWorkspace("Install on another machine", "Copy only; DeepThought never executes this command.", []tui.WorkspaceItem{{Label: "Copy full install command", Detail: tui.InstallCommand, Kind: "copy-install"}, {Label: "Full command is also in README.md and docs/SETUP.md"}})
+	case "copy-install":
+		m.workspace.Notice = "Clipboard copy requested (requires terminal clipboard support)."
+		return m, tea.SetClipboard(tui.InstallCommand)
 	case "settings-tab":
 		m.settings = tui.NewSettingsModelAt(m.deps.Live, m.deps.Settings, a.ID, false).SetEnv(m.env).Resize(m.width, m.height)
 		m.pushScreenOnce(tui.ScreenSettings)

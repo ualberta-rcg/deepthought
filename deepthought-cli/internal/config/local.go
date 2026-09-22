@@ -56,6 +56,7 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 	err = db.QueryRow("SELECT revision FROM app_settings WHERE profile=?", s.profile).Scan(&existing)
 	if errors.Is(err, sql.ErrNoRows) {
 		f := Defaults().File
+		importedFile := false
 		raw, readErr := os.ReadFile(path)
 		if readErr == nil {
 			imported, parseErr := Load(path)
@@ -63,6 +64,7 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 				notice = "Settings file is invalid; original preserved. Use Settings to repair or import it."
 			} else {
 				f = imported.File
+				importedFile = true
 				backup := path + ".before-database"
 				out, e := os.OpenFile(backup, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
 				if e == nil {
@@ -92,6 +94,9 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 			return nil, err
 		}
 		body, _ := json.Marshal(f)
+		if !importedFile {
+			body = []byte(`{}`)
+		}
 		_, err = db.Exec("INSERT OR IGNORE INTO app_settings(profile,revision,body) VALUES(?,1,?)", s.profile, body)
 	}
 	if err != nil {
@@ -115,11 +120,41 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 		db.Close()
 		return nil, err
 	}
-	cfg.StartupNotice = notice
+	if notice != "" {
+		cfg.StartupNotice = notice
+	}
 	return cfg, nil
 }
 
 func (s *LocalStore) Close() error { return s.db.Close() }
+
+func (s *LocalStore) SetServerDefaults(defaults, remote map[string]any) error {
+	clean := func(m map[string]any) (map[string]any, error) {
+		b, err := json.Marshal(m)
+		if err != nil {
+			return nil, err
+		}
+		var f File
+		if err = json.Unmarshal(b, &f); err != nil {
+			return nil, err
+		}
+		return fileMap(Portable(f)), nil
+	}
+	// Never allow a server to install credential references or local settings files.
+	d, err := clean(defaults)
+	if err != nil {
+		return err
+	}
+	r, err := clean(remote)
+	if err != nil {
+		return err
+	}
+	mergeLayer(d, r)
+	if _, err := ResolveLayers(d, nil, nil); err != nil {
+		return err
+	}
+	return s.WriteRecord("server-defaults", s.profile, d)
+}
 func (s *LocalStore) Load() (*Config, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -161,7 +196,9 @@ func (s *LocalStore) loadLocked() (*Config, error) {
 	}
 	validated, err := Validate(f)
 	if err != nil {
-		return nil, err
+		cfg.Local, cfg.Revision = s, rev
+		cfg.StartupNotice = "External settings overrides are invalid; using saved settings. Correct the override in Settings or its source."
+		return cfg, nil
 	}
 	validated.Local, validated.Origins, validated.Revision = s, cfg.Origins, rev
 	return validated, nil
