@@ -7,6 +7,7 @@ import (
 
 	"charm.land/lipgloss/v2"
 
+	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/unimatrix"
 )
 
@@ -109,6 +110,7 @@ func TestModelsAddFromList(t *testing.T) {
 	m := NewModelsModel(store)
 	m.view = mvListed
 	m.listed = []string{"brand-new-model"}
+	m.catalog = []babel.CatalogEntry{{ID: "brand-new-model", Type: "chat"}}
 	m.listedProv = m.dirty.Providers[0].Name
 	m.cursor = 0
 	m, _ = m.addFromList()
@@ -117,7 +119,7 @@ func TestModelsAddFromList(t *testing.T) {
 	}
 	found := false
 	for _, mo := range store.saved.Models {
-		if mo.ID == "brand-new-model" {
+		if mo.ID == m.listedProv+"::brand-new-model" && mo.RequestID() == "brand-new-model" {
 			found = true
 			if mo.Provider != m.listedProv || !mo.Can(unimatrix.CapChat) {
 				t.Errorf("added model malformed: %+v", mo)
@@ -179,11 +181,38 @@ func TestEditModelIDRewiresRoles(t *testing.T) {
 	}
 }
 
-// Settings no longer hosts a Models tab.
-func TestSettingsHasNoModelsTab(t *testing.T) {
+// Settings is the discoverable entry point to the model catalog.
+func TestSettingsHasModelsTab(t *testing.T) {
 	for _, tab := range settingsTabs {
 		if tab.key == "models" {
-			t.Error("models tab still present in Settings")
+			return
 		}
+	}
+	t.Fatal("Settings has no model catalog entry")
+}
+
+func TestCatalogIgnoresCanceledAndOlderRequests(t *testing.T) {
+	m := newTestModels()
+	older, active := new(int), new(int)
+	m.catalogRequest = active
+	m, _ = m.Update(modelsListedMsg{request: older, provider: "stale", ids: []string{"wrong"}})
+	if len(m.listed) != 0 {
+		t.Fatal("stale request changed catalog")
+	}
+	m.catalogRequest = nil
+	m, _ = m.Update(modelsListedMsg{request: active, provider: "canceled", ids: []string{"wrong"}})
+	if len(m.listed) != 0 {
+		t.Fatal("canceled request changed catalog")
+	}
+}
+
+func TestDiscoveryDoesNotGuessCapabilities(t *testing.T) {
+	store := &fakeStore{}
+	m := NewModelsModel(store)
+	m.listed, m.listedProv = []string{"reasoning-vision-tools-llama"}, m.dirty.Providers[0].Name
+	m, _ = m.addFromList()
+	last := store.saved.Models[len(store.saved.Models)-1]
+	if len(last.Capabilities) != 0 || last.ReasoningStyle != "none" {
+		t.Fatalf("guessed capabilities: %+v", last)
 	}
 }

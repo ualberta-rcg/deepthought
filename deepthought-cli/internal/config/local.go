@@ -110,7 +110,15 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 				db.Close()
 				return nil, e
 			}
-			s.explicit = fileMap(sf)
+			raw, readErr := os.ReadFile(path)
+			var selected map[string]any
+			if readErr == nil && json.Unmarshal(raw, &selected) == nil {
+				if _, legacy := selected["provider"]; legacy {
+					s.explicit = fileMap(sf) // v1 normalization changes field names
+				} else {
+					s.explicit = explicitFields(selected, fileMap(sf))
+				}
+			}
 		} else {
 			notice = "Explicit configuration is invalid; using saved settings. Original preserved."
 		}
@@ -127,6 +135,26 @@ func OpenLocal(path string, explicit bool) (*Config, error) {
 }
 
 func (s *LocalStore) Close() error { return s.db.Close() }
+
+// Override only keys actually present in an explicit document, using normalized
+// values so credentials stay references and nested defaults do not mask saves.
+func explicitFields(selected, normalized map[string]any) map[string]any {
+	out := map[string]any{}
+	for k, value := range selected {
+		n, ok := normalized[k]
+		if !ok {
+			continue
+		}
+		if nested, ok := value.(map[string]any); ok {
+			if nm, ok := n.(map[string]any); ok {
+				out[k] = explicitFields(nested, nm)
+				continue
+			}
+		}
+		out[k] = n
+	}
+	return out
+}
 
 func (s *LocalStore) SetServerDefaults(defaults, remote map[string]any) error {
 	clean := func(m map[string]any) (map[string]any, error) {

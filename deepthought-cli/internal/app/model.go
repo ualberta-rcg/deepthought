@@ -15,6 +15,7 @@ import (
 
 	"charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
@@ -397,6 +398,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case providerSavedMsg:
+		m.discoveryBusy = false
 		if event.Err != nil {
 			m.workspace.Notice = credential.Redact(event.Err.Error())
 			return m, nil
@@ -587,6 +589,12 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tui.ScreenChangeMsg:
+		if msg.To == tui.ScreenSettings {
+			m.settings = m.settings.Refresh()
+		}
+		if msg.To == tui.ScreenModels {
+			m.modelsScr = m.modelsScr.Refresh()
+		}
 		// A forward navigation (e.g. /settings, /context from chat): push the
 		// current screen so esc can return to it.
 		if msg.To == tui.ScreenContinue {
@@ -645,7 +653,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyPressMsg:
-		if msg.String() == "ctrl+p" && !m.screenCapturesKeys() {
+		if msg.String() == "ctrl+p" && m.overlay == nil && !m.screenCapturesKeys() {
 			m.showMenu()
 			return m, nil
 		}
@@ -715,6 +723,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) {
 	switch action {
 	case keybindings.Settings:
+		m.settings = m.settings.Refresh()
 		// F2 — push Settings onto the nav stack (esc returns here).
 		m.pushScreenOnce(tui.ScreenSettings)
 		return m, m.settings.Init()
@@ -737,6 +746,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		m.pushScreenOnce(tui.ScreenCron)
 		return m, m.cronScr.Init()
 	case keybindings.Models:
+		m.modelsScr = m.modelsScr.Refresh()
 		// F11 — the Models screen (the catalog's own home).
 		m.modelsScr = m.modelsScr.Resize(m.width, m.height)
 		m.pushScreenOnce(tui.ScreenModels)
@@ -929,7 +939,12 @@ func (m RootModel) View() tea.View {
 	if m.overlay != nil {
 		s = tui.OverlayCenter(s, m.overlay.View())
 	}
-	v := tea.NewView(credential.Redact(s))
+	// Keep every screen inside the terminal, including chat notices and overlays.
+	lines := strings.Split(credential.Redact(s), "\n")
+	for i := range lines {
+		lines[i] = ansi.Truncate(lines[i], max(0, m.width), "")
+	}
+	v := tea.NewView(strings.Join(lines, "\n"))
 	v.AltScreen = true // declarative in v2 — no tea.WithAltScreen()
 	// Place the input's real cursor when the chat is active and uncovered. (The
 	// textinputs use a virtual cursor rendered in their own View, so this is a
@@ -987,8 +1002,8 @@ func usageFunc(src history.ChatStoreSource) func() map[string]history.Cost {
 // Cluster poll cadence: fast while a live view (the sidebar or the Status
 // page) is showing, slow in the background — the data is LIVE when watched.
 const (
-	clusterPollFast = 3 * time.Minute
-	clusterPollSlow = 3 * time.Minute
+	clusterPollFast = 5 * time.Minute
+	clusterPollSlow = 15 * time.Minute
 )
 
 func (m RootModel) nextClusterPoll() time.Duration {

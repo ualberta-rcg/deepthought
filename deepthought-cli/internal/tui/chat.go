@@ -2,6 +2,7 @@ package tui
 
 import (
 	"context"
+	"deepthought-cli/internal/credential"
 	"fmt"
 	"net/url"
 	"os"
@@ -1407,6 +1408,8 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 // handleToolResult renders the result chrome, records the result on the probe,
 // advances the dispatch, and processes the next probe.
 func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
+	r.result.Content = credential.Redact(r.result.Content)
+	r.result.Summary = credential.Redact(r.result.Summary)
 	if r.persistErr != nil {
 		m.failTurn(r.persistErr)
 		return m, nil

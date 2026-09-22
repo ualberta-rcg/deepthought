@@ -13,8 +13,9 @@ host in the local profile. Scheduler-reported cluster identity is separate, so
 multiple login hosts can belong to one cluster. Renaming a host or replacing its
 machine ID creates a new observation identity; automatic merging is not attempted.
 
-`app_inventory` in `history.db` stores the latest host and service records, setup
-state, and model catalogs. It overwrites telemetry snapshots rather than retaining
+`app_inventory` in `history.db` stores stable host inventory separately from the
+latest `telemetry` snapshot, plus service records, setup state, and model catalogs.
+It overwrites telemetry snapshots rather than retaining
 an unlimited sample history. These records do not synchronize to DeepThought
 Server. Hosts & Services shows remembered hosts and last-seen timestamps.
 

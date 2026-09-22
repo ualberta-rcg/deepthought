@@ -204,8 +204,8 @@ func TestEscLadder(t *testing.T) {
 func TestTabSwitching(t *testing.T) {
 	m := newTestSettings()
 	m, _ = m.Update(keyPress(tea.KeyRight, ""))
-	if m.tabKeyOf() != "general" {
-		t.Errorf("right → %q, want general", m.tabKeyOf())
+	if m.tabKeyOf() != "models" {
+		t.Errorf("right → %q, want models", m.tabKeyOf())
 	}
 	m.cursor = 3
 	m, _ = m.Update(keyPress(tea.KeyRight, "")) // → providers

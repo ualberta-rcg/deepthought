@@ -78,6 +78,9 @@ func main() {
 		os.Exit(1)
 	}
 
+	if cfg.Local != nil {
+		defer cfg.Local.Close()
+	}
 	deps, droneStore := buildRuntime(cfg, cfgPath, attachID)
 	if droneStore == nil {
 		return

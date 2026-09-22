@@ -169,6 +169,15 @@ func (m SettingsModel) CapturingKeys() bool { return m.edit != nil && m.edit.kin
 
 func (m SettingsModel) Init() tea.Cmd { return nil }
 
+// Refresh preserves navigation while incorporating changes from other screens.
+func (m SettingsModel) Refresh() SettingsModel {
+	if m.store != nil && m.edit == nil && !m.adding {
+		m.dirty = m.store.Snapshot()
+		m.clampCursor()
+	}
+	return m
+}
+
 // --- update ------------------------------------------------------------------
 
 func (m SettingsModel) Update(msg tea.Msg) (SettingsModel, tea.Cmd) {
@@ -936,7 +945,8 @@ func (m SettingsModel) mark(i int, text string) string {
 // still reach every tab).
 func (m SettingsModel) tabRow() string {
 	cells := make([]string, 0, len(settingsTabs))
-	for i, t := range settingsTabs {
+	for i := m.tab; i < len(settingsTabs); i++ {
+		t := settingsTabs[i]
 		if i == m.tab {
 			cells = append(cells, lipgloss.NewStyle().
 				Foreground(colOnAccent).Background(colPrimary).Bold(true).
@@ -958,7 +968,7 @@ func (m SettingsModel) View() string {
 	m.vp.SetContent(strings.Join(rows, "\n"))
 	m.keepCursorVisible()
 
-	title := screenTitle("Settings")
+	title := screenTitle("Settings › " + settingsTabs[m.tab].label)
 	if m.saved != "" {
 		gap := m.width - 6 - lipgloss.Width(title) - lipgloss.Width(styleToast.Render(m.saved))
 		if gap < 1 {

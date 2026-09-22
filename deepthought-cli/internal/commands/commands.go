@@ -39,6 +39,7 @@ func Builtins() *Registry {
 		kind              Kind
 	}{
 		{"help", "show commands and keys", Local},
+		{"menu", "open navigation without function keys", Local},
 		{"doctor", "check local configuration and context", Local},
 		{"compact", "shorten older tool output while preserving originals", Local},
 		{"pin", "preserve a probe in context by history ID", Local},
@@ -54,7 +55,7 @@ func Builtins() *Registry {
 		{"jobs", "track submissions and review retry advice", Screen},
 		{"plan", "saved scientific plans and validation evidence", Screen},
 		{"context", "inspect the context manifest", Screen},
-		{"import", "import providers from local CLI settings", Local},
+		{"import", "review discovered providers before connecting", Local},
 		{"resume", "continue an interrupted turn", Local},
 		{"quit", "exit DeepThought", Local},
 	}

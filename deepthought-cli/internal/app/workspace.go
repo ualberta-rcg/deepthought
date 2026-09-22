@@ -105,6 +105,7 @@ func (m RootModel) discoverCmd(auto bool) tea.Cmd {
 }
 func (m RootModel) collectHostCmd() tea.Cmd {
 	store := m.localStore()
+	scheduler := m.lastCluster
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -112,7 +113,28 @@ func (m RootModel) collectHostCmd() tea.Cmd {
 		if store != nil {
 			s = store
 		}
-		return hostMsg{Record: host.Collect(ctx, s)}
+		r := host.Collect(ctx, s)
+		if !scheduler.FetchedAt.IsZero() {
+			r.Services = append([]host.Service(nil), r.Services...)
+			for i := range r.Services {
+				service := &r.Services[i]
+				if service.Kind != "Slurm" {
+					continue
+				}
+				service.Source, service.LastSeen = "sinfo / user-scoped squeue", scheduler.FetchedAt
+				service.Availability = "available"
+				if scheduler.Err != nil || time.Since(scheduler.FetchedAt) > 15*time.Minute {
+					service.Availability = "unavailable or stale"
+				}
+				if scheduler.JobsKnown {
+					service.Capabilities = []string{"own job monitoring"}
+				}
+				if store != nil {
+					_ = store.WriteRecord("service", service.ID, service)
+				}
+			}
+		}
+		return hostMsg{Record: r}
 	}
 }
 func (m *RootModel) showHosts() {
@@ -162,8 +184,12 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	case "candidates":
 		m.showCandidates()
 	case "accept-provider":
+		if m.discoveryBusy {
+			return m, nil
+		}
 		for _, c := range m.candidates {
 			if c.ID == a.ID {
+				m.discoveryBusy = true
 				live := m.deps.Live
 				m.workspace.Notice = "Saving selected provider…"
 				return m, func() tea.Msg {

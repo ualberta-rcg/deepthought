@@ -17,7 +17,10 @@ func observationRows(e EnvInfo) []string {
 	if r.CollectedAt.IsZero() {
 		return []string{kv("observations", "collecting in background")}
 	}
-	rows := []string{kv("host type", r.Kind), kv("observed", r.CollectedAt.Format("2006-01-02 15:04:05 MST")), kv("freshness", fmt.Sprintf("stale=%t", r.Stale())), kv("physical memory", fmt.Sprintf("%d/%d GiB used", r.MemoryUsed>>30, r.MemoryTotal>>30)), kv("CPU cgroup quota", r.CPULimit), kv("memory cgroup limit", r.MemoryLimit)}
+	rows := []string{kv("host type", r.Kind), kv("observed", r.CollectedAt.Format("2006-01-02 15:04:05 MST")), kv("freshness", fmt.Sprintf("stale=%t", r.Stale())), kv("host CPUs", fmt.Sprint(r.CPUs)), kv("CPU cgroup quota", r.CPULimit), kv("memory cgroup limit", r.MemoryLimit)}
+	if r.MemoryKnown {
+		rows = append(rows, kv("host memory", fmt.Sprintf("%d/%d GiB used", r.MemoryUsed>>30, r.MemoryTotal>>30)))
+	}
 	if r.CPUKnown {
 		rows = append(rows, kv("host CPU utilization", fmt.Sprintf("%.1f%%", r.CPUPercent)))
 	}

@@ -22,9 +22,6 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 	}
 	total := c.NodesTotal
 	up := c.NodesUp
-	if up == 0 && total > 0 {
-		up = total // fallback when the %t parse yielded nothing
-	}
 	down := total - up
 	nodeFrac, cpuF, memF, gpuF := 0.0, 0.0, 0.0, 0.0
 	if total > 0 {
@@ -52,23 +49,19 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 	}
 	if c.GPUs > 0 {
 		avail := c.GPUs - c.GPUsUsed
-		usable := avail
-		if c.GPUUsable > 0 {
-			usable = c.GPUUsable
-		}
 		typ := ""
 		if c.GPUType != "" {
 			typ = " " + c.GPUType
 		}
-		body = append(body, fmt.Sprintf("  gpus   %s  %d%%  (%d/%d%s · %d avail · %d usable)",
-			healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail, usable))
+		body = append(body, fmt.Sprintf("  gpus   %s  %d%% allocated (%d/%d%s · %d unallocated)",
+			healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail))
 	}
 	return Section{
 		Title:  "Cluster",
-		Extra:  fmt.Sprintf("%d running · %d pending", c.JobsRunning, c.JobsPending),
+		Extra:  fmt.Sprintf("your jobs: %d running · %d pending", c.JobsRunning, c.JobsPending),
 		Rows:   body,
-		Note:   "whole-cluster load, not your usage; usable = GPU + the CPU/RAM to back it.",
-		Source: "sinfo · squeue -t PD",
+		Note:   "Cluster allocations, not measured utilization or a guarantee that a job can start.",
+		Source: "sinfo · squeue --me",
 	}.Render()
 }
 
@@ -85,7 +78,11 @@ func renderJobsBlock(c slurm.ClusterSnapshot) []string {
 	}
 	body := []string{}
 	if len(c.YourJobs) == 0 {
-		body = append(body, "  "+emptyRow("active jobs"))
+		if c.JobsKnown {
+			body = append(body, "  "+emptyRow("active jobs"))
+		} else {
+			body = append(body, "  Job query unavailable; retry later")
+		}
 	} else {
 		for _, j := range c.YourJobs {
 			stStyle := lipgloss.NewStyle().Foreground(barWarn)
@@ -133,7 +130,7 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 	return Section{
 		Title:  "Fairshare",
 		Rows:   body,
-		Note:   "who goes first when the cluster is full; 1 = front of the queue. Recovers on its own as past usage decays.",
+		Note:   "Fairshare is one scheduling factor, not a queue position or predicted start time.",
 		Source: "sshare",
 	}.Render()
 }

@@ -45,13 +45,14 @@ type ModelsModel struct {
 	entityRef string // model id at open time
 
 	// async: test + discovery
-	testing       string
-	testResult    string
-	listed        []string
-	catalog       []babel.CatalogEntry
-	catalogCancel context.CancelFunc
-	listedProv    string
-	listedSel     int
+	testing        string
+	testResult     string
+	listed         []string
+	catalog        []babel.CatalogEntry
+	catalogCancel  context.CancelFunc
+	catalogRequest *int
+	listedProv     string
+	listedSel      int
 
 	saved  string
 	vp     viewport.Model
@@ -72,6 +73,13 @@ func (m ModelsModel) CapturingKeys() bool { return m.edit != nil && m.edit.kind 
 
 func (m ModelsModel) Init() tea.Cmd { return nil }
 
+func (m ModelsModel) Refresh() ModelsModel {
+	if m.store != nil && m.edit == nil {
+		m.dirty = m.store.Snapshot()
+	}
+	return m
+}
+
 // --- async messages -------------------------------------------------------------
 
 type modelTestResultMsg struct {
@@ -82,6 +90,7 @@ type modelTestResultMsg struct {
 	err     error
 }
 type modelsListedMsg struct {
+	request  *int
 	provider string
 	ids      []string
 	entries  []babel.CatalogEntry
@@ -103,6 +112,10 @@ func (m ModelsModel) Update(msg tea.Msg) (ModelsModel, tea.Cmd) {
 		m.saved = m.testResult
 		return m, nil
 	case modelsListedMsg:
+		if msg.request != m.catalogRequest {
+			return m, nil
+		}
+		m.catalogCancel = nil
 		if msg.err != nil {
 			m.saved = "✗ " + msg.err.Error()
 			m.view = mvList
@@ -135,6 +148,12 @@ func (m ModelsModel) Update(msg tea.Msg) (ModelsModel, tea.Cmd) {
 	}
 	switch key.String() {
 	case "esc", "q":
+		if m.catalogCancel != nil {
+			m.catalogCancel()
+			m.catalogCancel, m.catalogRequest = nil, nil
+			m.saved = "Discovery canceled"
+			return m, nil
+		}
 		return m.escBack()
 	case "pgup", "pgdown", "home", "end":
 		var cmd tea.Cmd
@@ -388,6 +407,8 @@ func (m ModelsModel) discoverModels(name string, refresh bool) (ModelsModel, tea
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second)
 	m.catalogCancel = cancel
+	request := new(int)
+	m.catalogRequest = request
 	m.saved = "listing " + name + "…"
 	store := m.store
 	return m, tea.Cmd(func() tea.Msg {
@@ -402,7 +423,7 @@ func (m ModelsModel) discoverModels(name string, refresh bool) (ModelsModel, tea
 		} else {
 			client, err := store.ProviderClient(name)
 			if err != nil {
-				return modelsListedMsg{provider: name, err: err}
+				return modelsListedMsg{request: request, provider: name, err: err}
 			}
 			entries, err = client.ListCatalog(ctx)
 		}
@@ -410,7 +431,7 @@ func (m ModelsModel) discoverModels(name string, refresh bool) (ModelsModel, tea
 		for _, e := range entries {
 			ids = append(ids, e.ID)
 		}
-		return modelsListedMsg{provider: name, ids: ids, entries: entries, notice: notice, err: err}
+		return modelsListedMsg{request: request, provider: name, ids: ids, entries: entries, notice: notice, err: err}
 	})
 }
 

@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-22 · deepthought-cli, docs — harden setup navigation and observation semantics
+- Fix narrow-terminal clipping and visible Settings tabs; refresh settings when reopening, cancel catalog requests and ignore late results, prevent duplicate provider acceptance, and preserve explicit-file field precedence.
+- Label fairshare, allocations and unavailable jobs accurately; retain last-success timestamps, separate host inventory from telemetry, and record observed scheduler availability. Scrub known credentials at the model-request boundary and from stored tool results.
+- Files: CLI application, configuration, credential, host, scheduler, TUI, transport, commands and tests; root/CLI operational documentation.
+- Verification: previous branch CI 35682251614 passed vet and new migration/discovery/catalog tests, exposed old-layout expectations and 40-column overflow; corrected with regressions. gofmt and git diff --check pass. Full verification is delegated to the next CI run.
+
 ## 2026-09-22 · deepthought-cli, docs — setup acceptance tests and research-computing README
 - Adapt Aleph's institutional README header, support, license and Research Computing footer into a self-contained DeepThought README; copy only the university logo. Add setup and host guides.
 - Add synthetic discovery, migration, precedence, offline navigation and model-catalog tests; fix the first CI compile error, preserve unknown legacy model IDs, and prevent credential-bearing server synchronization.

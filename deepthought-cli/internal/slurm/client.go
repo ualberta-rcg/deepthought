@@ -302,6 +302,7 @@ type ClusterSnapshot struct {
 	StorageRows    []StorageRow   // parsed home/scratch/project usage for bars
 	Partitions     []PartitionRow
 	YourJobs       []Job
+	JobsKnown      bool
 	Err            error
 }
 
@@ -334,6 +335,7 @@ type StorageRow struct {
 var snapshotCache struct {
 	sync.Mutex
 	value     ClusterSnapshot
+	attemptAt time.Time
 	accountAt time.Time
 	quotaAt   time.Time
 	quota     []string
@@ -342,14 +344,14 @@ var snapshotCache struct {
 func Snapshot(ctx context.Context) ClusterSnapshot {
 	snapshotCache.Lock()
 	defer snapshotCache.Unlock()
-	if time.Since(snapshotCache.value.FetchedAt) < 5*time.Minute {
+	if time.Since(snapshotCache.attemptAt) < 5*time.Minute {
 		return snapshotCache.value
 	}
 	value := snapshot(ctx)
+	snapshotCache.attemptAt = time.Now()
 	if value.Err != nil && !snapshotCache.value.FetchedAt.IsZero() {
 		old := snapshotCache.value
 		old.Err = value.Err
-		old.FetchedAt = value.FetchedAt
 		value = old
 	}
 	snapshotCache.value = value
@@ -399,6 +401,7 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 	// Your jobs: id|partition|name|state|time|reason.
 	if user := os.Getenv("USER"); user != "" {
 		if raw, err := runner.Run(ctx, "squeue", "-h", "-o", "%i|%P|%j|%T|%M|%R", "-u", user); err == nil {
+			s.JobsKnown = true
 			for _, line := range strings.Split(string(raw), "\n") {
 				line = strings.TrimSpace(line)
 				if line == "" {
@@ -479,7 +482,7 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 	// Parsed storage usage (home/scratch/projects) for bars, from df.
 	s.StorageRows = gatherStorageRows(ctx, runner)
 
-	if s.NodesTotal == 0 && s.CPUTotal == 0 && len(s.Partitions) == 0 {
+	if s.NodesTotal == 0 && s.CPUTotal == 0 && len(s.Partitions) == 0 && !s.JobsKnown {
 		s.Err = fmt.Errorf("slurm: no status gathered (sinfo/squeue returned nothing)")
 	}
 	return s

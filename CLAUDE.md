@@ -32,18 +32,19 @@ identifiers must not reintroduce them.
 
 - Update `CLAUDE.md` files and `docs/` as decisions land. Don't silently change
   recorded direction — if a north star shifts, edit the file to match and say so.
-- No secrets in the tree: API keys come from env vars; real config
+- No secrets in the tree: API keys use explicit environment references or private
+  local credential storage; real config
   (`deepthought-cli/configs/config.json`) is gitignored, only the example is
   committed; SSH keys never enter the repo.
 
 ## Environment (Vulcan HPC login node)
 
-- **CI/CD is the build system** (`.github/workflows/build-cli.yml` vets, tests —
-  including the MySQL store tests against a service container — race-checks, and
+- **CI/CD is the build system** (`.github/workflows/build-cli.yml` vets, tests,
+  race-checks, and
   publishes the static CLI binary as an artifact; `build-server.yml` builds and
   pushes the server image to Docker Hub). Never build on the shared login node,
-  and **never use Slurm or CVMFS/modules** — the compute is kube-backed and has
-  no CVMFS.
+  and do not use Slurm or CVMFS/modules for this repository's builds. The separate
+  server deployment is Kubernetes-backed; this does not describe the clients' hosts.
 - **The only manual deploy step is applying the server-side YAML**: the numbered
   manifests on the aleph1 control-plane (`57-deepthought.yaml`,
   `58-deepthought-mysql.yaml`), bumping the image tag to the CI-built one.
@@ -63,10 +64,10 @@ identifiers must not reintroduce them.
 
 ## Build & run (deepthought-cli)
 
-```
-make -C deepthought-cli build      # → $SCRATCH/deepthought-cli/deepthought-cli.new
-make -C deepthought-cli deploy     # atomic swap into $SCRATCH/deepthought-cli/deepthought-cli
-make -C deepthought-cli check      # go vet + go test
-```
+Edit → push implementation branch → GitHub Actions. The `improve/**` and PR
+lanes vet, test, race-check and build without publishing; only a push to main
+publishes the rolling CLI release. The server has its own module and workflow.
 
-The binary serves the TUI over SSH (`deepthought-cli --sub-etha :2323`).
+Run `deepthought-cli` standalone, or serve the TUI over SSH with
+`deepthought-cli --sub-etha :2323`. Inference configuration is optional at startup.
+See [setup](docs/SETUP.md) and [host inventory](docs/HOSTS.md).

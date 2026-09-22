@@ -41,6 +41,7 @@ type Record struct {
 	CPULimit, MemoryLimit, GPU                                          string
 	CPUPercent                                                          float64
 	CPUKnown                                                            bool
+	MemoryKnown                                                         bool
 	Allocation                                                          Allocation
 	Services                                                            []Service
 	Storage                                                             []Storage
@@ -115,10 +116,21 @@ func Collect(ctx context.Context, store Store) Record {
 		}
 	}
 	r.MemoryTotal = mem["MemTotal"]
-	if r.MemoryTotal >= mem["MemAvailable"] {
+	if _, ok := mem["MemAvailable"]; ok && r.MemoryTotal > 0 && r.MemoryTotal >= mem["MemAvailable"] {
 		r.MemoryUsed = r.MemoryTotal - mem["MemAvailable"]
+		r.MemoryKnown = true
 	}
-	fields := strings.Fields(strings.Split(SmallFile("/proc/stat"), "\n")[0])
+	statLines := strings.Split(SmallFile("/proc/stat"), "\n")
+	cpus := 0
+	for _, line := range statLines {
+		if strings.HasPrefix(line, "cpu") && len(line) > 3 && line[3] >= '0' && line[3] <= '9' {
+			cpus++
+		}
+	}
+	if cpus > 0 {
+		r.CPUs = cpus
+	}
+	fields := strings.Fields(statLines[0])
 	var total, idle uint64
 	for i := 1; i < len(fields) && i <= 8; i++ {
 		v, _ := strconv.ParseUint(fields[i], 10, 64)
@@ -186,7 +198,12 @@ func Collect(ctx context.Context, store Store) Record {
 		}
 	}
 	if store != nil {
-		_ = store.WriteRecord("host", id, r)
+		inventory := r
+		inventory.CPUPercent, inventory.MemoryUsed = 0, 0
+		inventory.CPUKnown, inventory.MemoryKnown = false, false
+		inventory.Allocation, inventory.GPU, inventory.Storage, inventory.Services = Allocation{}, "", nil, nil
+		_ = store.WriteRecord("host", id, inventory)
+		_ = store.WriteRecord("telemetry", id, r)
 		for _, s := range r.Services {
 			_ = store.WriteRecord("service", s.ID, s)
 		}

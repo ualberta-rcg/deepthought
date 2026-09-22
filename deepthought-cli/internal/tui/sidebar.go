@@ -75,7 +75,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 		if r.Stale() {
 			hostRows = append(hostRows, " stale observations")
 		}
-		if r.MemoryTotal > 0 {
+		if r.MemoryKnown {
 			hostRows = append(hostRows, clipLine(fmt.Sprintf(" RAM %s %d/%d GiB", healthBar(float64(r.MemoryUsed)/float64(r.MemoryTotal), max(4, w-24)), r.MemoryUsed>>30, r.MemoryTotal>>30), w))
 		}
 		if r.CPUKnown {

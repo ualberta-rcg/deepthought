@@ -9,6 +9,7 @@ import (
 	"bufio"
 	"bytes"
 	"context"
+	"deepthought-cli/internal/credential"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -273,7 +274,14 @@ type wireResponse struct {
 // Chat sends req to {BaseURL}/chat/completions and returns the assistant's reply.
 // A non-2xx response is returned as an error that includes the status and a snippet
 // of the body so gateway errors (cold-start 503s, bad model ids) are debuggable.
-func (c *Client) Chat(ctx context.Context, req ChatRequest) (Reply, error) {
+func (c *Client) Chat(ctx context.Context, req ChatRequest) (result Reply, resultErr error) {
+	credential.Register("provider:"+c.BaseURL, c.APIKey)
+	req = redactRequest(req)
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.New(credential.Redact(resultErr.Error()))
+		}
+	}()
 	if c.Wire == "anthropic" {
 		return c.chatAnthropic(ctx, req)
 	}
@@ -478,7 +486,14 @@ type streamChunk struct {
 // fragment (including the first) may carry an arguments string delta. We accumulate
 // per index, then return the calls sorted by index. arguments is left as a raw JSON
 // string for the caller to parse against the tool's schema.
-func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (Reply, error) {
+func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (result Reply, resultErr error) {
+	credential.Register("provider:"+c.BaseURL, c.APIKey)
+	req = redactRequest(req)
+	defer func() {
+		if resultErr != nil {
+			resultErr = errors.New(credential.Redact(resultErr.Error()))
+		}
+	}()
 	if c.Wire == "anthropic" {
 		return c.chatStreamAnthropic(ctx, req, fn)
 	}
