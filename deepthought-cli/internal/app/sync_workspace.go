@@ -72,6 +72,7 @@ func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.syncBusy = true
+		m.credChecked = false
 		m.showServerSync()
 		return m, settingsSyncCmd(m.syncWorker)
 	case "disconnect-server":

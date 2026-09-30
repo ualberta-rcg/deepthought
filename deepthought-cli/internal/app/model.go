@@ -88,31 +88,35 @@ type RootModel struct {
 	status                          tui.StatusInfo // feeds the top bar
 	clock                           time.Time      // live clock; updated by TickMsg
 	lastCtrlC                       time.Time
-	width                           int
-	height                          int
-	sessionID                       string
-	healthOK                        bool // last model-health ping (drives the Status dashboard)
-	healthMsg                       string
-	lastCluster                     slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
-	clusterGeneration               uint64
-	splash                          tui.SplashModel
-	server                          *ServerSession // non-nil after a successful splash server login
-	syncWorker                      *SettingsSync
-	syncBusy, connecting            bool
-	connectionNotice                string
-	lastMirrorRetry                 time.Time
-	wasBusy                         bool // last observed chat busy state (turn-end push edge)
-	chat                            tui.ChatModel
-	continue_                       tui.ContinueModel
-	settings                        tui.SettingsModel
-	grid                            tui.GridModel
-	statusScr                       tui.StatusModel
-	modelsScr                       tui.ModelsModel
-	cronScr                         tui.CronModel
-	jobsScr                         tui.JobsModel
-	plansScr                        tui.PlansModel
-	env                             tui.EnvInfo
-	sidebar                         tui.SidebarData
+	// credChecked is set once credential sync ran for the current login;
+	// credPlan holds the items under review.
+	credChecked          bool
+	credPlan             []credItem
+	width                int
+	height               int
+	sessionID            string
+	healthOK             bool // last model-health ping (drives the Status dashboard)
+	healthMsg            string
+	lastCluster          slurm.ClusterSnapshot // latest snapshot, to seed freshly built chats
+	clusterGeneration    uint64
+	splash               tui.SplashModel
+	server               *ServerSession // non-nil after a successful splash server login
+	syncWorker           *SettingsSync
+	syncBusy, connecting bool
+	connectionNotice     string
+	lastMirrorRetry      time.Time
+	wasBusy              bool // last observed chat busy state (turn-end push edge)
+	chat                 tui.ChatModel
+	continue_            tui.ContinueModel
+	settings             tui.SettingsModel
+	grid                 tui.GridModel
+	statusScr            tui.StatusModel
+	modelsScr            tui.ModelsModel
+	cronScr              tui.CronModel
+	jobsScr              tui.JobsModel
+	plansScr             tui.PlansModel
+	env                  tui.EnvInfo
+	sidebar              tui.SidebarData
 	// screenStack is the navigation history for esc-back. Chat (ScreenChat) is the
 	// immutable root and is never pushed; when the stack is empty you're home and
 	// esc is a no-op. Overlays are separate (overlay/overlayStack below).
@@ -648,6 +652,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.server = msg.Session
 		m.connectionNotice = ""
+		m.credChecked = false
 		m.syncWorker = m.deps.Live.SyncWorker(m.server)
 		m.syncBusy = true
 		if s := m.localStore(); s != nil {
@@ -675,6 +680,11 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Status.State == "Needs attention" {
 			m.sidebar.Alerts = []string{"Settings sync needs attention · Ctrl+P → Server"}
 		}
+		var credCmd tea.Cmd
+		if msg.Status.State == "Synced" && !m.credChecked && m.server != nil {
+			m.credChecked = true
+			credCmd = credentialCheckCmd(m.deps.Live, m.server)
+		}
 		m.settings = m.settings.Refresh()
 		m.modelsScr = m.modelsScr.Refresh()
 		m.chatResize()
@@ -684,7 +694,19 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Status.Detail != "" {
 			m.chat = m.chat.Notice("Settings sync: " + msg.Status.Detail)
 		}
-		return m, nil
+		return m, credCmd
+	case credentialPlanMsg:
+		return m.credentialPlan(msg)
+	case tui.CredentialReviewDoneMsg:
+		items := m.credPlan
+		m.credPlan = nil
+		if msg.Cancelled || m.server == nil {
+			m.chat = m.chat.Notice("Provider key sync skipped; you will be asked again at the next login.")
+			return m, nil
+		}
+		return m, credentialApplyCmd(m.deps.Live, m.server, applyReviewChoices(items, msg.Picks))
+	case credentialAppliedMsg:
+		return m.credentialApplied(msg.Summary, msg.Err)
 	case serverSyncResultMsg:
 		if msg.Expired && m.server != nil {
 			m.sessionExpired()

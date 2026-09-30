@@ -1475,6 +1475,26 @@ func providerFieldDefs(ref string) []fieldDef {
 				f.Providers[i].Anonymous = e.value() == "true"
 				return nil
 			}},
+		{"sync key to server", fEnum, false, []string{"yes", "no"},
+			func(f *config.File) string {
+				if i := find(f); i >= 0 && f.Providers[i].SyncCredential != nil && !*f.Providers[i].SyncCredential {
+					return "no"
+				}
+				return "yes"
+			}, nil,
+			func(f *config.File, e *fieldEdit) error {
+				i := find(f)
+				if i < 0 {
+					return fmt.Errorf("provider was removed elsewhere")
+				}
+				if e.value() == "no" {
+					off := false
+					f.Providers[i].SyncCredential = &off
+				} else {
+					f.Providers[i].SyncCredential = nil
+				}
+				return nil
+			}},
 		{"tags", fText, false, nil,
 			func(f *config.File) string {
 				if i := find(f); i >= 0 {

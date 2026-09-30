@@ -32,6 +32,7 @@ func Shared(f File) SharedDocument {
 			}
 			delete(p, "api_key")
 			delete(p, "manifest")
+			delete(p, "sync_credential")
 			kept = append(kept, p)
 		}
 		out["providers"] = kept
@@ -81,6 +82,7 @@ func ApplyShared(local File, doc SharedDocument) (File, error) {
 		for _, p := range local.Providers {
 			if p.Name == out.Providers[i].Name && strings.TrimRight(p.BaseURL, "/") == strings.TrimRight(out.Providers[i].BaseURL, "/") && p.Wire == out.Providers[i].Wire {
 				out.Providers[i].APIKey = p.APIKey
+				out.Providers[i].SyncCredential = p.SyncCredential
 			}
 		}
 	}

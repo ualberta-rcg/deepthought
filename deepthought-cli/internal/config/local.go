@@ -312,6 +312,7 @@ func Portable(f File) File {
 	for i := range out.Providers {
 		out.Providers[i].APIKey = ""
 		out.Providers[i].Manifest = ""
+		out.Providers[i].SyncCredential = nil
 	}
 	out.Server = nil
 	return out

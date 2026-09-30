@@ -129,10 +129,33 @@ by the server.
 Shared settings include inference providers/endpoints, model definitions, roles,
 routing, language, appearance, shortcuts, and inference preferences. Credentials,
 server login, executable hooks, permissions, scientific tool bindings, host
-inventory, and transient environment/session overrides stay local. A provider
-downloaded onto another client needs a local credential binding. Changing its
-endpoint or protocol clears the old binding so a key is not sent to a new service.
-The synchronization view shows pending work, last success, and recoverable errors.
+inventory, and transient environment/session overrides stay local. Changing a
+provider's endpoint or protocol clears the old binding so a key is not sent to a
+new service. The synchronization view shows pending work, last success, and
+recoverable errors.
+
+### Provider keys
+
+Keys travel on their own channel, after the settings sync, and never inside the
+settings document. For each synced provider the client compares its key with
+the server copy by fingerprint (an HMAC under a per-user salt, so neither side
+reveals the key) and plans one of: upload (only this machine has a key),
+download (only the server has one) or a conflict (both, and they differ).
+`$VARIABLE` references are synced as the reference; literal keys are stored on
+the server encrypted with its vault key, and servers without a vault keep them
+local.
+
+The first login on a machine shows one review of the whole plan (←→ changes an
+action, enter applies, esc skips until the next login). After that uploads and
+downloads happen on their own and only conflicts ask. A downloaded literal key
+is written to the local `secrets.env` and bound to the provider, so the machine
+works standalone afterwards. Set **sync key to server: no** on a provider in
+Settings › Providers to keep its key off the server. Disconnecting does not
+delete server copies. Servers without the credential endpoints are simply
+skipped.
+
+The test server uses a shared password, so anyone who holds it can read every
+synced key; see [deployment](DEPLOYMENT.md#credential-vault).
 
 ## Navigation
 

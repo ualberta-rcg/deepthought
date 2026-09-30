@@ -49,6 +49,9 @@ type Provider struct {
 	CooldownMS    int      `json:"cooldown_ms,omitempty"`
 	MaxUSD        float64  `json:"max_usd,omitempty"`
 	MaxTokens     int      `json:"max_tokens_budget,omitempty"`
+	// SyncCredential false keeps this provider's key off the server. Local
+	// only: never part of the shared settings document.
+	SyncCredential *bool `json:"sync_credential,omitempty"`
 }
 
 type Route struct {
