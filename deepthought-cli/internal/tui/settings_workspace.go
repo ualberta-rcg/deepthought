@@ -9,10 +9,9 @@ import (
 )
 
 func keyboardFields() []fieldDef {
-	actions := []keybindings.Action{keybindings.Settings, keybindings.Help, keybindings.Model, keybindings.Effort, keybindings.NewChat, keybindings.Resume, keybindings.ContextView, keybindings.Cron, keybindings.QueenMode, keybindings.Sidebar, keybindings.Models, keybindings.Diagnostics}
 	var out []fieldDef
-	for _, action := range actions {
-		a := action
+	for _, info := range keybindings.Actions() {
+		a := info.Action
 		out = append(out, fieldDef{label: strings.TrimPrefix(string(a), "app:"), kind: fText,
 			get: func(f *config.File) string {
 				v := map[string]keybindings.Action{}

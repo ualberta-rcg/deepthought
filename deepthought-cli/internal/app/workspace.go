@@ -45,29 +45,6 @@ func (m *RootModel) showWorkspace(title, notice string, items []tui.WorkspaceIte
 	m.workspace = tui.WorkspaceModel{Title: title, Notice: notice, Items: items, Width: m.width, Height: m.height}
 	m.pushScreenOnce(tui.ScreenWorkspace)
 }
-func (m *RootModel) showMenu() {
-	items := []tui.WorkspaceItem{
-		{Label: "Continue working", Kind: "home"}, {Label: "Settings", Kind: "action", ID: string(keybindings.Settings)},
-		{Label: "Discover AI providers", Detail: "Review credentials and endpoints before connecting", Kind: "discover"},
-		{Label: "Models and provider catalogs", Kind: "action", ID: string(keybindings.Models)},
-		{Label: "Switch active model", Kind: "action", ID: string(keybindings.Model)},
-		{Label: "Reasoning effort", Kind: "action", ID: string(keybindings.Effort)},
-		{Label: "New chat", Kind: "action", ID: string(keybindings.NewChat)},
-		{Label: "Continue a saved chat", Kind: "action", ID: string(keybindings.Resume)},
-		{Label: "Context", Kind: "action", ID: string(keybindings.ContextView)},
-		{Label: "Jobs", Kind: "screen", ID: strconv.Itoa(int(tui.ScreenJobs))},
-		{Label: "Plans", Kind: "screen", ID: strconv.Itoa(int(tui.ScreenPlans))},
-		{Label: "Cron", Kind: "action", ID: string(keybindings.Cron)},
-		{Label: "Permission mode", Kind: "action", ID: string(keybindings.QueenMode)},
-		{Label: "Sidebar visibility", Kind: "action", ID: string(keybindings.Sidebar)},
-		{Label: "Status", Kind: "action", ID: string(keybindings.Diagnostics)},
-		{Label: "Hosts and services", Kind: "hosts"},
-		{Label: "Server connection and synchronization", Kind: "server-sync"},
-		{Label: "Refresh scientific endpoints", Detail: "Connect to explicitly configured tool servers", Kind: "tools"},
-		{Label: "Help / install on another machine", Kind: "help"},
-	}
-	m.showWorkspace("Navigation", "All function-key actions are available here.", items)
-}
 func (m *RootModel) showCandidates() {
 	items := []tui.WorkspaceItem{}
 	for _, c := range m.candidates {
@@ -164,7 +141,7 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	case "server-sync", "connect-server", "disconnect-server", "sync-now", "resolve-local", "resolve-remote", "retry-mirror":
 		return m.syncAction(a)
 	case "menu":
-		m.showMenu()
+		m.openPalette()
 	case "home":
 		m.screen = tui.ScreenChat
 		m.screenStack = nil
@@ -255,7 +232,7 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	case "refresh-host":
 		return m, m.collectHostCmd()
 	case "help":
-		m.showWorkspace("Help", "Ctrl+P opens navigation; Settings contains configuration and shortcuts.", []tui.WorkspaceItem{{Label: "Install on another machine (copy only)", Detail: tui.InstallCommand, Kind: "install"}, {Label: "Keyboard shortcuts", Kind: "settings-tab", ID: "keyboard"}, {Label: "Configure providers", Kind: "discover"}, {Label: "Open Settings", Kind: "action", ID: string(keybindings.Settings)}})
+		m.showWorkspace("Help", "Ctrl+P opens the command palette; Settings contains configuration and shortcuts.", []tui.WorkspaceItem{{Label: "Install on another machine (copy only)", Detail: tui.InstallCommand, Kind: "install"}, {Label: "Keyboard shortcuts", Kind: "settings-tab", ID: "keyboard"}, {Label: "Configure providers", Kind: "discover"}, {Label: "Open Settings", Kind: "action", ID: string(keybindings.Settings)}})
 	case "install":
 		m.showWorkspace("Install on another machine", "Copy only; DeepThought never executes this command.", []tui.WorkspaceItem{{Label: "Copy full install command", Detail: tui.InstallCommand, Kind: "copy-install"}, {Label: "Full command is also in README.md and docs/SETUP.md"}})
 	case "copy-install":
@@ -303,7 +280,7 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		if err != nil {
 			m.workspace.Notice = "Import failed; existing settings retained."
 		} else {
-			m.workspace.Notice = "Imported settings; Ctrl+P opens navigation."
+			m.workspace.Notice = "Imported settings; Ctrl+P opens the command palette."
 		}
 	}
 	return m, nil

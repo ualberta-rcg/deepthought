@@ -30,3 +30,19 @@ Rules:
   prefixed `~`; the context meter always pairs the bar with the exact percent.
 - **ctrl+c is progressive**: close overlay → interrupt the running turn →
   clear the typed prompt → (press again within 2 s) quit.
+
+## Command palette
+
+Ctrl+P (and `/menu`) opens the palette (`internal/tui/palette.go`), a `Dialog`
+around a `List`. Empty input shows recent picks, then a short discover set;
+typing fuzzy-searches every entry. Tab / Shift+Tab cycle
+All · Actions · Screens · Settings · Chats · Slash; ↑↓ or Ctrl+P/Ctrl+N move;
+Esc clears the query, then closes. Rows carry the bound key.
+
+Entries come from one registry: bindable actions and their labels live in
+`internal/keybindings/actions.go` (also read by the F-key labels and
+Settings › Shortcuts), and `internal/app/actions.go` adds screens, settings
+sections, the ten most recent chats and slash commands. Every entry dispatches
+through the same `WorkspaceAction` handler as the menus. The last twelve
+picks are stored in the local database (`palette-recent` record) and lead the
+list.

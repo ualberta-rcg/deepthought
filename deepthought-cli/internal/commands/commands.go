@@ -73,6 +73,17 @@ func Builtins() *Registry {
 	return New(out...)
 }
 
+// All returns the visible commands in registration order.
+func (r *Registry) All() []Command {
+	out := make([]Command, 0, len(r.commands))
+	for _, c := range r.commands {
+		if !c.Hidden {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
 func (r *Registry) Lookup(name string) (Command, bool) {
 	name = strings.TrimPrefix(strings.ToLower(strings.TrimSpace(name)), "/")
 	for _, command := range r.commands {

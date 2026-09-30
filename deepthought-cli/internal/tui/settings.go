@@ -63,6 +63,18 @@ var settingsTabs = []settingsTab{
 	{"system", "System"}, // read-only: host descriptor + storage + keybindings
 }
 
+// SettingsSection is a settings tab reachable from the command palette.
+type SettingsSection struct{ Key, Label string }
+
+// SettingsSections lists every settings tab in display order.
+func SettingsSections() []SettingsSection {
+	out := make([]SettingsSection, len(settingsTabs))
+	for i, t := range settingsTabs {
+		out[i] = SettingsSection{Key: t.key, Label: t.label}
+	}
+	return out
+}
+
 // settingsHint is the dim one-liner under the tab row.
 const settingsHint = "enter edit · esc back · every change saves immediately"
 
@@ -1910,32 +1922,8 @@ func envOr(key, fallback string) string {
 
 func functionKeyLabel(n int) string {
 	// Derived from the REAL default bindings — never a second table to drift.
-	action := keybindings.DefaultAction(fmt.Sprintf("f%d", n))
-	switch action {
-	case keybindings.Help:
-		return "help"
-	case keybindings.Settings:
-		return "settings"
-	case keybindings.Model:
-		return "model chooser"
-	case keybindings.Effort:
-		return "effort"
-	case keybindings.NewChat:
-		return "new chat"
-	case keybindings.Resume:
-		return "resume"
-	case keybindings.ContextView:
-		return "grid"
-	case keybindings.Cron:
-		return "cron"
-	case keybindings.QueenMode:
-		return "mode"
-	case keybindings.Sidebar:
-		return "sidebar"
-	case keybindings.Models:
-		return "models"
-	case keybindings.Diagnostics:
-		return "status"
+	if info, ok := keybindings.Info(keybindings.DefaultAction(fmt.Sprintf("f%d", n))); ok {
+		return info.Short
 	}
 	return "(free)"
 }

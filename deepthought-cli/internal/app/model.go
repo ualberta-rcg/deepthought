@@ -476,6 +476,8 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tui.WorkspaceAction:
 		return m.workspaceAction(event)
+	case tui.PaletteChosenMsg:
+		return m.paletteChosen(event.Entry)
 	}
 	if tui.IsPlansEvent(msg) {
 		var cmd tea.Cmd
@@ -759,7 +761,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+p" && m.overlay == nil && !m.screenCapturesKeys() {
-			m.showMenu()
+			m.openPalette()
 			return m, nil
 		}
 		m.refreshBindings()

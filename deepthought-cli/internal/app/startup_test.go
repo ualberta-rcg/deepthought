@@ -35,8 +35,9 @@ func TestModelFreeStartupAndNavigation(t *testing.T) {
 		}
 		next, _ = m.Update(tui.WorkspaceAction{Kind: "menu"})
 		m = next.(RootModel)
-		if m.screen != tui.ScreenWorkspace || !strings.Contains(m.View().Content, "Settings") {
-			t.Fatal("navigation unavailable without model")
+		if _, ok := m.overlay.(tui.PaletteModel); !ok || !strings.Contains(m.View().Content, "Settings") {
+			t.Fatal("command palette unavailable without model")
 		}
+		m.popOverlay()
 	}
 }

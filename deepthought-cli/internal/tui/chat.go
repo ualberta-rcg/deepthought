@@ -65,7 +65,7 @@ func chatSystemPrompt(cfgPath string) string {
 		"Use the bash and read tools to investigate and act rather than just describing. " +
 		"History may contain tombstones; call expand(id) whenever omitted full text could matter. " +
 		"Be concise and direct; say what you did. " +
-		"Configure providers, models and roles through Settings (Ctrl+P navigation). " +
+		"Configure providers, models and roles through Settings (Ctrl+P command palette). " +
 		"Settings persist in the local database; " + cfgPath + " is the legacy import/explicit override path. " +
 		"Never request or print credentials. Don't claim to be Claude or Anthropic."
 }
@@ -653,7 +653,7 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		return m, nil
 	case val == "/help" || val == "?":
 		keys := make([]string, 0, len(fKeyLegend)+1)
-		keys = append(keys, "Ctrl+P navigation")
+		keys = append(keys, "Ctrl+P commands")
 		for _, k := range fKeyLegend {
 			keys = append(keys, k.key+" "+k.label)
 		}
@@ -892,10 +892,19 @@ func (m ChatModel) Busy() bool { return m.busy }
 // InputEmpty reports whether the prompt has no typed text.
 func (m ChatModel) InputEmpty() bool { return m.input.Value() == "" }
 
+// Input is the typed prompt.
+func (m ChatModel) Input() string { return m.input.Value() }
+
 // SetInput replaces the typed prompt.
 func (m ChatModel) SetInput(v string) ChatModel {
 	m.input.SetValue(v)
 	return m
+}
+
+// RunCommand submits val as if the user had typed it (palette slash entries).
+func (m ChatModel) RunCommand(val string) (ChatModel, tea.Cmd) {
+	m.input.SetValue(val)
+	return m.submit()
 }
 
 // ClearInput discards the typed prompt (ctrl+c's step before quit).
@@ -2117,7 +2126,7 @@ func (m ChatModel) emptyState() string {
 	if m.env.Cwd != "" {
 		parts = append(parts, m.env.Cwd)
 	}
-	return strings.Join(parts, " · ") + " — Ctrl+P for navigation · ? for shortcuts"
+	return strings.Join(parts, " · ") + " — Ctrl+P for commands · ? for shortcuts"
 }
 
 // userEcho renders a full-width tinted block with a dim "❯ " prefix (no label).

@@ -59,7 +59,7 @@ Provider discovery runs after the first screen; candidates are reviewed before
 adoption or connection. Setup can be skipped and reopened. Never execute shell
 configuration, recursively scan, or send discovered values to a provider.
 
-Settings is the configuration home. Ctrl+P and `/menu` expose every F-key action;
+Settings is the configuration home. Ctrl+P and `/menu` open the command palette (every action, screen, settings section, recent chat and slash command);
 F1–F12 remain optional shortcuts and are editable in Settings. Chat is home, Esc
 returns through overlays/screens, and quitting remains `/quit` or two Ctrl+C.
 Inline text editors own their keystrokes. Operational jobs, plans, cron, status,

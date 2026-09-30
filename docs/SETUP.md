@@ -106,7 +106,7 @@ locally, but an external override can take precedence again on the next launch.
 ## Client and server synchronization
 
 Open Settings → Server to enter the URL, user and password, then choose
-**Connection / Sync now / conflicts**. The navigation menu also opens Server
+**Connection / Sync now / conflicts**. The command palette also opens Server
 synchronization. Connect once to enable background reconnection on later launches;
 Disconnect disables it. Authentication and synchronization happen after the
 interface loads. Offline operation remains available.
@@ -136,11 +136,11 @@ The synchronization view shows pending work, last success, and recoverable error
 
 ## Navigation
 
-Ctrl+P opens navigation from the welcome screen or any operational screen.
+Ctrl+P opens the command palette from the welcome screen or any operational screen.
 Settings contains Setup, Models, Providers, Shortcuts, Hosts & Services, Server,
 Import / Export, and existing advanced sections. F-keys remain shortcuts.
 Shortcut editing accepts F1–F12 and modifier keys, rejects collisions, and supports
-reset. Ctrl+P remains reserved so navigation cannot be lost.
+reset. Ctrl+P remains reserved so the palette cannot be lost.
 
 Scientific tool catalogs are refreshed after startup through the explicit
 navigation action. This can contact configured scientific endpoints; it never

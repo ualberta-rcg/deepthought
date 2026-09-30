@@ -37,7 +37,7 @@ func ReservedReason(key string) string {
 	case "f2":
 		return "F2 is reserved"
 	case "ctrl+p":
-		return "reserved key; Ctrl+P always opens navigation"
+		return "reserved key; Ctrl+P always opens the command palette"
 	}
 	return "reserved key"
 }

@@ -63,7 +63,7 @@ The OpenAI-compatible base is `https://inference.vulcan.alliancecan.ca/v1`.
 | I want to… | Start here |
 |---|---|
 | Configure inference | Settings → Setup / Providers / Models |
-| See all navigation actions | Ctrl+P; function keys are optional shortcuts |
+| Find any action, screen, setting, chat or slash command | Ctrl+P (command palette); function keys are optional shortcuts |
 | Inspect this machine | Status or Hosts & Services |
 | See my scheduler work | Jobs and the chat sidebar |
 | Keep a session across disconnects | `deepthought-cli --towel`; Ctrl+\ detaches |
