@@ -1,26 +1,38 @@
 package tui
 
 import (
-	tea "charm.land/bubbletea/v2"
-	"deepthought-cli/internal/workflow"
 	"fmt"
-	"strings"
+
+	"charm.land/bubbletea/v2"
+
+	"deepthought-cli/internal/tui/kit"
+	"deepthought-cli/internal/workflow"
 )
 
 type PlansModel struct {
-	service                 *workflow.Service
-	width, height, selected int
-	plans                   []workflow.Plan
-	err                     string
+	service       *workflow.Service
+	width, height int
+	plans         []workflow.Plan
+	list          kit.List
+	nav           listNav
+	err           string
 }
 type plansLoadedMsg struct {
 	plans []workflow.Plan
 	err   error
 }
 
-func NewPlansModel(s *workflow.Service) PlansModel { return PlansModel{service: s} }
-func IsPlansEvent(msg tea.Msg) bool                { _, ok := msg.(plansLoadedMsg); return ok }
-func (m PlansModel) Resize(w, h int) PlansModel    { m.width, m.height = w, h; return m }
+const plansEmpty = "No saved plans yet"
+
+func NewPlansModel(s *workflow.Service) PlansModel {
+	return PlansModel{service: s, list: kit.List{Empty: plansEmpty}}
+}
+func IsPlansEvent(msg tea.Msg) bool             { _, ok := msg.(plansLoadedMsg); return ok }
+func (m PlansModel) Resize(w, h int) PlansModel { m.width, m.height = w, h; return m }
+
+// CapturingKeys reports whether typed letters belong to the filter.
+func (m PlansModel) CapturingKeys() bool { return m.nav.filtering }
+
 func (m PlansModel) Init() tea.Cmd {
 	if m.service == nil {
 		return nil
@@ -28,6 +40,7 @@ func (m PlansModel) Init() tea.Cmd {
 	s := m.service
 	return func() tea.Msg { p, e := s.List(); return plansLoadedMsg{p, e} }
 }
+
 func (m PlansModel) Update(msg tea.Msg) (PlansModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case plansLoadedMsg:
@@ -36,33 +49,54 @@ func (m PlansModel) Update(msg tea.Msg) (PlansModel, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err.Error()
 		}
-		m.selected = min(m.selected, max(0, len(m.plans)-1))
+		items := make([]kit.Item, 0, len(m.plans))
+		for i, p := range m.plans {
+			if p.Directive == nil {
+				continue
+			}
+			items = append(items, kit.Item{
+				Label:  p.Directive.Title,
+				Detail: fmt.Sprintf("%s · version %d · %d objectives", p.Directive.Status, p.Directive.Version, len(p.Directive.Objectives)),
+				Value:  i,
+			})
+		}
+		m.list.Items = items
+		m.list.SetFilter(m.list.Filter)
 	case tea.KeyPressMsg:
+		if m.nav.key(&m.list, msg) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc":
 			return m, Back()
-		case "r":
+		case kit.Mnemonics.Refresh:
 			return m, m.Init()
-		case "up":
-			m.selected = max(0, m.selected-1)
-		case "down":
-			m.selected = min(max(0, len(m.plans)-1), m.selected+1)
 		}
 	}
 	return m, nil
 }
+
 func (m PlansModel) View() string {
-	rows := []string{"Saved scientific plans · use the workflow tool to create, link jobs and validate results."}
-	if m.err != "" {
-		rows = append(rows, m.err)
+	notice := ""
+	if len(m.list.Items) == 0 {
+		notice = "Ask DeepThought to prepare a plan with explicit success predicates."
 	}
-	if len(m.plans) == 0 {
-		rows = append(rows, "No saved plans. Ask DeepThought to prepare a plan with explicit success predicates.")
-	} else {
-		p := m.plans[m.selected]
-		rows = append(rows, fmt.Sprintf("%d/%d · %s · %s · version %d", m.selected+1, len(m.plans), p.Directive.Title, p.Directive.Status, p.Directive.Version), "Plan: "+p.Directive.ID)
+	if m.err != "" {
+		notice = kit.G().Warn + " " + m.err
+	}
+	var detail *kit.Panel
+	if it, ok := m.list.Selected(); ok {
+		p := m.plans[it.Value.(int)]
+		var body []string
 		for _, o := range p.Directive.Objectives {
-			rows = append(rows, fmt.Sprintf("%s · %s · %d attempt(s)", o.Status, o.Description, len(o.Attempts)), "  "+o.ID+" · submission "+p.Submissions[o.ID])
+			line := fmt.Sprintf(" %s · %s · %d attempt(s)", o.Status, o.Description, len(o.Attempts))
+			if sub := p.Submissions[o.ID]; sub != "" {
+				line += " · submission " + sub
+			}
+			body = append(body, line)
+		}
+		if len(body) == 0 {
+			body = []string{" No objectives yet."}
 		}
 		stale := 0
 		for _, a := range p.Artifacts {
@@ -70,7 +104,14 @@ func (m PlansModel) View() string {
 				stale++
 			}
 		}
-		rows = append(rows, fmt.Sprintf("Artifacts: %d · stale: %d", len(p.Artifacts), stale))
+		body = append(body, fmt.Sprintf(" Artifacts: %d · stale: %d", len(p.Artifacts), stale))
+		detail = &kit.Panel{
+			Title:    p.Directive.Title,
+			Status:   p.Directive.ID,
+			Body:     body,
+			Footnote: " workflow tool: create plans, link jobs, validate results",
+		}
 	}
-	return AppScreen(m.width, m.height, screenTitle("Plans"), strings.Join(rows, "\n"), KeyBar([]KeyHint{{Key: "↑/↓", Label: "plan"}, {Key: "r", Label: "refresh"}, {Key: "esc", Label: "back"}}))
+	return renderListScreen(m.width, m.height, fmt.Sprintf("Plans · %d saved", len(m.list.Items)), notice, m.list, m.nav, detail,
+		m.nav.keys(kit.Key{Key: kit.Mnemonics.Refresh, Help: "refresh"}))
 }

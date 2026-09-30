@@ -11,6 +11,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"deepthought-cli/internal/cron"
+	"deepthought-cli/internal/tui/kit"
 )
 
 // cron.go: the F8 Cron screen — manage the USER'S REAL crontab with a hard
@@ -206,7 +207,7 @@ func (m CronModel) Update(msg tea.Msg) (CronModel, tea.Cmd) {
 		if m.view == cvList {
 			return m.beginEdit()
 		}
-	case "a":
+	case kit.Mnemonics.New, "a":
 		if m.view == cvList {
 			return m.beginAdd()
 		}
@@ -543,7 +544,7 @@ func (m CronModel) View() string {
 	title := screenTitle("Cron")
 	right := m.toast
 	if m.err != "" {
-		right = "✗ " + m.err
+		right = kit.G().Cross + " " + m.err
 	}
 	if right != "" {
 		gap := m.width - 6 - lipgloss.Width(title) - lipgloss.Width(styleToast.Render(right))
@@ -553,7 +554,7 @@ func (m CronModel) View() string {
 		title += strings.Repeat(" ", gap) + styleToast.Render(right)
 	}
 	if m.edit != nil {
-		content = styleEditActive.Render("▶ ") + m.edit.view(m.width)
+		content = styleEditActive.Render(kit.G().Cursor+" ") + m.edit.view(m.width)
 		m.vp.SetContent(content)
 	}
 	m.keepCursorVisible()
@@ -567,7 +568,7 @@ func (m CronModel) View() string {
 	if prompt != "" {
 		m.vp.SetContent(strings.Join(m.rows(), "\n") + "\n" + prompt)
 	}
-	return AppScreenScroll(m.width, m.height, title, m.vp.View(), m.vp.Height(), KeyBar(m.keybar()))
+	return AppScreenScroll(m.width, m.height, title, m.vp.View(), m.vp.Height(), kit.KeyBar(m.keybar(), m.width-4))
 }
 
 // keepCursorVisible scrolls the viewport so the cursor row is on screen.
@@ -587,23 +588,28 @@ func (m *CronModel) keepCursorVisible() {
 // mark renders one list row with the cursor highlight.
 func (m CronModel) mark(i int, text string) string {
 	if i == m.cursor {
-		return styleMenuSel.Render("▶ " + text)
+		return styleMenuSel.Render(kit.G().Cursor + " " + text)
 	}
 	return styleMenuUnsel.Render("  " + text)
 }
 
-func (m CronModel) keybar() []KeyHint {
+func (m CronModel) keybar() []kit.Key {
 	switch m.view {
 	case cvConfirm, cvDiscard:
-		return []KeyHint{{"y", "yes"}, {"any", "no"}}
+		return []kit.Key{{Key: "y", Help: "yes"}, {Key: "any", Help: "no"}}
 	case cvEdit:
-		return []KeyHint{{"enter", "save"}, {"esc", "cancel"}}
+		return []kit.Key{{Key: "enter", Help: "save"}, {Key: "esc", Help: "cancel"}}
 	case cvDiff:
-		return []KeyHint{{"y", "apply"}, {"esc", "back"}}
+		return []kit.Key{{Key: "y", Help: "apply"}, {Key: "esc", Help: "back"}}
 	}
-	hints := []KeyHint{{"↑↓", "move"}, {"enter", "edit"}}
+	keys := []kit.Key{{Key: "↑↓", Help: "move"}, {Key: "enter", Help: "edit"}}
 	if m.dirty() {
-		hints = append(hints, KeyHint{"P", "diff"}, KeyHint{"y", "apply"})
+		keys = append(keys, kit.Key{Key: "P", Help: "diff"}, kit.Key{Key: "y", Help: "apply"})
 	}
-	return append(hints, KeyHint{"a", "add"}, KeyHint{"d", "delete"}, KeyHint{"u", "undo"}, KeyHint{"r", "refresh"}, KeyHint{"esc", "back"})
+	return append(keys,
+		kit.Key{Key: kit.Mnemonics.New, Help: "add"},
+		kit.Key{Key: kit.Mnemonics.Delete, Help: "delete"},
+		kit.Key{Key: "u", Help: "undo"},
+		kit.Key{Key: kit.Mnemonics.Refresh, Help: "refresh"},
+		kit.Key{Key: "esc", Help: "back"})
 }

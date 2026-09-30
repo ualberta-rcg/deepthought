@@ -69,3 +69,13 @@ card, and the data source (`→ sinfo · squeue`) as the footnote. At an inner
 width of 116+ (a 120-column terminal) the cards flow into two columns, each
 card going to the shorter column. The page scrolls as one viewport; the clock
 lives in the title so ticks never move the scroll.
+
+## Jobs, Plans, Cron
+
+Jobs and Plans share one list + detail layout (`listscreen.go`): a kit `List`
+(`/` filter, ↑↓ / j k / Ctrl+P Ctrl+N) above a detail card for the selection
+(retry advice and script hash for a submission; objectives, linked
+submissions and artifacts for a plan). The card takes up to half the rows and
+the list keeps at least three. Empty lists say `No … yet` with the next step
+as the notice. Cron keeps its staged editor but uses the kit key bar, glyphs
+and `n` for a new entry (`a` still works).

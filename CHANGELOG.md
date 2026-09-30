@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — Jobs, Plans and Cron on the kit
+- Jobs and Plans use one shared list + detail layout (`internal/tui/listscreen.go`): a kit `List` with `/` filter and the standard move keys, and a detail card for the selection (Jobs: retry advice, last error, script hash, log/cancel hint; Plans: objectives with linked submissions, artifact and stale counts). Empty states are short (`No journaled submissions yet`, `No saved plans yet`) with the next step as a wrapped notice instead of a truncated row. Titles carry the count; a failed refresh shows a ⚠ notice and keeps the persisted list. Filtering captures keys so global bindings don't fire mid-typing.
+- Cron uses `kit.KeyBar`, `kit.G()` glyphs and the `n` mnemonic for a new entry (`a` kept).
+- Files: `internal/tui/{listscreen.go (new), jobs.go, plans.go, cron.go, jobs_test.go (new)}`, `internal/app/model.go`, `docs/TUI.md`.
+- Verification: gofmt and `git diff --check` locally; new fixtures: Jobs at 120×30, 80×24 and 50×14 fit the width and show the selection's card, ↓ moves the card, `/be` filters and esc clears; empty Jobs and Plans show the phrase and hint; Plans detail renders objectives and artifacts. Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — Status page on the kit
 - Status sections render as kit cards (`Section.Card`): title + summary in the border, padded rows, the note wrapped inside the card, the source as a `→` footnote. At 120+ columns the cards flow into two columns (each card to the shorter column). The key bar is `kit.KeyBar` (packed, `…` when cut) and the ✓/✗ chips come from `kit.G()`, so `--ascii` covers the whole page.
 - The cluster renderers now build `Section` values (`clusterSection`, `jobsSection`, `fairshareSection`, `storageSection`); the old `render*Block` names remain as thin wrappers.

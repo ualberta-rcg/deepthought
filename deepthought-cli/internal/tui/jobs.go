@@ -1,30 +1,41 @@
 package tui
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"context"
-	"deepthought-cli/internal/slurm"
 	"fmt"
-	"strings"
 	"time"
+
+	"charm.land/bubbletea/v2"
+
+	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tui/kit"
 )
 
 type JobsModel struct {
 	client        *slurm.Client
 	width, height int
 	items         []slurm.Submission
+	list          kit.List
+	nav           listNav
 	err           string
 	loading       bool
-	selected      int
 }
 type jobsLoadedMsg struct {
 	items []slurm.Submission
 	err   error
 }
 
-func NewJobsModel(client *slurm.Client) JobsModel { return JobsModel{client: client} }
-func IsJobsEvent(msg tea.Msg) bool                { _, ok := msg.(jobsLoadedMsg); return ok }
-func (m JobsModel) Resize(w, h int) JobsModel     { m.width, m.height = w, h; return m }
+const jobsEmpty = "No journaled submissions yet"
+
+func NewJobsModel(client *slurm.Client) JobsModel {
+	return JobsModel{client: client, list: kit.List{Empty: jobsEmpty}}
+}
+func IsJobsEvent(msg tea.Msg) bool            { _, ok := msg.(jobsLoadedMsg); return ok }
+func (m JobsModel) Resize(w, h int) JobsModel { m.width, m.height = w, h; return m }
+
+// CapturingKeys reports whether typed letters belong to the filter.
+func (m JobsModel) CapturingKeys() bool { return m.nav.filtering }
+
 func (m JobsModel) Init() tea.Cmd {
 	if m.client == nil {
 		return nil
@@ -37,6 +48,7 @@ func (m JobsModel) Init() tea.Cmd {
 		return jobsLoadedMsg{items, err}
 	}
 }
+
 func (m JobsModel) Update(msg tea.Msg) (JobsModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case jobsLoadedMsg:
@@ -46,46 +58,67 @@ func (m JobsModel) Update(msg tea.Msg) (JobsModel, tea.Cmd) {
 		if msg.err != nil {
 			m.err = msg.err.Error()
 		}
-		if m.selected >= len(m.items) {
-			m.selected = max(0, len(m.items)-1)
+		items := make([]kit.Item, len(m.items))
+		for i, s := range m.items {
+			job := "not submitted"
+			if s.JobID != "" {
+				job = "job " + s.JobID
+			}
+			items[i] = kit.Item{Label: s.ID, Detail: job + " · " + s.State + " · " + s.Updated.Format("Jan 02 15:04"), Value: i}
 		}
+		m.list.Items = items
+		m.list.SetFilter(m.list.Filter)
 	case tea.KeyPressMsg:
+		if m.nav.key(&m.list, msg) {
+			return m, nil
+		}
 		switch msg.String() {
 		case "esc":
 			return m, Back()
-		case "r":
+		case kit.Mnemonics.Refresh:
 			if !m.loading {
 				m.loading = true
 				return m, m.Init()
 			}
-		case "up":
-			m.selected = max(0, m.selected-1)
-		case "down":
-			m.selected = min(max(0, len(m.items)-1), m.selected+1)
 		}
 	}
 	return m, nil
 }
+
+func (m JobsModel) selected() (slurm.Submission, bool) {
+	it, ok := m.list.Selected()
+	if !ok {
+		return slurm.Submission{}, false
+	}
+	return m.items[it.Value.(int)], true
+}
+
 func (m JobsModel) View() string {
-	var rows []string
+	notice := ""
+	if len(m.list.Items) == 0 {
+		notice = "Ask DeepThought to prepare a job; submitting it needs your approval."
+	}
 	if m.err != "" {
-		rows = append(rows, "Refresh failed; showing persisted state: "+m.err)
+		notice = kit.G().Warn + " Refresh failed; showing persisted state: " + m.err
 	}
-	if len(m.items) == 0 {
-		rows = append(rows, "No journaled submissions. Ask DeepThought to prepare a job; submission requires your approval.")
-	}
-	start := max(0, m.selected-max(1, m.height-12)/2)
-	for i := start; i < len(m.items) && i < start+max(1, m.height-12); i++ {
-		s := m.items[i]
-		prefix := "  "
-		if i == m.selected {
-			prefix = "› "
+	var detail *kit.Panel
+	if s, ok := m.selected(); ok {
+		body := []string{" " + slurm.RetryAdvice(s)}
+		if s.LastError != "" {
+			body = append(body, " Last error: "+s.LastError)
 		}
-		rows = append(rows, fmt.Sprintf("%s%s · job %s · %s · %s", prefix, s.ID, s.JobID, s.State, s.Updated.Format("Jan 02 15:04")))
+		body = append(body, " Script SHA256: "+s.ScriptHash)
+		detail = &kit.Panel{
+			Title:    "Submission " + s.ID,
+			Status:   s.State,
+			Body:     body,
+			Footnote: " slurm_log_tail for bounded logs · slurm_cancel checks ownership",
+		}
 	}
-	if len(m.items) > 0 {
-		item := m.items[m.selected]
-		rows = append(rows, "", slurm.RetryAdvice(item), "Script SHA256: "+item.ScriptHash, "Use slurm_log_tail for bounded logs; slurm_cancel checks ownership and permission.")
+	status := fmt.Sprintf("%d submissions", len(m.items))
+	if m.loading {
+		status = "refreshing…"
 	}
-	return AppScreen(m.width, m.height, screenTitle("Jobs"), strings.Join(rows, "\n"), KeyBar([]KeyHint{{Key: "r", Label: "refresh"}, {Key: "↑/↓", Label: "select"}, {Key: "esc", Label: "back"}}))
+	return renderListScreen(m.width, m.height, "Jobs · "+status, notice, m.list, m.nav, detail,
+		m.nav.keys(kit.Key{Key: kit.Mnemonics.Refresh, Help: "refresh"}))
 }

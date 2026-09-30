@@ -1006,7 +1006,9 @@ func (m RootModel) screenCapturesKeys() bool {
 	return (m.screen == tui.ScreenSettings && m.settings.CapturingKeys()) ||
 		(m.screen == tui.ScreenModels && m.modelsScr.CapturingKeys()) ||
 		(m.screen == tui.ScreenCron && m.cronScr.CapturingKeys()) ||
-		(m.screen == tui.ScreenContinue && m.continue_.CapturingKeys())
+		(m.screen == tui.ScreenContinue && m.continue_.CapturingKeys()) ||
+		(m.screen == tui.ScreenJobs && m.jobsScr.CapturingKeys()) ||
+		(m.screen == tui.ScreenPlans && m.plansScr.CapturingKeys())
 }
 
 // pushOverlay suspends the current overlay (if any) onto the stack and makes o
