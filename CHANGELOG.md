@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — sidebar v3 on the kit
+- The sidebar is now boxed kit cards: a new **Session** card (model · effort · permission mode, context meter with exact percent and `~` for estimates, standalone/connected server, chat title, cwd tail), **Host** (freshness moved to an "updated Ns" footnote), **Slurm** (queue, allocation and fairshare in one card), **Your jobs** (state dot, `None` when empty instead of disappearing, `…and N more` when cut), and **Alerts** only when present (disk ≥ 90 %, settings sync needs attention, expired server session).
+- Heights come from `kit.FitHeights` with a fixed shrink order (Slurm, then jobs, then host; Session and Alerts stay) instead of the ad-hoc fill order. Meter colours use the 70/90 thresholds. `barFill` and the sidebar honour ASCII mode; the unused `SidebarData.ASCII` field is gone (ASCII is the kit's global mode).
+- Files: `internal/tui/{sidebar.go, sidebar_test.go, sidebar_visual_test.go, bars.go, chat.go}`, `internal/app/{model.go, sync_workspace.go}`, `CLAUDE.md` (architecture: kit + action registry), `docs/TUI.md`.
+- Verification: gofmt and `git diff --check` locally; fixtures at 44×24, 32×18, 44×10, 60×35 and ASCII (no box/bar/ellipsis Unicode), new test for session content, `…and N more` and Session + Alerts surviving 8–40 rows. Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — command palette on Ctrl+P
 - Ctrl+P and `/menu` open a command palette instead of the Navigation list: fuzzy search with highlighted matches over every bindable action (with its current key), screen, settings section, the ten most recent chats and every slash command. Empty input shows recent picks, then a short discover set. Tab / Shift+Tab cycle All · Actions · Screens · Settings · Chats · Slash; Ctrl+N/Ctrl+P move; Esc clears, then closes. The last twelve picks persist in the local store and lead the list. Slash commands that need arguments (`/pin`, `/unpin`, `/export`) prefill the prompt instead of running.
 - One action registry (`internal/keybindings/actions.go`) now feeds the palette, the F-key labels and Settings › Shortcuts, replacing two hand-kept lists.

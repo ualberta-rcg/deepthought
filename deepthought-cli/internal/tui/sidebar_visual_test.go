@@ -10,6 +10,7 @@ import (
 	"charm.land/lipgloss/v2"
 	"deepthought-cli/internal/host"
 	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tui/kit"
 )
 
 func visualFixture() SidebarData {
@@ -32,18 +33,22 @@ func TestSidebarFixtures(t *testing.T) {
 			}
 		}
 		last := -1
-		for _, section := range []string{"Host", "Slurm", "Your fairshare", "Your jobs"} {
+		for _, section := range []string{"Session", "Host", "Slurm", "Your jobs"} {
 			idx := strings.Index(plain, section)
+			if idx < 0 && size.h < 18 && section != "Session" && section != "Host" {
+				continue // short columns drop Slurm first, then jobs
+			}
 			if idx <= last {
 				t.Fatalf("missing or out-of-order section %s: %s", section, plain)
 			}
 			last = idx
 		}
 	}
-	d.ASCII = true
+	kit.SetASCII(true)
 	ascii := stripTestANSI.ReplaceAllString(RenderSidebar(d, 44, 24), "")
-	if strings.ContainsAny(ascii, "█░·→") {
-		t.Fatal("ASCII fallback has Unicode indicators")
+	kit.SetASCII(false)
+	if strings.ContainsAny(ascii, "█░▓·→╭╮╰╯│─…") {
+		t.Fatalf("ASCII fallback has Unicode indicators:\n%s", ascii)
 	}
 	fmt.Fprintf(&output, "SIDEBAR ASCII\n%s\n", ascii)
 	d.Env.Slurm = false
@@ -65,8 +70,8 @@ func TestSidebarUnknownAndEmptyJobs(t *testing.T) {
 	d.Cluster.JobsRunning = 0
 	d.Cluster.JobsPending = 0
 	plain := stripTestANSI.ReplaceAllString(RenderSidebar(d, 44, 24), "")
-	if strings.Contains(plain, "Your jobs") {
-		t.Fatal("empty jobs section not hidden")
+	if !strings.Contains(plain, "Your jobs") || !strings.Contains(plain, "None") {
+		t.Fatalf("empty jobs card should say None:\n%s", plain)
 	}
 	d.Cluster.JobsKnown = false
 	d.Cluster.MemoryAllocKnown = false
@@ -75,5 +80,35 @@ func TestSidebarUnknownAndEmptyJobs(t *testing.T) {
 	plain = stripTestANSI.ReplaceAllString(RenderSidebar(d, 44, 24), "")
 	if !strings.Contains(plain, "unavailable") || !strings.Contains(plain, "stale") || !strings.Contains(plain, "GPU  --") {
 		t.Fatal("unknown/stale states hidden", plain)
+	}
+}
+
+// Cards fit exactly, shrink in priority order, and cap long job lists with
+// "…and N more" instead of silently cutting rows.
+func TestSidebarCardsFitAndOverflow(t *testing.T) {
+	d := visualFixture()
+	d.Model, d.Effort, d.Mode = "Qwen 3.5", "medium", "safe"
+	d.LastContext, d.ContextWindow = 42000, 100000
+	d.Env.Server, d.Env.Cwd = "server alice @ dt.example", "/scratch/alice/project"
+	for i := 0; i < 20; i++ {
+		d.Cluster.YourJobs = append(d.Cluster.YourJobs, slurm.Job{ID: fmt.Sprint(200 + i), Name: "sweep", State: "PENDING", Reason: "Priority"})
+	}
+	plain := stripTestANSI.ReplaceAllString(RenderSidebar(d, 44, 30), "")
+	for _, want := range []string{"Qwen 3.5", "42%", "Connected · alice @ dt.example", "and ", " more", "/scratch/alice/project"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("sidebar missing %q:\n%s", want, plain)
+		}
+	}
+	d.Alerts = []string{"Settings sync needs attention"}
+	for _, h := range []int{8, 12, 20, 40} {
+		v := RenderSidebar(d, 44, h)
+		lines := strings.Split(v, "\n")
+		if len(lines) != h {
+			t.Fatalf("h=%d: %d rows", h, len(lines))
+		}
+		plain := stripTestANSI.ReplaceAllString(v, "")
+		if !strings.Contains(plain, "Session") || !strings.Contains(plain, "sync needs attention") {
+			t.Fatalf("h=%d: session and alerts must survive shrinking:\n%s", h, plain)
+		}
 	}
 }

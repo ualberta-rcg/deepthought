@@ -32,6 +32,12 @@ service containers in CLI CI.
 - `internal/tui` owns concrete screen models. Bubble Tea v2 uses `View() tea.View`
   with `AltScreen = true`. Route asynchronous chat/model/cron results to their
   owners even when their screen is inactive. Reject stale catalog/turn results.
+  Shared building blocks (Panel, List, KeyBar, Dialog, glyphs, fitting) live in
+  `internal/tui/kit`; new surfaces use them (standard: `docs/TUI.md`).
+- Bindable actions and their labels are one registry,
+  `internal/keybindings/actions.go`; `internal/app/actions.go` builds the
+  command palette from it plus screens, settings sections, chats and slash
+  commands.
 - `internal/config` owns defaults, validation, SQLite settings, legacy migration,
   documented layer precedence, reviewed discovery, and portable exports.
 - `internal/credential` owns private process-local resolution and known-value

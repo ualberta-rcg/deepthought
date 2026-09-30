@@ -5,6 +5,8 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+
+	"deepthought-cli/internal/tui/kit"
 )
 
 // The Slurm Status sections borrow the visual language of the hand-written
@@ -54,9 +56,13 @@ func barFill(pct, width int, col color.Color, bold bool) string {
 		pct = 100
 	}
 	filled := pct * width / 100
+	full, empty := "▓", "░"
+	if kit.ASCII() {
+		full, empty = "#", "."
+	}
 	st := lipgloss.NewStyle().Foreground(col).Bold(bold)
-	return st.Render(strings.Repeat("▓", filled)) +
-		lipgloss.NewStyle().Foreground(barEmpty).Render(strings.Repeat("░", width-filled))
+	return st.Render(strings.Repeat(full, filled)) +
+		lipgloss.NewStyle().Foreground(barEmpty).Render(strings.Repeat(empty, width-filled))
 }
 
 // healthBar is a cluster-utilization bar: teal under 80, orange 80–95, bold red

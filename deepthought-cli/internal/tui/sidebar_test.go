@@ -22,7 +22,7 @@ func TestSidebarRender(t *testing.T) {
 	}
 	v := RenderSidebar(d, SidebarWidth, 30)
 	plain := stripTestANSI.ReplaceAllString(v, "")
-	for _, want := range []string{"Host", "Slurm", "Your fairshare", "Your jobs"} {
+	for _, want := range []string{"Session", "Host", "Slurm", "Fair", "Your jobs"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("sidebar missing %q", want)
 		}
@@ -133,12 +133,12 @@ func TestSidebarV2Sections(t *testing.T) {
 	}
 	v := RenderSidebar(d, SidebarWidth, 60)
 	plain := stripTestANSI.ReplaceAllString(v, "")
-	for _, want := range []string{"Host", "login1", "CPU", "RAM", "Slurm", "Your fairshare", "Your jobs"} {
+	for _, want := range []string{"Session", "Context", "Host", "login1", "CPU", "RAM", "Slurm", "Fair", "Your jobs"} {
 		if !strings.Contains(plain, want) {
 			t.Errorf("sidebar v2 missing %q:\n%s", want, plain)
 		}
 	}
-	for _, removed := range []string{"Providers", "Skills", "Context", "Ubuntu", "Filesystem capacity"} {
+	for _, removed := range []string{"Providers", "Skills", "Ubuntu", "Filesystem capacity"} {
 		if strings.Contains(plain, removed) {
 			t.Errorf("sidebar clutter: %s", removed)
 		}

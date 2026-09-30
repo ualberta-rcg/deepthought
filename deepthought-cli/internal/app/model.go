@@ -547,6 +547,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tui.SessionUsageMsg:
 		m.sidebar.SessionIn, m.sidebar.SessionOut, m.sidebar.LastContext = msg.In, msg.Out, msg.LastContext
+		m.sidebar.ContextEstimated = msg.Estimated()
 		if m.deps.Live != nil {
 			if snap := m.deps.Live.Snapshot(); snap.Models != nil {
 				if mm, ok := activeModelOf(snap); ok {
@@ -654,6 +655,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.splash = m.splash.WithNotice("").WithServer("Connected as " + m.server.User + " @ " + serverHost(m.server.URL))
 		m.setServerLine("server " + m.server.User + " @ " + serverHost(m.server.URL))
+		m.sidebar.Alerts = nil
 		// Settings use the serialized worker; chat transfers have their own notice.
 		if m.screen == tui.ScreenSplash {
 			m.screen = tui.ScreenChat
@@ -668,6 +670,10 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.Status.State == syncStateExpired {
 			m.sessionExpired()
 			return m, nil
+		}
+		m.sidebar.Alerts = nil
+		if msg.Status.State == "Needs attention" {
+			m.sidebar.Alerts = []string{"Settings sync needs attention · Ctrl+P → Server"}
 		}
 		m.settings = m.settings.Refresh()
 		m.modelsScr = m.modelsScr.Refresh()
@@ -1038,7 +1044,9 @@ func (m RootModel) View() tea.View {
 		body := m.chat.View()
 		if m.sidebarOn() {
 			gutter := tui.RenderSidebarGutter(m.height - tui.ChatChromeHeight(m.legendOn()))
-			body = lipgloss.JoinHorizontal(lipgloss.Top, body, gutter, tui.RenderSidebar(m.sidebar, m.sidebarWidth(), m.height-tui.ChatChromeHeight(m.legendOn())))
+			d := m.sidebar
+			d.Model, d.Effort, d.Mode, d.ChatTitle = m.status.Model, m.status.Effort, m.status.Mode, m.chat.Title()
+			body = lipgloss.JoinHorizontal(lipgloss.Top, body, gutter, tui.RenderSidebar(d, m.sidebarWidth(), m.height-tui.ChatChromeHeight(m.legendOn())))
 		} else {
 			top += "\n" + tui.CompactHost(m.env, m.width)
 		}

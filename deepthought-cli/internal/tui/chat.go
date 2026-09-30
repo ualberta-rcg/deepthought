@@ -892,6 +892,14 @@ func (m ChatModel) Busy() bool { return m.busy }
 // InputEmpty reports whether the prompt has no typed text.
 func (m ChatModel) InputEmpty() bool { return m.input.Value() == "" }
 
+// Title is the current chat's generated title ("" until one exists).
+func (m ChatModel) Title() string {
+	if m.coll == nil {
+		return ""
+	}
+	return m.coll.Title
+}
+
 // Input is the typed prompt.
 func (m ChatModel) Input() string { return m.input.Value() }
 

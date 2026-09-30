@@ -135,6 +135,7 @@ func (m *RootModel) dropServer(notice string) {
 func (m *RootModel) sessionExpired() {
 	m.dropServer("Server session expired — reconnect in Settings › Server; edits stay local until then")
 	m.chat = m.chat.Notice("⚠ " + m.connectionNotice)
+	m.sidebar.Alerts = []string{"Server session expired · reconnect in Settings › Server"}
 	if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
 		m.showServerSync()
 	}

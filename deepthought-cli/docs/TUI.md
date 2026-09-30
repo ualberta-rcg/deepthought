@@ -46,3 +46,17 @@ sections, the ten most recent chats and slash commands. Every entry dispatches
 through the same `WorkspaceAction` handler as the menus. The last twelve
 picks are stored in the local database (`palette-recent` record) and lead the
 list.
+
+## Sidebar
+
+Boxed kit cards, top to bottom: **Session** (model · effort · permission mode,
+the context meter with its exact percentage, standalone or connected server,
+chat title, working directory), **Host** (meters, "updated Ns" footnote),
+**Slurm** (queue, allocation, fairshare), **Your jobs** (state dot, id, name,
+elapsed or pending reason; `None` when empty; long lists end
+`…and N more`), and **Alerts** only when something needs the user (disk
+≥ 90 %, settings sync needs attention, server session expired). When rows run
+short every card shrinks to its minimum first, then cards drop in a fixed
+order: Slurm, then jobs, then host. Session and Alerts stay. All data comes
+from the background pollers; rendering never probes. Focusing the sidebar is
+not implemented yet.
