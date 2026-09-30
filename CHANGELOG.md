@@ -1,5 +1,13 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — chat text wraps and scrolls; F10 toggles the sidebar in one press
+- Chat transcript rows are now kept in source form (`chatLine`) and wrapped at the current chat width on every render (memoized per row), so assistant replies, the live thinking/reply row, tool results, errors and system lines wrap instead of being clipped, and everything reflows when the terminal resizes or the sidebar toggles. Long unbroken tokens hard-break; lines inside ``` fences hard-wrap with a `↪` continuation gutter; styled rows re-apply their colour on continuation rows and reset at each row end so colour never bleeds into the sidebar. `viewport.SoftWrap` is on as a safety net.
+- Transcript scrolling works: PgUp/PgDn always, Ctrl+U/Ctrl+D when the input is empty, mouse wheel when the terminal sends it. Streaming follows the tail only if the reader was already at the bottom.
+- SSH sessions seed the chat through the same sidebar-aware `chatResize` as later resizes (no full-width first frame).
+- F10 flips what is on screen (visible → `off`, hidden → `on`) and says so in the transcript; `auto` stays in Settings › Appearance. `auto` shows the sidebar at ≥120×30, `on` whenever the chat keeps ≥60 columns; hiding for size is derived and never persisted. Breakpoints live in `internal/tui/layout.go` (80/120 convention).
+- Files: `internal/tui/{chat.go, wrap.go (new), layout.go (new), wrap_test.go (new), chat_test.go}`, `internal/app/{model.go, session.go, sidebar_toggle_test.go (new)}`, `internal/config/config.go`.
+- Verification: gofmt and `git diff --check` locally; new tests cover no row wider than a 60-column chat (prose, 300-char token, URL, code fence, live row), 120→80 reflow, scroll position kept during streaming while scrolled up and follow mode at bottom, one-press toggle, distinct auto/on thresholds, and derived auto-hide. Compile, vet, tests and race run in GitHub Actions.
+
 ## 2026-09-30 · docs — record that the cluster deployment is a temporary test target
 - Reframe the RKE2 `deepthought` namespace as a hand-applied staging copy for exercising CI-built images, not the deployment of record: the numbered manifests there are one-off and unmanaged, only that namespace may be touched, GitHub Actions is the sole image builder, and no production location has been chosen.
 - Add `docs/DEPLOYMENT.md` (CLI/server delivery lanes, install one-liner, test-deployment shape and rules, observed state on 2026-09-30, known gaps: wrong image repo placeholder in `k8s/deployment.yaml`, unstamped server version, edge-only channel) and link it from the README documentation table.

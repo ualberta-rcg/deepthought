@@ -138,8 +138,8 @@ type Appearance struct {
 	TopBarLegend *bool `json:"top_bar_legend,omitempty"`
 
 	// Sidebar controls the chat screen's live info column: "" or "auto" =
-	// show on very wide terminals (>=160 cols); "on" = force (>=120 cols);
-	// "off" = hide.
+	// show on terminals at least 120×30; "on" = show whenever the chat keeps
+	// 60 columns beside it; "off" = hide.
 	Sidebar string `json:"sidebar,omitempty"`
 }
 

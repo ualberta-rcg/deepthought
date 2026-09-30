@@ -6,8 +6,6 @@ import (
 	"charm.land/bubbletea/v2"
 	"charm.land/wish/v2/bubbletea"
 	"github.com/charmbracelet/ssh"
-
-	"deepthought-cli/internal/tui"
 )
 
 // SSHHandler returns the wish/bubbletea handler for the given listen address. d
@@ -36,8 +34,7 @@ func SSHHandler(addr string, d Deps) bubbletea.Handler {
 			w, h := pty.Window.Width, pty.Window.Height
 			m.width, m.height = w, h
 			m.splash = m.splash.Resize(w, h)
-			legend := d.Live != nil && d.Live.TopBarLegend()
-			m.chat = m.chat.Resize(w, h-tui.ChatChromeHeight(legend)) // mirror Update's subtraction
+			m.chatResize() // the same sidebar-aware width WindowSizeMsg uses
 			m.settings = m.settings.Resize(w, h)
 		}
 		// Force ANSI 256 so PuTTY's default TERM=xterm doesn't crush the

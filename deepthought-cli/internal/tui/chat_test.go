@@ -188,7 +188,7 @@ func TestInterruptPreservesPartialTransmission(t *testing.T) {
 	m.streaming = true
 	m.acc = "partial answer"
 	m.thinkAcc = "partial reasoning"
-	m.lines = []string{"", "pending"}
+	m.lines = []chatLine{{}, {text: "pending"}}
 	m.pendIdx = 1
 
 	got, _ := m.interrupt()

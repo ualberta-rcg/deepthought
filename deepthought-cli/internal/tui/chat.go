@@ -148,7 +148,7 @@ type behaviorMutator interface {
 type ChatModel struct {
 	vp     viewport.Model
 	input  textinput.Model
-	lines  []string
+	lines  []chatLine // transcript rows kept unrendered so they reflow on resize
 	width  int
 	height int
 	ready  bool
@@ -261,8 +261,10 @@ func buildChat(src InferenceSource, reg *tools.Registry, gate *queen.Gate, makeS
 	ti.Focus()
 	sp := spinner.New(spinner.WithSpinner(splashSpinner), spinner.WithStyle(styleSystem))
 	store, coll := makeStore()
+	vp := viewport.New()
+	vp.SoftWrap = true // safety net: rows are pre-wrapped, but nothing may ever clip
 	return ChatModel{
-		vp:      viewport.New(),
+		vp:      vp,
 		input:   ti,
 		src:     src,
 		reg:     reg,
@@ -296,6 +298,8 @@ func (m *ChatModel) applyLayout() {
 	if !m.replayed {
 		m.replayHistory()
 	}
+	follow := m.vp.AtBottom()
+	widthChanged := m.vp.Width() != m.width
 	m.vp.SetWidth(m.width)
 	vpH := m.height - chatInputHeight - ActivityHeight - m.popoverHeight()
 	if vpH < 1 {
@@ -304,7 +308,12 @@ func (m *ChatModel) applyLayout() {
 	m.vp.SetHeight(vpH)
 	m.input.SetWidth(m.width - 4) // box border (1) + padding (1) each side
 	m.ready = true
-	m.vp.GotoBottom() // keep the transcript pinned when the popover opens/closes
+	if widthChanged {
+		m.render()
+	}
+	if follow {
+		m.vp.GotoBottom() // stay pinned when the popover opens/closes or the pane resizes
+	}
 }
 
 // replayHistory renders the loaded collective's prior turns into the
@@ -315,19 +324,14 @@ func (m *ChatModel) replayHistory() {
 	if m.coll == nil || len(m.coll.Incursions) == 0 {
 		return
 	}
-	w := m.width
-	if w == 0 {
-		w = 80
-	}
 	for _, inc := range m.coll.Incursions {
 		if inc.Status == history.IncursionFailed {
 			continue
 		}
-		row := styleUserEcho.Width(w).Render(stylePromptPrefix.Render("❯ ") + inc.Prompt)
-		m.lines = append(m.lines, "", row)
+		m.lines = append(m.lines, chatLine{}, chatLine{kind: lineUser, text: inc.Prompt})
 		for _, tx := range inc.Transmissions {
 			if tx.Text != "" {
-				m.lines = append(m.lines, assistantView(tx.Text))
+				m.lines = append(m.lines, chatLine{kind: lineAssistant, text: tx.Text})
 			}
 		}
 	}
@@ -420,6 +424,11 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		return m, cmd
 	}
 
+	if wheel, ok := msg.(tea.MouseWheelMsg); ok {
+		var cmd tea.Cmd
+		m.vp, cmd = m.vp.Update(wheel)
+		return m, cmd
+	}
 	if kp, ok := msg.(tea.KeyPressMsg); ok {
 		// ESC / Ctrl-C while busy interrupts the agent: cancel the in-flight
 		// stream and break the tool loop. Once idle, esc is a no-op — chat
@@ -497,6 +506,26 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 				return m, m.own(deniedResultCmd(ap.probe, "denied by user (always)"))
 			}
 			return m, nil // swallow everything else
+		}
+		// Transcript scrolling. Half-page keys only when the input is empty so
+		// they never steal readline editing (ctrl+u kills to line start).
+		switch kp.String() {
+		case "pgup":
+			m.vp.PageUp()
+			return m, nil
+		case "pgdown":
+			m.vp.PageDown()
+			return m, nil
+		case "ctrl+u":
+			if m.input.Value() == "" {
+				m.vp.HalfPageUp()
+				return m, nil
+			}
+		case "ctrl+d":
+			if m.input.Value() == "" {
+				m.vp.HalfPageDown()
+				return m, nil
+			}
 		}
 		if m.sugOpen {
 			switch kp.String() {
@@ -870,9 +899,9 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 		seed += m.coll.ID
 	}
 	m.activityVerb = verbFor(seed + fmt.Sprintf("%d", len(m.coll.Incursions)))
-	m.lines = append(m.lines, "") // blank breathing row above the in-flight row
+	m.lines = append(m.lines, chatLine{}) // blank breathing row above the in-flight row
 	m.pendIdx = len(m.lines)
-	m.lines = append(m.lines, m.pendingView())
+	m.lines = append(m.lines, chatLine{text: m.pendingView()})
 	m.flush()
 	if m.ctx == nil {
 		m.ctx, m.cancel = context.WithCancel(m.parent())
@@ -1698,18 +1727,8 @@ func (m ChatModel) runInlineBashCmd(tool tools.Tool, args map[string]any) tea.Cm
 // liveView renders the in-flight row once deltas are arriving: the dim thinking
 // block (if the model is emitting a reasoning trace) above the reply so far
 // (if any content has landed yet).
-func (m ChatModel) liveView() string {
-	var b strings.Builder
-	if m.thinkAcc != "" {
-		b.WriteString(styleThinking.Render("∴ "+m.thinkAcc) + "\n")
-	}
-	if m.acc != "" {
-		if b.Len() > 0 {
-			b.WriteByte('\n')
-		}
-		b.WriteString(assistantView(m.acc))
-	}
-	return b.String()
+func (m ChatModel) liveView() chatLine {
+	return chatLine{kind: lineLive, text: m.acc, think: m.thinkAcc}
 }
 
 // refreshPending re-renders the in-flight row (called on each spinner tick) so the
@@ -1718,18 +1737,18 @@ func (m *ChatModel) refreshPending() {
 	if m.pendIdx < 0 || m.pendIdx >= len(m.lines) || m.streaming {
 		return
 	}
-	m.lines[m.pendIdx] = m.pendingView()
+	m.lines[m.pendIdx] = chatLine{text: m.pendingView()}
 	m.flush()
 }
 
 // replacePending swaps the in-flight row for the given line (accumulating reply or
 // final result). Falls back to a fresh turn if the index is somehow unset.
-func (m *ChatModel) replacePending(line string) {
+func (m *ChatModel) replacePending(line chatLine) {
 	if m.pendIdx >= 0 && m.pendIdx < len(m.lines) {
 		m.lines[m.pendIdx] = line
 		m.flush()
 	} else {
-		m.appendTurn(line)
+		m.appendLine(line)
 	}
 }
 
@@ -1811,9 +1830,60 @@ func drainCmd(ch <-chan streamItem) tea.Cmd {
 	}
 }
 
-// assistantView renders a model reply with a primary-colored "● " prefix.
-func assistantView(text string) string {
-	return styleAssistant.Render("● " + text)
+// assistantView renders a model reply with a primary-colored "● " prefix,
+// wrapped to w cells with a hanging indent.
+func assistantView(text string, w int) string {
+	return wrapPrefixed(text, w, "● ", "  ", styleAssistant)
+}
+
+type lineKind uint8
+
+const (
+	lineStyled    lineKind = iota // pre-styled text; ANSI-aware wrap at render time
+	lineUser                      // user echo: full-width tinted block
+	lineAssistant                 // model reply
+	lineLive                      // in-flight thinking + reply
+)
+
+// chatLine is one transcript row kept in source form so it re-wraps whenever
+// the chat width changes. out/outW memoize the last render.
+type chatLine struct {
+	kind  lineKind
+	text  string
+	think string
+	out   string
+	outW  int
+}
+
+func (l chatLine) render(w int) string {
+	switch l.kind {
+	case lineUser:
+		rows := wrapTranscript(l.text, w-2)
+		for i, r := range rows {
+			p := "  "
+			if i == 0 {
+				p = stylePromptPrefix.Render("❯ ")
+			}
+			rows[i] = styleUserEcho.Width(w).Render(p + r)
+		}
+		return strings.Join(rows, "\n")
+	case lineAssistant:
+		return assistantView(l.text, w)
+	case lineLive:
+		var parts []string
+		if l.think != "" {
+			parts = append(parts, wrapPrefixed(l.think, w, "∴ ", "  ", styleThinking), "")
+		}
+		if l.text != "" {
+			parts = append(parts, assistantView(l.text, w))
+		}
+		return strings.Join(parts, "\n")
+	default:
+		if l.text == "" {
+			return ""
+		}
+		return wrapStyled(l.text, w)
+	}
 }
 
 // --- popover mechanics ------------------------------------------------------
@@ -1905,23 +1975,48 @@ func (m ChatModel) suggestionView() string {
 
 // appendTurn pushes one blank breathing row then the styled line.
 func (m *ChatModel) appendTurn(line string) {
-	m.lines = append(m.lines, "", line)
+	m.appendLine(chatLine{text: line})
+}
+
+func (m *ChatModel) appendLine(line chatLine) {
+	m.lines = append(m.lines, chatLine{}, line)
 	m.flush()
 }
 
-// flush is the single point that re-renders the transcript into the viewport and
-// pins it to the bottom. Called whenever lines changes (append or in-place edit of
-// the pending row).
+// flush is the single point that re-renders the transcript into the viewport.
+// Called whenever lines changes (append or in-place edit of the pending row).
+// It follows the tail only when the reader was already at the bottom, so
+// streaming never yanks someone who scrolled up.
 func (m *ChatModel) flush() {
-	m.vp.SetContent(strings.Join(m.lines, "\n"))
-	m.vp.GotoBottom()
+	follow := m.vp.AtBottom()
+	m.render()
+	if follow {
+		m.vp.GotoBottom()
+	}
+}
+
+// render wraps every row at the current width (memoized per row) and hands the
+// result to the viewport.
+func (m *ChatModel) render() {
+	w := m.width
+	if w <= 0 {
+		w = 80
+	}
+	rows := make([]string, len(m.lines))
+	for i := range m.lines {
+		l := &m.lines[i]
+		if l.outW != w {
+			l.out, l.outW = l.render(w), w
+		}
+		rows[i] = l.out
+	}
+	m.vp.SetContent(strings.Join(rows, "\n"))
 }
 
 // userEcho renders a full-width tinted block with a dim "❯ " prefix (no label).
 func (m *ChatModel) userEcho(text string) {
 	m.sessionMsgs++
-	row := styleUserEcho.Width(m.width).Render(stylePromptPrefix.Render("❯ ") + text)
-	m.appendTurn(row)
+	m.appendLine(chatLine{kind: lineUser, text: text})
 }
 
 // systemLine renders a dim, prefix-less help/system message.

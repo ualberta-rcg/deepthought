@@ -791,14 +791,24 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 		// F3 — the model chooser overlay (switch the running model).
 		return m, func() tea.Msg { return tui.OpenModelChooserMsg{} }
 	case keybindings.Sidebar:
-		// F10 — cycle the live info column: auto → on → off (persisted), then
-		// re-size the chat immediately so the column appears/disappears live.
+		// F10 — one press flips what the user sees: a visible column is set
+		// "off", a hidden one "on" (persisted). "auto" stays selectable in
+		// Settings › Appearance.
 		if m.deps.Live == nil {
 			return m, nil
 		}
-		next := map[string]string{"auto": "on", "on": "off", "off": "auto"}[m.deps.Live.SidebarMode()]
-		_ = m.deps.Live.SetSidebar(next)
+		next, notice := "on", "Sidebar on"
+		if m.sidebarOn() {
+			next, notice = "off", "Sidebar off · F10 to show"
+		}
+		if err := m.deps.Live.SetSidebar(next); err != nil {
+			notice = "Sidebar setting not saved: " + err.Error()
+		}
 		m.chatResize()
+		if next == "on" && !m.sidebarOn() {
+			notice = fmt.Sprintf("Sidebar on · needs %d columns, terminal has %d", m.sidebarWidth()+tui.SidebarGutter+tui.MinChatCols, m.width)
+		}
+		m.chat = m.chat.Notice(notice)
 		return m, nil
 	case keybindings.Cron:
 		// F8 — manage + track the user's crontab.
@@ -1268,7 +1278,7 @@ func activeModelOf(f config.File) (unimatrix.Model, bool) {
 func (m *RootModel) chatResize() {
 	chatW := m.width
 	if m.sidebarOn() {
-		chatW = m.width - m.sidebarWidth() - 1
+		chatW = m.width - m.sidebarWidth() - tui.SidebarGutter
 	}
 	height := m.height - tui.ChatChromeHeight(m.legendOn())
 	if !m.sidebarOn() {
@@ -1285,24 +1295,27 @@ func (m RootModel) sidebarWidth() int {
 			w = f.Appearance.SidebarWidth
 		}
 	}
-	return max(32, min(w, m.width-61))
+	return max(32, min(w, m.width-tui.SidebarGutter-tui.MinChatCols))
 }
 
-// sidebarOn reports whether the chat screen's live info column is showing:
-// auto = only on very wide terminals (>=160 cols); on = forced (>=120); off =
-// never.
+// sidebarOn reports whether the chat screen's live info column is showing.
+// "off" never; "on" whenever the chat keeps at least MinChatCols beside it;
+// "auto" only on wide, tall terminals (BreakWide × MinSidebarRows). Hiding for
+// size is derived here and never written back, so growing the terminal brings
+// the column back unless the preference is "off".
 func (m RootModel) sidebarOn() bool {
 	mode := "auto"
 	if m.deps.Live != nil {
 		mode = m.deps.Live.SidebarMode()
 	}
+	fits := m.width >= m.sidebarWidth()+tui.SidebarGutter+tui.MinChatCols
 	switch mode {
 	case "off":
 		return false
 	case "on":
-		return m.width >= m.sidebarWidth()+61
+		return fits
 	default: // auto
-		return m.width >= m.sidebarWidth()+61
+		return fits && m.width >= tui.BreakWide && m.height >= tui.MinSidebarRows
 	}
 }
 
