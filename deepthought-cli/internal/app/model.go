@@ -545,7 +545,6 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tui.SessionUsageMsg:
 		m.sidebar.SessionIn, m.sidebar.SessionOut, m.sidebar.LastContext = msg.In, msg.Out, msg.LastContext
-		m.sidebar.ContextEstimated = msg.ContextEstimated
 		if m.deps.Live != nil {
 			if snap := m.deps.Live.Snapshot(); snap.Models != nil {
 				if mm, ok := activeModelOf(snap); ok {

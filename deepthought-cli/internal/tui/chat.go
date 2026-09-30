@@ -3,6 +3,7 @@ package tui
 import (
 	"context"
 	"deepthought-cli/internal/credential"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -828,24 +829,43 @@ func (m ChatModel) interrupt() (ChatModel, tea.Cmd) {
 	m.thinkAcc = ""
 	m.pendIdx = -1
 	if inc := m.coll.ActiveIncursion(); inc != nil {
-		if partialText != "" || partialThinking != "" {
-			tx, _ := inc.AddTransmission(strings.TrimSpace(partialText), nil)
-			tx.Producer = m.currentProducer
-			if partialThinking != "" {
-				syn := tx.AddSynapse(partialThinking, "reasoning")
-				_ = m.store.SaveObject(syn)
-			}
-			_ = m.store.SaveObject(tx)
-		}
+		saveErr := m.persistPartial(inc, partialText, partialThinking)
 		inc.Interrupt("interrupted by user")
-		_ = m.store.SaveObject(inc)
-		_ = m.store.Flush()
+		saveErr = errors.Join(saveErr, m.store.SaveObject(inc), m.store.Flush())
+		m.noteSaveError(saveErr)
 	}
 	m.appendTurn(styleSystem.Render("— interrupted — /resume to continue"))
 	if m.gate != nil {
 		m.gate.ClearTaskGrants()
 	}
 	return m, nil
+}
+
+// persistPartial keeps whatever reply/thinking streamed before a turn ended
+// early (interrupt or provider error) as a transmission, so it survives
+// resume and never vanishes from the stored chat.
+func (m *ChatModel) persistPartial(inc *history.Incursion, text, thinking string) error {
+	if text == "" && thinking == "" {
+		return nil
+	}
+	tx, err := inc.AddTransmission(strings.TrimSpace(text), nil)
+	if err != nil {
+		return err
+	}
+	tx.Producer = m.currentProducer
+	var synErr error
+	if thinking != "" {
+		synErr = m.store.SaveObject(tx.AddSynapse(thinking, "reasoning"))
+	}
+	return errors.Join(synErr, m.store.SaveObject(tx))
+}
+
+// noteSaveError tells the user when the chat could not be written locally
+// (the transcript on screen is then ahead of what a resume would load).
+func (m *ChatModel) noteSaveError(err error) {
+	if err != nil {
+		m.appendTurn(styleError.Render("✗ chat not saved: " + err.Error()))
+	}
 }
 
 func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
@@ -1266,9 +1286,9 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 		}
 		m.busy = false
 		m.appendTurn(styleError.Render("✗ " + it.err.Error()))
+		saveErr := m.persistPartial(inc, m.acc, m.thinkAcc)
 		inc.Fail(it.err.Error())
-		_ = m.store.SaveObject(inc)
-		_ = m.store.Flush()
+		m.noteSaveError(errors.Join(saveErr, m.store.SaveObject(inc), m.store.Flush()))
 		return m, nil
 	}
 

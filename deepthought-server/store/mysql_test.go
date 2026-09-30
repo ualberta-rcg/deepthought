@@ -144,9 +144,14 @@ func TestMySQLTenantIsolation(t *testing.T) {
 	if err := bob.GetRecord("journal", "job-1", &v); err != sql.ErrNoRows {
 		t.Errorf("bob read alice's record: %v", err)
 	}
-	claimed, err := bob.ClaimRecord("journal", "job-1", map[string]int{"revision": 1})
-	if err != nil || claimed {
-		t.Errorf("bob claimed alice's record: %v %v", claimed, err)
+	// Records are namespaced per user: bob's claim of the same kind/id makes
+	// his own record and leaves alice's untouched.
+	claimed, err := bob.ClaimRecord("journal", "job-1", map[string]int{"revision": 99})
+	if err != nil || !claimed {
+		t.Errorf("bob's claim in his own namespace = %v %v, want true", claimed, err)
+	}
+	if err := alice.GetRecord("journal", "job-1", &v); err != nil || v["revision"] != 1 {
+		t.Errorf("alice's record after bob's claim = %v %v, want revision 1", v, err)
 	}
 	// ReplaceRecord with the wrong revision fails; with the right one succeeds.
 	if err := alice.ReplaceRecord("journal", "job-1", 7, map[string]int{"revision": 8}); err == nil {

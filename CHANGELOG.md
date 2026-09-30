@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli, deepthought-server — fix the first real CI failures; keep partial replies on provider errors
+- CI now reports failures (previous entry), which surfaced three: elapsed times of 10+ minutes ("59m 04s") need 7 cells, so the activity line's elapsed field is 7 wide; the sidebar context row duplicated the activity-line meter and broke the sidebar v2 "no clutter" rule, so it is removed (the meter stays on the idle activity line and Status); the store's tenant test expected a user's claim of the same record id to fail, but records are namespaced per user — it now asserts the claim lands in the claimant's own namespace and leaves the other user's record untouched.
+- A provider error mid-stream no longer drops the partial reply: streamed text and thinking are saved as a transmission before the turn is marked failed (same path as esc interrupt), and a failed local save is shown in the transcript instead of being ignored.
+- Files: `deepthought-cli/internal/tui/{chat.go, chat_test.go, num.go, num_test.go, sidebar.go}`, `deepthought-cli/internal/app/model.go`, `deepthought-server/store/mysql_test.go`.
+- Verification: CI run for b35511e (failures listed above, read from the new annotations); new regression `TestStreamErrorPreservesPartialTransmission`. gofmt and `git diff --check` locally; the rerun is in GitHub Actions.
+
 ## 2026-09-30 · deepthought-server, deepthought-cli, ci — server correctness and a tested server lane
 - Wire contract: server `ProbeStatus` now matches the CLI exactly (`Pending=0, Allowed=1, Running=2, Completed=3, Denied=4, Failed=5`) and `Collective.Cycles` is carried. A golden fixture (`graph/testdata/golden_collective.json`, identical copy in `deepthought-cli/internal/history/testdata/`) is decoded by both modules; the CLI test also checks the two copies are byte-identical. Data note: probes the test deployment stored earlier as failed (old 4) now read as denied — test data only.
 - Store: `GetDrone` selected a non-existent `updated` column (now `updated_at`); `SaveCollective` runs in one transaction; a save naming another user's interaction id is refused (`ErrForeignID`, HTTP 409) instead of overwriting it. `drone_metadata` is only reachable through an owned interaction row.

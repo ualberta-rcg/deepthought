@@ -43,8 +43,8 @@ func fixedTokens(n int, estimated bool) string {
 // FixedTokens is the exported fixedTokens for the root's status line.
 func FixedTokens(n int, estimated bool) string { return fixedTokens(n, estimated) }
 
-// formatElapsed renders a duration right-aligned to 6 cells:
-// "   12s" / "1m 04s" / "1h 02m".
+// formatElapsed renders a duration right-aligned to 7 cells:
+// "    12s" / "59m 04s" / " 1h 02m".
 func formatElapsed(d time.Duration) string {
 	if d < 0 {
 		d = 0
@@ -59,7 +59,7 @@ func formatElapsed(d time.Duration) string {
 	default:
 		out = fmt.Sprintf("%dh %02dm", s/3600, (s%3600)/60)
 	}
-	return fmt.Sprintf("%6s", out)
+	return fmt.Sprintf("%7s", out)
 }
 
 // ContextMeter renders "Context ██████░░░░  42%": the bar fills as the

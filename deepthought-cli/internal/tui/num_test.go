@@ -17,9 +17,9 @@ func TestFixedWidthNumerals(t *testing.T) {
 			}
 		}
 	}
-	for _, d := range []time.Duration{0, 5 * time.Second, 59 * time.Second, 61 * time.Second, 59 * time.Minute, 3 * time.Hour} {
-		if got := formatElapsed(d); len(got) != 6 {
-			t.Fatalf("formatElapsed(%s)=%q is not 6 cells", d, got)
+	for _, d := range []time.Duration{0, 5 * time.Second, 59 * time.Second, 61 * time.Second, 59*time.Minute + 59*time.Second, 3 * time.Hour, 99 * time.Hour} {
+		if got := formatElapsed(d); len(got) != 7 {
+			t.Fatalf("formatElapsed(%s)=%q is not 7 cells", d, got)
 		}
 	}
 	if !strings.HasPrefix(strings.TrimSpace(fixedTokens(1200, true)), "~") {

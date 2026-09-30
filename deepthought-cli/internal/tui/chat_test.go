@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"testing"
 
 	"deepthought-cli/internal/babel"
@@ -171,6 +172,38 @@ func TestHandleToolResultMutatesProbe(t *testing.T) {
 	}
 	if probe.Result.Summaries.Condensed != "" {
 		t.Fatalf("chat loop should not auto-generate condensed summaries, got %q", probe.Result.Summaries.Condensed)
+	}
+}
+
+func TestStreamErrorPreservesPartialTransmission(t *testing.T) {
+	m := NewChatModel(
+		fakeSource{},
+		tools.NewRegistry(tools.NewBash(), tools.NewRead()),
+		queen.NewGate(queen.Review),
+		"test_session",
+		fileSource(t.TempDir()),
+	)
+	inc := m.coll.StartIncursion("long task")
+	inc.Status = history.IncursionStreaming
+	m.busy = true
+	m.streaming = true
+	m.acc = "half an answer"
+	m.thinkAcc = "half a thought"
+	m.lines = []chatLine{{}, {text: "pending"}}
+	m.pendIdx = 1
+
+	got, _ := m.handleStreamItem(streamItemMsg{err: errors.New("gateway reset")})
+	if inc.Status != history.IncursionFailed {
+		t.Fatalf("status=%s", inc.Status)
+	}
+	if len(inc.Transmissions) != 1 || inc.Transmissions[0].Text != "half an answer" {
+		t.Fatalf("partial reply dropped on provider error: %+v", inc.Transmissions)
+	}
+	if len(inc.Transmissions[0].Synapses) != 1 {
+		t.Fatal("partial reasoning dropped on provider error")
+	}
+	if got.busy {
+		t.Fatal("turn still busy after error")
 	}
 }
 
