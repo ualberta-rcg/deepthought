@@ -79,11 +79,15 @@ func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		m.showServerSync()
 		return m, settingsSyncCmd(m.syncWorker)
 	case "disconnect-server":
+		sess := m.server
 		m.dropServer("Disconnected — edits stay local and sync when you reconnect")
 		if s := m.localStore(); s != nil {
 			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), false)
 		}
 		m.showServerSync()
+		if sess != nil {
+			return m, func() tea.Msg { sess.logout(); return nil }
+		}
 	case "resolve-local", "resolve-remote":
 		if m.syncWorker == nil || m.syncBusy {
 			return m, nil

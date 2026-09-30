@@ -15,7 +15,7 @@ import (
 	"deepthought-cli/internal/unimatrix"
 )
 
-func accountRoot(t *testing.T) (RootModel, *[]string) {
+func accountRoot(t *testing.T) (RootModel, func() []string) {
 	t.Helper()
 	var mu sync.Mutex
 	var calls []string
@@ -38,7 +38,11 @@ func accountRoot(t *testing.T) (RootModel, *[]string) {
 	t.Cleanup(ts.Close)
 	m := sidebarRoot(t, 120, 40)
 	m.server = &ServerSession{URL: ts.URL, User: "fixture", Token: "t"}
-	return m, &calls
+	return m, func() []string {
+		mu.Lock()
+		defer mu.Unlock()
+		return append([]string(nil), calls...)
+	}
 }
 
 func runAction(t *testing.T, m RootModel, a tui.WorkspaceAction) RootModel {
@@ -77,11 +81,23 @@ func TestServerSessionsMarkCurrentAndRevoke(t *testing.T) {
 	}
 	m = runAction(t, m, tui.WorkspaceAction{Kind: "revoke-session", ID: "bbbb2222"})
 	found := false
-	for _, c := range *calls {
+	for _, c := range calls() {
 		found = found || c == "DELETE /api/v1/user/sessions/bbbb2222"
 	}
 	if !found {
-		t.Fatalf("calls = %v, want a DELETE of the other session", *calls)
+		t.Fatalf("calls = %v, want a DELETE of the other session", calls())
+	}
+}
+
+func TestDisconnectLogsOut(t *testing.T) {
+	m, calls := accountRoot(t)
+	next, cmd := m.workspaceAction(tui.WorkspaceAction{Kind: "disconnect-server"})
+	if next.(RootModel).server != nil || cmd == nil {
+		t.Fatal("disconnect should drop the session and return the logout call")
+	}
+	cmd()
+	if got := strings.Join(calls(), ","); !strings.Contains(got, "POST /api/v1/auth/logout") {
+		t.Fatalf("calls = %s, want a logout", got)
 	}
 }
 

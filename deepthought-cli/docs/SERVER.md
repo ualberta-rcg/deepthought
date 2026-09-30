@@ -1,115 +1,97 @@
-# DeepThought Server — Architecture & Groundwork
+# DeepThought Server — API and client contract
 
-The server side of the research-copilot roadmap ([ROADMAP.md](ROADMAP.md)): the durable,
-detachable execution plane that persists state across client disconnects and resumes work.
-**Status: skeleton.** What exists today is the front door (health, auth, one real data
-endpoint, live reload) plus this document — the execution plane grows in behind the same
-door with no client breakage.
+The server is optional. The CLI runs fully standalone; when a user connects
+it (Ctrl+P → Server synchronization, or the splash), the server adds settings
+that roam between machines, chat mirroring, provider-key sync and a web UI.
+Every endpoint is additive: the client treats `404` and `501` as "this server
+doesn't have the feature" and carries on.
 
-## The client runs standalone
+## Where it lives
 
-The CLI is the product; this server is additive. Nothing in the client dials or waits on
-it — the client's full functionality (chat loop, tools, skills, cron, status) runs
-client-side, and stays that way: capabilities land client-side first where feasible.
+`deepthought-server/` at the repo root: its own Go module with no imports from
+the CLI. `server/` is the HTTP surface, `store/` the MySQL store (user-scoped
+tables), `graph/` a byte-compatible copy of the CLI's chat-graph wire shapes
+(a shared golden fixture keeps the two in step), `k8s/` the reference
+manifests. GitHub Actions tests it against a MySQL 8.4 service and builds the
+image; deployment is covered in [DEPLOYMENT.md](../../docs/DEPLOYMENT.md).
 
-The CLI now has a local resident session runner and layered settings resolver.
-The `DefaultsSource` interface is an inactive seam for eventual server settings;
-there is no settings fetch or server login in the current client. Local overrides
-remain authoritative over future server defaults. See [LOCAL-OPERATIONS.md](LOCAL-OPERATIONS.md).
-
-## Where it lives today
-
-`deepthought-cli/cmd/deepthought-server` + `deepthought-cli/internal/server`. Go
-`internal/` packages cannot be imported across modules, so the server starts inside the
-`deepthought-cli` module; promotion to the repo-root `deepthought-server/` product dir is
-deferred until the internals it needs earn extraction into a shared package.
-
-## Deployment
-
-- **Primary: a container on the Vulcan Kubernetes cluster**, like aleph. TLS terminates
-  upstream at **`deepthought.vulcan.alliancecan.ca`**; the server binds plaintext
-  (`--addr 0.0.0.0:8080` in the container). Reference manifests: `k8s/deployment.yaml` +
-  `k8s/service.yaml` (aleph conventions: never-`:latest` image pins `…:server-<sha>`,
-  startup/readiness/liveness probes on `/healthz` + `/readyz`, rolling updates; the
-  deployed source of truth will live in the ww-overlays control-plane manifests).
-- **CI** builds the image (`.github/workflows/build-server.yml`) — test → static build →
-  artifact → optional Docker publish following aleph's secret conventions
-  (`DOCKER_HUB_USER`/`DOCKER_HUB_TOKEN`, `DOCKER_HUB_REPO` override). The build+artifact
-  path needs zero secrets.
-- **Dev/bare-metal**: `make deploy-server`, or the systemd user unit at
-  `configs/deepthought-server.service`.
-- **Pod state is ephemeral** — the skeleton is stateless by design; real state (SQLite,
-  cron registries) will need a PVC (aleph uses RWX NFS for its ledger) before anything
-  durable runs in-cluster.
+Configuration: `DEEPTHOUGHT_SERVER_PASSWORD` (login), `DEEPTHOUGHT_MYSQL_DSN`
+(without it the database endpoints answer `503`), `DEEPTHOUGHT_ADMIN_USERS`
+(who may change the server defaults), `DEEPTHOUGHT_VAULT_KEY` (32 bytes, hex or
+base64; without it only `$VARIABLE` key references are stored),
+`--addr`, `--data`.
 
 ## Auth
 
-Phase-1 shared password (`$DEEPTHOUGHT_SERVER_PASSWORD` or `--password-file`): the client
-(the splash's "Log in to server", or the web UI's login form) POSTs its username + the
-shared password to `/api/v1/auth/login` and receives an opaque session token (in-memory,
-24h expiry; a restart logs everyone out). Every other `/api/*` route requires the session
-token; health endpoints stay open for probes; **no password configured → /api answers
-503, never silently open**. The password literal lives only in the cluster secret and the
-user's local config — never in this public repo. Per-user auth (SSH-key-derived or site
-SSO) remains the documented next step — the login handler is the single place to change.
+`POST /api/v1/auth/login` with `{"user", "password"}` checks the shared
+password and returns `{"token", "user"}`. Tokens are opaque; the server keeps
+only their SHA-256 (in MySQL when configured, else in memory). A session lasts
+24 h and slides forward when used in the second half of its life; expired
+sessions are purged hourly. Every `/api/*` route except login needs
+`Authorization: Bearer <token>`. On a `401` the client logs in once more with
+the configured password and repeats the request; if that fails too it stops
+syncing, keeps every edit local and asks the user to reconnect — no retry
+loop. With no password configured `/api` answers `503`, never open.
+
+**Trust assumption:** the password is shared. Anyone who holds it can log in
+as any user name and read that user's settings, chats and stored keys. Keep it
+to the people who could read those anyway. Per-user claim tokens are the
+planned fix and stay deferred until the password is shared more widely.
+
+## Endpoints
+
+| Route | Purpose |
+|---|---|
+| `GET /healthz`, `GET /readyz` | open probes: status, version, uptime |
+| `POST /api/v1/auth/login` | shared password → session token |
+| `POST /api/v1/auth/logout` | revoke the calling session |
+| `GET /api/v1/user/sessions` | `{current, sessions: [{id, created, last_seen, expires}]}`; ids are short hashes, never tokens |
+| `DELETE /api/v1/user/sessions/{id}` | revoke one of the caller's sessions |
+| `GET /api/v1/user/settings` | `{settings, revision}` — the roving settings document |
+| `PUT /api/v1/user/settings` | `{settings, revision}` based on the last revision seen; a mismatch is `409` (pull, merge, push again) |
+| `GET /api/v1/user/credentials` | `{salt, vault, credentials: [{id, name, base_url, wire, kind, fingerprint, updated_at}]}` — never values |
+| `GET /api/v1/user/credentials/{id}` | one credential with its value (`Cache-Control: no-store`) |
+| `PUT /api/v1/user/credentials/{id}` | `{name, base_url, wire, kind, value}`; `kind` is `env` (a `$VARIABLE` reference) or `secret` (sealed with the vault key; `503` without one) |
+| `DELETE /api/v1/user/credentials/{id}` | remove the server copy |
+| `GET /api/v1/chats` | the caller's chat summaries |
+| `GET /api/v1/chats/{id}` | one chat graph |
+| `PUT /api/v1/chats/{id}` | upsert a chat graph; ids owned by another account are `409` |
+| `GET/PUT /api/v1/settings/defaults` | the server defaults layer; PUT is admin-only and rejects credential keys |
+| `GET /api/v1/version`, `GET /api/v1/crons`, `POST /api/v1/admin/reload` | build info, the cron registry, config/skills reload |
+| `GET /api/v1/jobs`, `GET /api/v1/experiments` | `501` placeholders |
+
+A credential id is `CredentialID(name, base_url, wire)`: the first 32 hex
+digits of SHA-256 over the lower-cased name, the URL without a trailing slash
+and the lower-cased wire. The fingerprint is `HMAC-SHA256(salt, value)` under
+a per-user salt, so the client can compare keys without either side sending
+one. Secrets are AES-256-GCM with a fresh nonce per row and `user|id` as
+additional data, so a row can't be moved to another user or provider. Both
+modules carry the same test vectors.
+
+## What the client does
+
+- **Settings:** after login the client pulls, merges (local-only fields such
+  as keys and `sync_credential` never leave the machine) and pushes on
+  change. A `409` pulls again; a real conflict shows under
+  Server synchronization › Needs attention.
+- **Provider keys:** after the first successful settings sync of each login
+  the client plans upload / download / conflict per synced provider. The first
+  time on a machine the plan is reviewed; afterwards only conflicts ask. See
+  [SETUP.md](../../docs/SETUP.md#provider-keys).
+- **Chats:** saved locally first, then mirrored; failed pushes queue and flush
+  on the next connect.
+- **Account views:** Server synchronization lists the keys the server holds
+  (masked, deletable) and the account's sessions (others revocable).
+- **Logout:** Disconnect stops syncing and revokes the session on the server
+  (best effort; an unreachable server just lets it expire).
 
 ## Web UI
 
-An embedded single page (no framework, no build step) served at `/`: login form →
-dashboard with service info and the settings-defaults editor. It grows into the real
-client over time; a JS framework arrives when it earns one.
+An embedded single page at `/` (no framework, no build step): login, service
+info and the defaults editor.
 
-## API surface (v1)
+## Next
 
-| Route | Status | Notes |
-|---|---|---|
-| `GET /healthz`, `GET /readyz` | live | open; status/version/uptime |
-| `POST /api/v1/auth/login` | live | shared password → session token |
-| `GET /api/v1/version` | live | build + data dir |
-| `GET/PUT /api/v1/settings/defaults` | live | the server settings layer (credential keys rejected on PUT) |
-| `GET /api/v1/crons` | live | the local cron tracking registry — the first fleet-aggregation endpoint (each system's registry is host-scoped + versioned JSON) |
-| `POST /api/v1/admin/reload` | live | re-reads config + skills; returns what it found |
-| `GET /api/v1/jobs` | 501 | roadmap: job lifecycle (#8) |
-| `GET /api/v1/experiments` | 501 | roadmap: persistent project state (#2) |
-| `GET /api/v1/chats` | 501 | roadmap: will list `history.SQLiteStore.ListCollectives` |
-
-## Live editing
-
-Edits (config.json, skills packs) land via git pull or SSH and apply **without a restart**:
-- HTTP: `POST /api/v1/admin/reload` (token-authed) — genuinely re-reads config + skills and
-  reports the result.
-- Signal: `SIGHUP` (ops habit; the skeleton re-reads on next use).
-- Daemon: the Transwarp socket's `refresh_config` / `refresh_skills` verbs now invoke a
-  real reload hook (`Manager.OnRefresh`, wired in `resident.go`) instead of acknowledging
-  and dropping.
-
-## The seam (what moves where)
-
-The client/server split the roadmap requires, in planned order — deliberately **not** a
-big-bang refactor:
-
-1. **State (done):** `history.SQLiteStore` is already a shared, stateless, multi-session
-   store (WAL + single-writer via `SetMaxOpenConns(1)`) — the server opens the same
-   `DataDir/history.db`. Queen gates clone per session (`app/session.go`).
-2. **Loop (next):** the live chat loop is welded into `tui/chat.go` today; the server-side
-   runner is `unimatrix.Session` — the headless agent/tool loop designed for exactly this
-   ("TUI, daemon, schedule, and plan execution can all observe the same loop without
-   owning it"), currently unused. The seam: a `TurnRunner` interface with in-process and
-   server-backed implementations; the TUI migrates onto it only once the server proves
-   the loop end-to-end (a `POST /api/v1/turn` headless endpoint is the natural first
-   proof — it can land server-side *without touching the TUI*).
-3. **Events:** `unimatrix.Session.OnEvent` (`history.Drone`s) is the server's event
-   source; the Transwarp `WaitApproval`/`ResolveApproval` pair is the approval
-   round-trip. Attach/resume needs an event backlog + fan-out — the current 10 s
-   single-request socket can't carry a stream; the HTTP API replaces it.
-4. **Control plane (exists):** the Transwarp daemon (`--towel` fork + `systemd-run`
-   envelope + lifecycle verbs) stays the local control plane; this server is the
-   execution plane beside it.
-
-## Cron fleet aggregation (future)
-
-Each system running DeepThought keeps a host-scoped `cron/registry.json` (first/last seen,
-hashes, notes). The server's `/api/v1/crons` serves the local one; the fleet view is
-agents reporting their registries (push on change + periodic pull) and the server merging
-them — "manage huge workflows with many clusters" (roadmap #8/#10 adjacent). The registry
-schema is versioned for exactly that merge.
+The execution plane — a headless turn endpoint on `unimatrix.Session`, event
+backlog and approval round-trip for attach/resume, job and experiment state —
+grows behind the same door. None of it changes the endpoints above.

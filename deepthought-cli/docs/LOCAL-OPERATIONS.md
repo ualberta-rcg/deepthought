@@ -35,6 +35,12 @@ merge applies server changes to live settings, SQLite and the mirror, preserving
 concurrent local edits and durable offline changes. Shared settings exclude
 credentials, executable hooks, permissions and host-specific bindings.
 Anonymous providers require the explicit `anonymous` setting.
+Provider keys sync on their own channel after settings sync (fingerprint
+compare, one review per machine, then only conflicts ask); Server
+synchronization also lists the keys the server holds and the account's
+sessions, and Disconnect revokes this client's session. A provider with no
+key on this machine fails with a message naming the fix. See the
+[server contract](SERVER.md).
 
 The daemon's `refresh_config` and `refresh_skills` controls update shared state.
 Loaded skill `allowed-tools` restrictions narrow the rest of the current turn;

@@ -1,9 +1,11 @@
 package app
 
 import (
-	"deepthought-cli/internal/config"
+	"os"
 	"path/filepath"
 	"testing"
+
+	"deepthought-cli/internal/config"
 )
 
 func TestSettingsRejectStaleSnapshot(t *testing.T) {
@@ -33,5 +35,24 @@ func TestSettingsSnapshotDoesNotSharePointers(t *testing.T) {
 	*copy.Appearance.TopBarLegend = false
 	if !*s.Snapshot().Thinking || !*s.Snapshot().Appearance.TopBarLegend {
 		t.Fatal("snapshot mutated live settings")
+	}
+}
+
+func TestSettingsWithoutLocalStoreStayInMemory(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.json")
+	s := NewSettings(config.Defaults(), path)
+	f := s.Snapshot()
+	f.Language = "fr"
+	if err := s.Save(f); err != nil {
+		t.Fatal(err)
+	}
+	if s.Snapshot().Language != "fr" {
+		t.Fatal("save not applied")
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("settings without a local store wrote %s", path)
+	}
+	if err := s.Reload(); err != nil || s.Snapshot().Language != "fr" {
+		t.Fatalf("reload without a store must keep the live config (err %v)", err)
 	}
 }

@@ -5,6 +5,8 @@ package app
 
 import (
 	"errors"
+	"net/http"
+	"strings"
 	"time"
 
 	"charm.land/bubbletea/v2"
@@ -36,6 +38,19 @@ func (s *ServerSession) listSessions() (current string, rows []serverSessionRow,
 
 func (s *ServerSession) revokeSession(id string) error {
 	return s.do("DELETE", "/api/v1/user/sessions/"+id, nil, nil)
+}
+
+// logout revokes this session on the server. Best effort and never renewed:
+// a 401 here already means the session is gone.
+func (s *ServerSession) logout() {
+	req, err := http.NewRequest("POST", strings.TrimRight(s.URL, "/")+"/api/v1/auth/logout", nil)
+	if err != nil {
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+s.token())
+	if resp, err := serverHTTPClient().Do(req); err == nil {
+		resp.Body.Close()
+	}
 }
 
 type serverKeysMsg struct {

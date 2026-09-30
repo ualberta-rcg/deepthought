@@ -1,12 +1,9 @@
 package app
 
 import (
-	"crypto/sha256"
 	"encoding/json"
 	"fmt"
-	"golang.org/x/sys/unix"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -32,7 +29,6 @@ type Settings struct {
 	pool        *unimatrix.Pool
 	breakers    map[string]*providerBreaker
 	revision    uint64
-	diskHash    [32]byte
 	syncWorkers map[string]*SettingsSync
 }
 
@@ -43,12 +39,11 @@ type providerBreaker struct {
 
 // NewSettings builds the handle from the loaded config and its file path.
 func NewSettings(cfg *config.Config, path string) *Settings {
-	raw, _ := os.ReadFile(path)
 	revision := cfg.Revision
 	if revision == 0 {
 		revision = 1
 	}
-	return &Settings{cfg: cfg, local: cfg.Local, path: path, pool: unimatrix.NewPool(), breakers: map[string]*providerBreaker{}, revision: revision, diskHash: sha256.Sum256(raw)}
+	return &Settings{cfg: cfg, local: cfg.Local, path: path, pool: unimatrix.NewPool(), breakers: map[string]*providerBreaker{}, revision: revision}
 }
 
 func (s *Settings) LocalStore() *config.LocalStore { return s.local }
@@ -130,44 +125,13 @@ func (s *Settings) saveLocked(f config.File) error {
 		s.cfg, s.revision, s.pool = cfg, cfg.Revision, unimatrix.NewPool()
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(s.path), 0700); err != nil {
-		return err
-	}
-	lock, err := os.OpenFile(s.path+".lock", os.O_CREATE|os.O_RDWR, 0600)
-	if err != nil {
-		return err
-	}
-	defer lock.Close()
-	if err := unix.Flock(int(lock.Fd()), unix.LOCK_EX); err != nil {
-		return err
-	}
-	defer unix.Flock(int(lock.Fd()), unix.LOCK_UN)
-	raw, err := os.ReadFile(s.path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	if sha256.Sum256(raw) != s.diskHash {
-		return fmt.Errorf("settings changed in another process; reload before saving")
-	}
+	// No local store (tests and embedders): validate and swap in memory.
 	cfg, err := config.Validate(f)
 	if err != nil {
 		return err
 	}
-	if err := config.SaveLocalPatch(s.path, raw, s.cfg.File, f); err != nil {
-		return err
-	}
-	_ = cfg
-	s.cfg, err = config.Load(s.path)
-	if err != nil {
-		return err
-	}
+	s.cfg, s.pool = cfg, unimatrix.NewPool()
 	s.revision++
-	raw, err = os.ReadFile(s.path)
-	if err != nil {
-		return err
-	}
-	s.diskHash = sha256.Sum256(raw)
-	s.pool = unimatrix.NewPool()
 	return nil
 }
 
@@ -192,17 +156,6 @@ func (s *Settings) Reload() error {
 		s.cfg, s.revision, s.pool = cfg, cfg.Revision, unimatrix.NewPool()
 		return nil
 	}
-	cfg, err := config.Load(s.path)
-	if err != nil {
-		return err
-	}
-	raw, err := os.ReadFile(s.path)
-	if err != nil && !os.IsNotExist(err) {
-		return err
-	}
-	s.cfg, s.diskHash = cfg, sha256.Sum256(raw)
-	s.revision++
-	s.pool = unimatrix.NewPool()
 	return nil
 }
 

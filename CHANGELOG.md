@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — server contract docs, logout on disconnect, no file-only settings path
+- `deepthought-cli/docs/SERVER.md` rewritten from the old skeleton notes to the live contract: where the server lives (`deepthought-server/`, own module), configuration, auth (hashed persisted sessions, sliding expiry, one automatic re-login on 401 then stop), the shared-password trust assumption, every endpoint with its request/response shape, credential identity/fingerprint/sealing, and what the client does with each. `LOCAL-OPERATIONS.md` gains the key sync, account views and no-key behaviour.
+- Disconnect now revokes the session on the server (`POST /api/v1/auth/logout`, best effort, never renewed) so it drops out of the account's session list.
+- `app.Settings` without a local store (tests, embedders) now validates and swaps in memory; the legacy JSON-file save path with its flock, disk-hash check and `config.Load` reload is gone. Production always opens the SQLite local store.
+- Files: `deepthought-cli/docs/{SERVER.md, LOCAL-OPERATIONS.md}`, `internal/app/{settings.go, sync_workspace.go, server_accounts.go, server_accounts_test.go, reliability_test.go}`.
+- Verification: gofmt and `git diff --check` locally; new tests: disconnect sends a logout, in-memory settings save applies without writing a file and survives `Reload`; the account-view test recorder is now lock-protected for `-race`. Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — Settings on the kit key bar and glyphs
 - Settings renders its key bar with `kit.KeyBar` (packed to the frame, `…` when cut) and draws the row cursor, active field marker, health chip and save errors from `kit.G()`, so `--ascii` covers it. Providers get the standard mnemonics: `n` adds a provider (same draft flow as the "+ Add provider" row), `d` deletes; both are advertised in the key bar. `←→` is labelled "section".
 - This completes the kit migration order (Continue → Status → Jobs/Plans/Cron → Settings); the Settings field schema and layout rethink stay a separate item.
