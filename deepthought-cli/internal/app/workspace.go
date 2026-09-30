@@ -140,6 +140,8 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	switch a.Kind {
 	case "server-sync", "connect-server", "disconnect-server", "sync-now", "resolve-local", "resolve-remote", "retry-mirror":
 		return m.syncAction(a)
+	case "server-credentials", "server-sessions", "delete-credential", "confirm-delete-credential", "revoke-session":
+		return m.serverAccountAction(a)
 	case "menu":
 		m.openPalette()
 	case "home":
@@ -160,7 +162,18 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	case "candidate":
 		for _, c := range m.candidates {
 			if c.ID == a.ID {
-				m.showWorkspace("Review provider", c.Source+" · credential [masked]", []tui.WorkspaceItem{{Label: "Accept and discover models", Detail: c.Name + " · " + c.URL + " · " + c.Wire, Kind: "accept-provider", ID: c.ID}, {Label: "Back to candidates", Kind: "candidates"}, {Label: "Skip", Kind: "skip-setup"}})
+				items := []tui.WorkspaceItem{}
+				for _, p := range m.deps.Live.Snapshot().Providers {
+					if sameEndpoint(p, c.URL, c.Wire) {
+						detail := "Keeps its models and roles"
+						if p.APIKey != "" {
+							detail = "Replaces the key this machine uses for it"
+						}
+						items = append(items, tui.WorkspaceItem{Label: "Use this key for " + p.Name, Detail: detail, Kind: "bind-provider", ID: c.ID + "\n" + p.Name})
+					}
+				}
+				items = append(items, tui.WorkspaceItem{Label: "Accept as a new provider and discover models", Detail: c.Name + " · " + c.URL + " · " + c.Wire, Kind: "accept-provider", ID: c.ID}, tui.WorkspaceItem{Label: "Back to candidates", Kind: "candidates"}, tui.WorkspaceItem{Label: "Skip", Kind: "skip-setup"})
+				m.showWorkspace("Review provider", c.Source+" · credential [masked]", items)
 				break
 			}
 		}
@@ -202,6 +215,34 @@ func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 					}
 					return providerSavedMsg{Name: p.Name, Err: err}
 				}
+			}
+		}
+	case "bind-provider":
+		candID, name, _ := strings.Cut(a.ID, "\n")
+		for _, c := range m.candidates {
+			if c.ID != candID || m.discoveryBusy {
+				continue
+			}
+			m.discoveryBusy = true
+			live := m.deps.Live
+			m.workspace.Notice = "Binding key…"
+			return m, func() tea.Msg {
+				p, err := c.Adopt(live.Path())
+				if err != nil {
+					return providerBoundMsg{Err: fmt.Errorf("could not save credential")}
+				}
+				err = live.Update(func(f *config.File) {
+					for i := range f.Providers {
+						if f.Providers[i].Name == name {
+							f.Providers[i].APIKey = p.APIKey
+						}
+					}
+				})
+				if err == nil && live.LocalStore() != nil {
+					id, _ := host.ID()
+					err = live.LocalStore().WriteRecord("setup", id, true)
+				}
+				return providerBoundMsg{Name: name, Err: err}
 			}
 		}
 	case "skip-setup":
@@ -304,4 +345,18 @@ func safeObservation(s string) string {
 		}
 		return r
 	}, s)
+}
+
+type providerBoundMsg struct {
+	Name string
+	Err  error
+}
+
+// sameEndpoint reports whether p serves url with wire (discovery offers to
+// bind a found key to it instead of adding a duplicate provider).
+func sameEndpoint(p config.Provider, url, wire string) bool {
+	if wire == "" {
+		wire = "openai"
+	}
+	return p.Kind != "tool_server" && strings.TrimRight(p.BaseURL, "/") == strings.TrimRight(url, "/") && p.WireOrDefault() == wire
 }

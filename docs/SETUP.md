@@ -154,6 +154,18 @@ Settings › Providers to keep its key off the server. Disconnecting does not
 delete server copies. Servers without the credential endpoints are simply
 skipped.
 
+Ctrl+P → Server synchronization lists what the server holds for the account:
+**Provider keys on server** (name, URL, kind and the last fingerprint digits,
+never the key; select one to delete the server copy) and **Sessions on this
+account** (select any other session to revoke it; this client's is marked).
+
+A provider that arrived by sync but has no key on this machine fails with
+"Provider X has no key on this machine" and names the two fixes: bind a key in
+Settings › Providers › X › api key, or run Discover AI providers. When
+discovery finds a key for the same URL and wire as an existing provider, the
+review offers **Use this key for X**, which binds it without adding a
+duplicate provider.
+
 The test server uses a shared password, so anyone who holds it can read every
 synced key; see [deployment](DEPLOYMENT.md#credential-vault).
 

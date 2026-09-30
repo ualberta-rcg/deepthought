@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — server keys and sessions lists, bind-to-existing, actionable no-key error
+- Server synchronization gains **Provider keys on server** (masked: name · URL, kind, fingerprint tail, updated time; select to delete the server copy after a confirm) and **Sessions on this account** (this client marked, others revocable). Both carry the shared-password note and treat 404/501 as "not supported".
+- Discovery review offers **Use this key for X** when a configured provider has the same base URL (trailing slash ignored) and wire, binding the found key instead of adding "X 2".
+- `Settings.RoleClient` returns `NoKeyError` for a keyless, non-anonymous provider: "Provider X has no key on this machine — Ctrl+P → Discover AI providers, or Settings › Providers › X › api key". The model health line shows it as is.
+- Files: `internal/app/{server_accounts.go (new), server_accounts_test.go (new), workspace.go, model.go, settings.go, sync_workspace.go}`, `docs/SETUP.md`.
+- Verification: gofmt and `git diff --check` locally; new tests: keys list never shows values, sessions list marks current and revoke sends DELETE, unsupported server notices, `NoKeyError` text and health line, endpoint matching. CI for 6858c85 was green. Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — provider key sync after settings sync
 - After the first successful settings sync of each login (and after **Sync now**) the client fetches `/api/v1/user/credentials`, diffs every synced provider by fingerprint and plans upload / download / conflict. `$VARIABLE` references sync as references; literal keys upload only when the server has a vault. The first time on a machine the whole plan is shown in a review overlay (esc skips until the next login); afterwards uploads and downloads apply automatically and only conflicts ask. Downloads go through the normal save path (`SaveSynced`), which moves literal keys into `secrets.env` and registers them for redaction. A 404/501 server is skipped silently; a 401 follows the expired-session path.
 - New local-only provider field `sync_credential` (Settings › Providers › "sync key to server"); it is stripped from the shared document and preserved across merges. `config.CredentialID` / `CredentialFingerprint` match the server (shared test vectors).

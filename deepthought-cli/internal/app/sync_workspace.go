@@ -25,7 +25,10 @@ func (m *RootModel) showServerSync() {
 		if !st.LastSuccess.IsZero() {
 			notice += " · last success " + st.LastSuccess.Format(time.RFC3339)
 		}
-		items = append(items, tui.WorkspaceItem{Label: "Sync now", Detail: st.Detail, Kind: "sync-now"}, tui.WorkspaceItem{Label: "Disconnect", Kind: "disconnect-server"})
+		items = append(items, tui.WorkspaceItem{Label: "Sync now", Detail: st.Detail, Kind: "sync-now"},
+			tui.WorkspaceItem{Label: "Provider keys on server", Detail: "Masked list; delete server copies", Kind: "server-credentials"},
+			tui.WorkspaceItem{Label: "Sessions on this account", Detail: "Revoke other logins", Kind: "server-sessions"},
+			tui.WorkspaceItem{Label: "Disconnect", Kind: "disconnect-server"})
 		for i, c := range st.Conflicts {
 			l, _ := json.Marshal(c.Local)
 			r, _ := json.Marshal(c.Remote)

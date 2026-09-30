@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"net/url"
 	"os"
@@ -446,6 +447,16 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat = m.chat.Notice("Provider discovery complete. Ctrl+P → Discover AI providers to review.")
 		}
 		return m, nil
+	case providerBoundMsg:
+		m.discoveryBusy = false
+		if event.Err != nil {
+			m.workspace.Notice = credential.Redact(event.Err.Error())
+			return m, nil
+		}
+		m.settings = m.settings.Refresh()
+		m.screen, m.screenStack = tui.ScreenChat, nil
+		m.chat = m.chat.Notice("Key bound to " + event.Name + ".")
+		return m, checkModelCmd(m.deps.Live)
 	case providerSavedMsg:
 		m.discoveryBusy = false
 		if event.Err != nil {
@@ -695,6 +706,12 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.chat = m.chat.Notice("Settings sync: " + msg.Status.Detail)
 		}
 		return m, credCmd
+	case serverKeysMsg:
+		return m.serverKeys(msg)
+	case serverSessionsMsg:
+		return m.serverSessions(msg)
+	case serverAccountDoneMsg:
+		return m.serverAccountDone(msg)
 	case credentialPlanMsg:
 		return m.credentialPlan(msg)
 	case tui.CredentialReviewDoneMsg:
@@ -1028,6 +1045,10 @@ func checkModelCmd(live *Settings) tea.Cmd {
 			return modelHealthMsg{reason: "no settings — F1 or Ctrl+P → Settings to configure"}
 		}
 		client, model, err := live.RoleClient(unimatrix.RoleAgentic)
+		var noKey NoKeyError
+		if errors.As(err, &noKey) {
+			return modelHealthMsg{reason: noKey.Error()}
+		}
 		if err != nil {
 			return modelHealthMsg{reason: err.Error() + " — F1 or Ctrl+P → Settings to configure"}
 		}

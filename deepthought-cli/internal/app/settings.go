@@ -475,8 +475,19 @@ func (s *Settings) RoleClient(role string) (*babel.Client, unimatrix.Model, erro
 	if breaker := s.breakers[p.Name]; breaker != nil && time.Now().Before(breaker.openUntil) {
 		return nil, unimatrix.Model{}, fmt.Errorf("provider %s is cooling down after failures", p.Name)
 	}
+	if !p.Anonymous && p.ExpandedKey() == "" {
+		return nil, unimatrix.Model{}, NoKeyError{Provider: p.Name}
+	}
 	c, err := s.clientForModel(m)
 	return c, m, err
+}
+
+// NoKeyError means the provider exists in settings but this machine holds no
+// key for it (typical after settings sync from another machine).
+type NoKeyError struct{ Provider string }
+
+func (e NoKeyError) Error() string {
+	return "Provider " + e.Provider + " has no key on this machine — Ctrl+P → Discover AI providers, or Settings › Providers › " + e.Provider + " › api key"
 }
 
 // ClientFor resolves a pooled client for a specific model ID (by wire id).
