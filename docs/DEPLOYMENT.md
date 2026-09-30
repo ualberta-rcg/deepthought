@@ -47,8 +47,36 @@ deployed.
 
 Configuration is environment-only: `DEEPTHOUGHT_SERVER_PASSWORD`,
 `DEEPTHOUGHT_MYSQL_DSN`, `DEEPTHOUGHT_ADMIN_USERS` (who may replace the
-settings defaults; unset = nobody), `--addr`, `--data`. Without a DSN the DB-backed
-endpoints answer 503 while `/healthz`, `/readyz`, the web UI and login work.
+settings defaults; unset = nobody), `DEEPTHOUGHT_VAULT_KEY`, `--addr`, `--data`.
+Without a DSN the DB-backed endpoints answer 503 while `/healthz`, `/readyz`,
+the web UI and login work (sessions then live in memory and a restart logs
+everyone out; with a DSN they are stored hashed in MySQL, slide forward when
+used, and expired ones are purged hourly).
+
+### Credential vault
+
+`DEEPTHOUGHT_VAULT_KEY` is 32 random bytes, hex or base64, used as the
+AES-256-GCM key for provider API keys synced by clients
+(`/api/v1/user/credentials`). Create it once and keep it in a Kubernetes
+secret; the deployment reads it optionally:
+
+```sh
+kubectl -n deepthought create secret generic deepthought-server-vault \
+  --from-literal=key="$(openssl rand -hex 32)"
+```
+
+Without it only `$ENV` references can be synced; literal keys are refused
+(503). Losing or rotating the key makes stored secret credentials unreadable
+(clients re-upload them on their next sync). Each row is bound to its user and
+provider, and the index only ever returns HMAC fingerprints.
+
+**Trust assumption.** Login is still the phase-1 shared password with a
+client-supplied username, so **anyone who holds the password can log in as any
+user and read that user's stored credentials.** This is acceptable only while
+every password holder is trusted with every stored key (today: the owner and at
+most one colleague). Before the password is shared more widely, the username
+claim tokens designed in the improvement plan must land, or credential sync
+must be switched off.
 
 ## The test deployment (temporary)
 

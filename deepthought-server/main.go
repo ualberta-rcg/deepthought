@@ -19,6 +19,7 @@ import (
 	"time"
 
 	dserver "deepthought-server/server"
+	"deepthought-server/store"
 )
 
 var (
@@ -61,9 +62,22 @@ func main() {
 		}
 		defer db.Close()
 		api.DB, api.Users = db, users
-		log.Print("database: connected (schema ensured)")
+		api.Credentials = store.NewCredentialDB(db)
+		api.Sessions.UseBackend(store.NewSessionDB(db))
+		go purgeSessions(context.Background(), api.Sessions)
+		log.Print("database: connected (schema ensured; sessions persisted)")
 	} else {
 		log.Print("database: not configured (user settings + chats endpoints 503 — set DEEPTHOUGHT_MYSQL_DSN)")
+	}
+	if key := os.Getenv("DEEPTHOUGHT_VAULT_KEY"); key != "" {
+		vault, err := dserver.NewVault(key)
+		if err != nil {
+			log.Fatalf("DEEPTHOUGHT_VAULT_KEY: %v", err)
+		}
+		api.Vault = vault
+		log.Print("credential vault: configured")
+	} else {
+		log.Print("credential vault: not configured (only $ENV credential references can be synced — set DEEPTHOUGHT_VAULT_KEY)")
 	}
 	httpSrv := &http.Server{
 		Addr:              *addrFlag,
@@ -159,4 +173,22 @@ func adminUsers(list string) map[string]bool {
 		}
 	}
 	return out
+}
+
+// purgeSessions deletes expired sessions hourly.
+func purgeSessions(ctx context.Context, sessions *dserver.SessionStore) {
+	t := time.NewTicker(time.Hour)
+	defer t.Stop()
+	for {
+		if n, err := sessions.Purge(); err != nil {
+			log.Printf("session purge: %v", err)
+		} else if n > 0 {
+			log.Printf("session purge: %d expired", n)
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-t.C:
+		}
+	}
 }

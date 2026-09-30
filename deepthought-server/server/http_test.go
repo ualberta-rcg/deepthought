@@ -246,3 +246,66 @@ func TestSessionExpiry(t *testing.T) {
 		t.Errorf("expired session = %v %v, want 401", err, resp)
 	}
 }
+
+func authedDo(ts *httptest.Server, method, path, token string, body []byte) (*http.Response, error) {
+	req, _ := http.NewRequest(method, ts.URL+path, bytes.NewReader(body))
+	req.Header.Set("Authorization", "Bearer "+token)
+	return http.DefaultClient.Do(req)
+}
+
+func TestLogoutRevokesSession(t *testing.T) {
+	_, ts := testAPI("pw", t.TempDir())
+	defer ts.Close()
+	token := loginSession(t, ts, "ada", "pw")
+	resp, err := authedDo(ts, "POST", "/api/v1/auth/logout", token, nil)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("logout = %v %v", err, resp)
+	}
+	if resp, _ := authedGet(ts, "/api/v1/version", token); resp.StatusCode != 401 {
+		t.Fatalf("token still valid after logout: %d", resp.StatusCode)
+	}
+}
+
+func TestSessionsListAndRevoke(t *testing.T) {
+	_, ts := testAPI("pw", t.TempDir())
+	defer ts.Close()
+	first := loginSession(t, ts, "ada", "pw")
+	second := loginSession(t, ts, "ada", "pw")
+	_ = loginSession(t, ts, "bob", "pw")
+	resp, err := authedGet(ts, "/api/v1/user/sessions", first)
+	if err != nil || resp.StatusCode != 200 {
+		t.Fatalf("list = %v %v", err, resp)
+	}
+	var out struct {
+		Current  string `json:"current"`
+		Sessions []struct {
+			ID string `json:"id"`
+		} `json:"sessions"`
+	}
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	if len(out.Sessions) != 2 || out.Current == "" {
+		t.Fatalf("ada sees %d sessions (current %q), want her 2 only", len(out.Sessions), out.Current)
+	}
+	other := out.Sessions[0].ID
+	if other == out.Current {
+		other = out.Sessions[1].ID
+	}
+	if resp, _ := authedDo(ts, "DELETE", "/api/v1/user/sessions/"+other, first, nil); resp.StatusCode != 200 {
+		t.Fatalf("revoke = %d", resp.StatusCode)
+	}
+	if resp, _ := authedGet(ts, "/api/v1/version", second); resp.StatusCode != 401 {
+		t.Fatalf("revoked session still valid: %d", resp.StatusCode)
+	}
+	if resp, _ := authedGet(ts, "/api/v1/version", first); resp.StatusCode != 200 {
+		t.Fatalf("current session lost: %d", resp.StatusCode)
+	}
+}
+
+func TestCredentialsNeedDatabase(t *testing.T) {
+	_, ts := testAPI("pw", t.TempDir())
+	defer ts.Close()
+	token := loginSession(t, ts, "ada", "pw")
+	if resp, _ := authedGet(ts, "/api/v1/user/credentials", token); resp.StatusCode != 503 {
+		t.Fatalf("credentials without DB = %d, want 503", resp.StatusCode)
+	}
+}

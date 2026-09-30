@@ -244,3 +244,53 @@ func TestMySQLSettingsRevision(t *testing.T) {
 		t.Errorf("updated_at suspiciously old: %v", got.UpdatedAt)
 	}
 }
+
+func TestMySQLSessionsAndCredentials(t *testing.T) {
+	db := mysqlDB(t)
+	user := "store-sess-" + time.Now().Format("150405.000000000")
+	sessions := NewSessionDB(db)
+	var hash [32]byte
+	copy(hash[:], []byte(user))
+	now := time.Now().Truncate(time.Second)
+	if err := sessions.PutSession(hash, SessionRecord{UserID: user, Name: user, Created: now, LastSeen: now, Expires: now.Add(-time.Minute)}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := sessions.GetSession(hash)
+	if err != nil || got.Name != user || !got.Expires.Equal(now.Add(-time.Minute)) {
+		t.Fatalf("session round trip = %+v, %v", got, err)
+	}
+	if rows, _ := sessions.ListSessions(user); len(rows) != 1 || rows[0].ID != SessionID(hash) {
+		t.Fatalf("list = %+v", rows)
+	}
+	if n, err := sessions.PurgeSessions(now); err != nil || n < 1 {
+		t.Fatalf("purge = %d, %v", n, err)
+	}
+	if _, err := sessions.GetSession(hash); !errors.Is(err, ErrNoSession) {
+		t.Fatalf("purged session = %v", err)
+	}
+
+	creds := NewCredentialDB(db)
+	salt1, err := creds.Salt(user)
+	salt2, _ := creds.Salt(user)
+	if err != nil || len(salt1) != 32 || string(salt1) != string(salt2) {
+		t.Fatal("salt must be created once and stay stable")
+	}
+	rec := StoredCredential{CredentialRow: CredentialRow{ID: "0123456789abcdef0123456789abcdef", Name: "Aleph", BaseURL: "https://a", Wire: "openai", Kind: CredentialSecret, Fingerprint: "f1"}, Nonce: []byte("123456789012"), Ciphertext: []byte("ct")}
+	if err := creds.Put(user, rec); err != nil {
+		t.Fatal(err)
+	}
+	rec.Fingerprint = "f2"
+	if err := creds.Put(user, rec); err != nil {
+		t.Fatal(err)
+	}
+	back, err := creds.Get(user, rec.ID)
+	if err != nil || back.Fingerprint != "f2" || string(back.Ciphertext) != "ct" {
+		t.Fatalf("credential round trip = %+v, %v", back, err)
+	}
+	if _, err := creds.Get(user+"-other", rec.ID); !errors.Is(err, ErrNoCredential) {
+		t.Fatal("another user can read the credential")
+	}
+	if ok, _ := creds.Delete(user, rec.ID); !ok {
+		t.Fatal("delete failed")
+	}
+}

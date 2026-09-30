@@ -46,6 +46,11 @@ type API struct {
 	// ($DEEPTHOUGHT_ADMIN_USERS, comma-separated login names). Empty means
 	// nobody can: the defaults layer is then read-only over the API.
 	Admins map[string]bool
+	// Credentials stores synced provider credentials (nil without a DB).
+	Credentials *store.CredentialDB
+	// Vault seals secret credentials ($DEEPTHOUGHT_VAULT_KEY); nil means
+	// only $ENV references can be stored.
+	Vault *Vault
 }
 
 // passwordMatches compares in constant time (hashing first so the length of
@@ -69,6 +74,13 @@ func NewMux(a *API) *http.ServeMux {
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.health)
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
+	mux.HandleFunc("POST /api/v1/auth/logout", a.auth(a.logout))
+	mux.HandleFunc("GET /api/v1/user/sessions", a.auth(a.listSessions))
+	mux.HandleFunc("DELETE /api/v1/user/sessions/{id}", a.auth(a.revokeSession))
+	mux.HandleFunc("GET /api/v1/user/credentials", a.auth(a.listCredentials))
+	mux.HandleFunc("GET /api/v1/user/credentials/{id}", a.auth(a.getCredential))
+	mux.HandleFunc("PUT /api/v1/user/credentials/{id}", a.auth(a.putCredential))
+	mux.HandleFunc("DELETE /api/v1/user/credentials/{id}", a.auth(a.deleteCredential))
 	mux.HandleFunc("GET /api/v1/version", a.auth(a.version))
 	mux.HandleFunc("GET /api/v1/crons", a.auth(a.crons))
 	mux.HandleFunc("GET /api/v1/settings/defaults", a.auth(a.getDefaults))
@@ -366,7 +378,7 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 			})
 			return
 		}
-		got := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+		got := bearer(r)
 		if got == "" {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="deepthought"`)
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})

@@ -50,6 +50,12 @@ spec:
                   name: deepthought-mysql
                   key: dsn
                   optional: true
+            - name: DEEPTHOUGHT_VAULT_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: deepthought-server-vault
+                  key: key
+                  optional: true
           resources:
             requests:
               cpu: 100m

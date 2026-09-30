@@ -5,8 +5,10 @@ no shared packages, no sibling imports, its own Dockerfile and CI lane
 (`.github/workflows/build-server.yml`, docker build + push only — deployment
 does no testing).
 
-- `server/` — HTTP surface: login (shared password → session tokens), the
-  embedded web UI, settings defaults, user settings, chats.
+- `server/` — HTTP surface: login (shared password → session tokens, stored
+  hashed in MySQL, logout and per-session revoke), the embedded web UI,
+  settings defaults, user settings, chats, and provider credentials sealed
+  with the vault key (`vault.go`, `credentials.go`).
 - `store/` — the MySQL store (multi-user, user-scoped tables; server-only).
 - `graph/` — the Borg-graph **wire contract**, a deliberate copy of the CLI's
   history shapes so the modules stay independent. Field names must stay
@@ -21,7 +23,10 @@ does no testing).
 Config: `$DEEPTHOUGHT_SERVER_PASSWORD` (auth), `$DEEPTHOUGHT_MYSQL_DSN`
 (database; without it the DB endpoints answer 503),
 `$DEEPTHOUGHT_ADMIN_USERS` (comma-separated login names allowed to
-`PUT /api/v1/settings/defaults`; empty = nobody), `--addr`, `--data`. The image
+`PUT /api/v1/settings/defaults`; empty = nobody), `$DEEPTHOUGHT_VAULT_KEY`
+(32-byte AES-GCM key for synced credentials; without it only `$ENV` references
+are accepted — see `docs/DEPLOYMENT.md` for the shared-password trust
+assumption), `--addr`, `--data`. The image
 stamps its tag as the version (`/healthz`); `$DEEPTHOUGHT_VERSION` overrides it.
 
 Tests: `graph/golden_test.go` decodes the wire fixture shared with the CLI

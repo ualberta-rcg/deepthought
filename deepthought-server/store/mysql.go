@@ -130,6 +130,34 @@ var mysqlSchema = []string{
 	  updated VARCHAR(40) NOT NULL,
 	  PRIMARY KEY (user_id, kind, id)
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS sessions (
+	  token_hash BINARY(32) NOT NULL PRIMARY KEY,
+	  user_id VARCHAR(64) NOT NULL,
+	  name VARCHAR(128) NOT NULL,
+	  created_at BIGINT NOT NULL,
+	  last_seen BIGINT NOT NULL,
+	  expires_at BIGINT NOT NULL,
+	  KEY idx_sessions_user (user_id),
+	  KEY idx_sessions_expires (expires_at)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS credential_salts (
+	  user_id VARCHAR(64) NOT NULL PRIMARY KEY,
+	  salt BINARY(32) NOT NULL
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS credentials (
+	  user_id VARCHAR(64) NOT NULL,
+	  id CHAR(32) NOT NULL,
+	  name VARCHAR(128) NOT NULL,
+	  base_url VARCHAR(512) NOT NULL,
+	  wire VARCHAR(32) NOT NULL,
+	  kind VARCHAR(16) NOT NULL,
+	  env_ref VARCHAR(256),
+	  nonce VARBINARY(12),
+	  ciphertext BLOB,
+	  fingerprint CHAR(64) NOT NULL,
+	  updated_at BIGINT NOT NULL,
+	  PRIMARY KEY (user_id, id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	`CREATE TABLE IF NOT EXISTS migrations (
 	  name VARCHAR(128) NOT NULL PRIMARY KEY,
 	  completed_at VARCHAR(40) NOT NULL
