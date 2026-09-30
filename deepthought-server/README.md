@@ -12,8 +12,11 @@ does no testing).
   history shapes so the modules stay independent. Field names must stay
   byte-compatible with `deepthought-cli/internal/history` — change both
   together.
-- `k8s/` — reference manifests (deployed source of truth: the numbered
-  manifests on the aleph1 control-plane).
+- `k8s/` — reference manifests. The current test deployment (a temporary
+  staging namespace on a shared RKE2 cluster, hand-applied as numbered
+  manifests on its control-plane) is a one-off copy of these files, not a
+  managed deployment; see the root `CLAUDE.md` environment rules. Keep these
+  files aligned with whatever is applied so a rebuild is reproducible.
 
 Config: `$DEEPTHOUGHT_SERVER_PASSWORD` (auth), `$DEEPTHOUGHT_MYSQL_DSN`
 (database; without it the DB endpoints answer 503), `--addr`, `--data`.

@@ -48,10 +48,16 @@ identifiers must not reintroduce them.
   pushes the server image to Docker Hub). Never build on the shared login node,
   and do not use Slurm or CVMFS/modules for this repository's builds. The separate
   server deployment is Kubernetes-backed; this does not describe the clients' hosts.
-- **The only manual deploy step is applying the server-side YAML**: the numbered
-  manifests on the aleph1 control-plane (`57-deepthought.yaml`,
-  `58-deepthought-mysql.yaml`), bumping the image tag to the CI-built one.
-  Everything inside the `deepthought` namespace only.
+- **The test cluster is a temporary staging target, not the deployment of
+  record.** The `deepthought` namespace on the shared RKE2 cluster (aleph1
+  control-plane) exists so the CI-built server image can be exercised during
+  development. The numbered manifests there (`57-deepthought.yaml`,
+  `58-deepthought-mysql.yaml`) are a one-off hand-applied copy of
+  `deepthought-server/k8s/`; they are not managed from this repo and may be
+  removed at any time. Hard rules: touch **only** the `deepthought` namespace,
+  everything else on that cluster is read-only; GitHub Actions builds the image,
+  never a manual build; the only manual step is applying/bumping YAML inside
+  that namespace. A production deployment location has not been chosen yet.
 - Job I/O on `$SCRATCH`, not `$HOME` (50 GB quota). The CLI's deploy dir is
   `$SCRATCH/deepthought-cli/`; its SSH host key (`host_ed25519`) never gets
   committed.

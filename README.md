@@ -144,6 +144,7 @@ and [CLI operations](deepthought-cli/docs/LOCAL-OPERATIONS.md).
 | [CLI operations](deepthought-cli/docs/LOCAL-OPERATIONS.md) | Resident sessions, jobs, workflows, releases |
 | [CLI architecture](deepthought-cli/CLAUDE.md) | Runtime conventions and implementation background |
 | [Server](deepthought-server/README.md) | Independent server module and database |
+| [Builds, releases and the test deployment](docs/DEPLOYMENT.md) | CI lanes, edge release, the temporary staging namespace |
 | [Changelog](CHANGELOG.md) | Changes and verification evidence |
 
 ## 🔗 References

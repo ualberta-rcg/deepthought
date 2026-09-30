@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · docs — record that the cluster deployment is a temporary test target
+- Reframe the RKE2 `deepthought` namespace as a hand-applied staging copy for exercising CI-built images, not the deployment of record: the numbered manifests there are one-off and unmanaged, only that namespace may be touched, GitHub Actions is the sole image builder, and no production location has been chosen.
+- Add `docs/DEPLOYMENT.md` (CLI/server delivery lanes, install one-liner, test-deployment shape and rules, observed state on 2026-09-30, known gaps: wrong image repo placeholder in `k8s/deployment.yaml`, unstamped server version, edge-only channel) and link it from the README documentation table.
+- Files: `CLAUDE.md`, `README.md`, `deepthought-server/README.md`, `docs/DEPLOYMENT.md` (new), this entry.
+- Verification: documentation only — no code paths changed. The CLI lane is not triggered; the server lane is (the server README lives under `deepthought-server/**`) and will build+push a new `server-<sha>` image, which changes nothing deployed. Facts checked read-only against the live namespace, the public health endpoints, the `edge` release and recent workflow runs.
+
 ## 2026-09-22 · deepthought-cli, docs — complete sync recovery and release verification
 - Fix the CI sidebar fixture destination to use an absolute path. Include installer edits in the CLI release trigger.
 - Cancel synchronization on disconnect, reject transfers bound to changed endpoints, and remove the obsolete asynchronous upload hook. Preserve earlier cached settings and standalone shortcut files during migration; show changed sections before file import.
