@@ -382,3 +382,24 @@ func TestSettingsSkillsToolsTabs(t *testing.T) {
 		t.Error("skills tab lost its empty state")
 	}
 }
+
+func TestSettingsKitKeysAndFit(t *testing.T) {
+	m := NewSettingsModelAt(&fakeStore{}, SettingsInfo{}, "providers", false)
+	for _, w := range []int{60, 100, 140} {
+		m = m.Resize(w, 24)
+		v := m.View()
+		for _, ln := range strings.Split(v, "\n") {
+			if lipgloss.Width(ln) > w {
+				t.Fatalf("width %d: line is %d cells", w, lipgloss.Width(ln))
+			}
+		}
+	}
+	m = m.Resize(140, 24)
+	if v := m.View(); !strings.Contains(v, "add") || !strings.Contains(v, "delete") {
+		t.Fatal("providers key bar should advertise n add and d delete")
+	}
+	m, _ = m.Update(tea.KeyPressMsg{Code: 'n', Text: "n"})
+	if !m.adding || m.view != viewEntity {
+		t.Fatalf("n should stage a new provider: adding=%v view=%v", m.adding, m.view)
+	}
+}

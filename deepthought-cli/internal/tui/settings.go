@@ -14,6 +14,7 @@ import (
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/keybindings"
+	"deepthought-cli/internal/tui/kit"
 	"deepthought-cli/internal/unimatrix"
 )
 
@@ -274,9 +275,14 @@ func (m SettingsModel) updateList(key tea.KeyPressMsg) (SettingsModel, tea.Cmd) 
 		}
 	case "enter":
 		return m.activate()
-	case "d":
+	case kit.Mnemonics.Delete:
 		if m.view == viewList && m.tabKeyOf() == "providers" {
 			return m.deleteEntity()
+		}
+	case kit.Mnemonics.New:
+		if m.view == viewList && m.tabKeyOf() == "providers" {
+			m.cursor = len(m.dirty.Providers)
+			return m.activate()
 		}
 	}
 	return m, nil
@@ -473,7 +479,7 @@ func (m *SettingsModel) finishAdd() {
 	}
 	if m.store != nil {
 		if err := m.store.Save(m.dirty); err != nil {
-			m.saved = "✗ " + err.Error()
+			m.saved = kit.G().Cross + " " + err.Error()
 			return
 		}
 		m.dirty = m.store.Snapshot()
@@ -592,7 +598,7 @@ func (m SettingsModel) commitField() (SettingsModel, tea.Cmd) {
 	// Draft entity: apply to the working copy only; the store would reject it.
 	if m.adding {
 		if err := d.set(&m.dirty, m.edit); err != nil {
-			m.saved = "✗ " + err.Error()
+			m.saved = kit.G().Cross + " " + err.Error()
 			return m, nil
 		}
 		if d.label == "name" || d.label == "id" {
@@ -608,16 +614,16 @@ func (m SettingsModel) commitField() (SettingsModel, tea.Cmd) {
 		fresh = m.store.Snapshot() // re-base: never clobber concurrent edits
 	}
 	if err := d.set(&fresh, m.edit); err != nil {
-		m.saved = "✗ " + err.Error()
+		m.saved = kit.G().Cross + " " + err.Error()
 		return m, nil // stay in the editor so the user can fix it
 	}
 	if _, err := config.Validate(fresh); err != nil {
-		m.saved = "✗ " + err.Error()
+		m.saved = kit.G().Cross + " " + err.Error()
 		return m, nil
 	}
 	if m.store != nil {
 		if err := m.store.Save(fresh); err != nil {
-			m.saved = "✗ " + err.Error()
+			m.saved = kit.G().Cross + " " + err.Error()
 			return m, nil
 		}
 		m.dirty = m.store.Snapshot()
@@ -646,11 +652,11 @@ func (m SettingsModel) persistRebase(mut func(f *config.File)) (SettingsModel, t
 	fresh := m.store.Snapshot()
 	mut(&fresh)
 	if _, err := config.Validate(fresh); err != nil {
-		m.saved = "✗ " + err.Error()
+		m.saved = kit.G().Cross + " " + err.Error()
 		return m, nil
 	}
 	if err := m.store.Save(fresh); err != nil {
-		m.saved = "✗ " + err.Error()
+		m.saved = kit.G().Cross + " " + err.Error()
 		return m, nil
 	}
 	m.dirty = m.store.Snapshot()
@@ -872,7 +878,7 @@ func (m SettingsModel) fieldRows() []string {
 	rs := make([]string, 0, len(defs))
 	for i, d := range defs {
 		if m.edit != nil && i == m.editIdx {
-			rs = append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
+			rs = append(rs, styleEditActive.Render(kit.G().Cursor+" ")+m.edit.view(m.width))
 			continue
 		}
 		val := d.get(&m.dirty)
@@ -908,7 +914,7 @@ func (m SettingsModel) permRows() []string {
 			rs = append(rs, m.mark(i, settingRow(fmt.Sprintf("%d", i+1), r)))
 		}
 		if m.edit != nil && m.permAdding {
-			return append(rs, styleEditActive.Render("▶ ")+m.edit.view(m.width))
+			return append(rs, styleEditActive.Render(kit.G().Cursor+" ")+m.edit.view(m.width))
 		}
 		return append(rs, m.mark(len(rules), "+ Add rule"))
 	}
@@ -963,7 +969,7 @@ func (m SettingsModel) systemRows() []string {
 // mark renders one list row with the cursor highlight.
 func (m SettingsModel) mark(i int, text string) string {
 	if i == m.cursor {
-		return styleMenuSel.Render("▶ " + text)
+		return styleMenuSel.Render(kit.G().Cursor + " " + text)
 	}
 	return styleMenuUnsel.Render("  " + text)
 }
@@ -1005,7 +1011,7 @@ func (m SettingsModel) View() string {
 		title += strings.Repeat(" ", gap) + styleToast.Render(m.saved)
 	}
 	body := m.tabRow() + "\n" + styleSettingsFoot.Render(settingsHint) + "\n" + m.vp.View()
-	return AppScreenScroll(m.width, m.height, title, body, m.vp.Height()+2, KeyBar(m.keybar()))
+	return AppScreenScroll(m.width, m.height, title, body, m.vp.Height()+2, kit.KeyBar(m.keybar(), m.width-4))
 }
 
 // keepCursorVisible scrolls the viewport so the cursor row is on screen.
@@ -1023,22 +1029,21 @@ func (m *SettingsModel) keepCursorVisible() {
 }
 
 // keybar returns the per-state keybinding hints.
-func (m SettingsModel) keybar() []KeyHint {
+func (m SettingsModel) keybar() []kit.Key {
 	if m.edit != nil {
 		if m.edit.kind == fMulti {
-			return []KeyHint{{"↑↓", "move"}, {"space", "toggle"}, {"enter", "save"}, {"esc", "cancel"}}
+			return []kit.Key{{Key: "↑↓", Help: "move"}, {Key: "space", Help: "toggle"}, {Key: "enter", Help: "save"}, {Key: "esc", Help: "cancel"}}
 		}
-		return []KeyHint{{"enter", "save"}, {"esc", "cancel"}}
+		return []kit.Key{{Key: "enter", Help: "save"}, {Key: "esc", Help: "cancel"}}
 	}
 	if m.view == viewEntity {
-		return []KeyHint{{"↑↓", "move"}, {"enter", "edit"}, {"esc", "back"}}
+		return []kit.Key{{Key: "↑↓", Help: "move"}, {Key: "enter", Help: "edit"}, {Key: "esc", Help: "back"}}
 	}
-	hints := []KeyHint{{"↑↓", "move"}, {"enter", "open"}, {"←/→", "tab"}}
-	switch m.tabKeyOf() {
-	case "providers":
-		hints = append(hints, KeyHint{"d", "delete"})
+	keys := []kit.Key{{Key: "↑↓", Help: "move"}, {Key: "enter", Help: "open"}, {Key: "←→", Help: "section"}}
+	if m.tabKeyOf() == "providers" {
+		keys = append(keys, kit.Key{Key: kit.Mnemonics.New, Help: "add"}, kit.Key{Key: kit.Mnemonics.Delete, Help: "delete"})
 	}
-	return append(hints, KeyHint{"esc", "back"})
+	return append(keys, kit.Key{Key: "esc", Help: "back"})
 }
 
 // --- Overview + Routing (the refill) -------------------------------------------------
@@ -1051,9 +1056,9 @@ func (m SettingsModel) overviewRows() []string {
 	if _, err := config.Validate(m.dirty); err != nil {
 		health, healthOK = err.Error(), false
 	}
-	h := styleToolResult.Render("✓ valid")
+	h := styleToolResult.Render(kit.G().Check + " valid")
 	if !healthOK {
-		h = styleError.Render("✗ " + health)
+		h = styleError.Render(kit.G().Cross + " " + health)
 	}
 	rows := []string{
 		settingRow("config", h),

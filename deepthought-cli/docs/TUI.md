@@ -79,3 +79,9 @@ submissions and artifacts for a plan). The card takes up to half the rows and
 the list keeps at least three. Empty lists say `No … yet` with the next step
 as the notice. Cron keeps its staged editor but uses the kit key bar, glyphs
 and `n` for a new entry (`a` still works).
+
+## Settings
+
+Settings keeps its section strip and drill-down, drawn with the kit key bar
+(packed to the width) and `kit.G()` glyphs for the cursor, the active field
+and save errors. Providers take the list mnemonics: `n` adds, `d` deletes.

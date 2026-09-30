@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — Settings on the kit key bar and glyphs
+- Settings renders its key bar with `kit.KeyBar` (packed to the frame, `…` when cut) and draws the row cursor, active field marker, health chip and save errors from `kit.G()`, so `--ascii` covers it. Providers get the standard mnemonics: `n` adds a provider (same draft flow as the "+ Add provider" row), `d` deletes; both are advertised in the key bar. `←→` is labelled "section".
+- This completes the kit migration order (Continue → Status → Jobs/Plans/Cron → Settings); the Settings field schema and layout rethink stay a separate item.
+- Files: `internal/tui/{settings.go, settings_test.go}`, `docs/TUI.md`.
+- Verification: gofmt and `git diff --check` locally; new fixture: Providers at 60/100/140 columns fits the width, the key bar advertises add/delete, `n` stages a draft. Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — Jobs, Plans and Cron on the kit
 - Jobs and Plans use one shared list + detail layout (`internal/tui/listscreen.go`): a kit `List` with `/` filter and the standard move keys, and a detail card for the selection (Jobs: retry advice, last error, script hash, log/cancel hint; Plans: objectives with linked submissions, artifact and stale counts). Empty states are short (`No journaled submissions yet`, `No saved plans yet`) with the next step as a wrapped notice instead of a truncated row. Titles carry the count; a failed refresh shows a ⚠ notice and keeps the persisted list. Filtering captures keys so global bindings don't fire mid-typing.
 - Cron uses `kit.KeyBar`, `kit.G()` glyphs and the `n` mnemonic for a new entry (`a` kept).
