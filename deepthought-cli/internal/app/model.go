@@ -390,7 +390,7 @@ func (m RootModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		busy := root.chat.Busy()
 		if root.wasBusy && !busy {
 			if id := root.chat.CollectiveID(); id != "" {
-				cmd = tea.Batch(cmd, pushChatCmd(root.deps.ChatSource, root.server, id))
+				cmd = tea.Batch(cmd, pushChatCmd(root.deps.ChatSource, root.server, root.localStore(), id))
 			}
 		}
 		root.wasBusy = busy
@@ -657,12 +657,16 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.screen = tui.ScreenChat
 		}
 		m.showServerSync()
-		return m, settingsSyncCmd(m.syncWorker)
+		return m, tea.Batch(settingsSyncCmd(m.syncWorker), flushPendingChatsCmd(m.deps.ChatSource, m.server, m.localStore()))
 	case settingsSyncResultMsg:
 		if msg.Worker != m.syncWorker {
 			return m, nil
 		}
 		m.syncBusy = false
+		if msg.Status.State == syncStateExpired {
+			m.sessionExpired()
+			return m, nil
+		}
 		m.settings = m.settings.Refresh()
 		m.modelsScr = m.modelsScr.Refresh()
 		m.chatResize()
@@ -674,6 +678,10 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case serverSyncResultMsg:
+		if msg.Expired && m.server != nil {
+			m.sessionExpired()
+			return m, nil
+		}
 		if msg.Err != "" {
 			m.chat = m.chat.Notice("⚠ " + msg.Err)
 		}

@@ -259,6 +259,10 @@ func (s *LocalStore) WriteRecord(kind, id string, value any) error {
 	_, err = s.db.Exec("INSERT INTO app_inventory(kind,id,body,updated) VALUES(?,?,?,?) ON CONFLICT(kind,id) DO UPDATE SET body=excluded.body,updated=excluded.updated", kind, id, body, time.Now().UTC().Format(time.RFC3339Nano))
 	return err
 }
+func (s *LocalStore) DeleteRecord(kind, id string) error {
+	_, err := s.db.Exec("DELETE FROM app_inventory WHERE kind=? AND id=?", kind, id)
+	return err
+}
 func (s *LocalStore) Records(kind string) ([]json.RawMessage, error) {
 	rows, err := s.db.Query("SELECT body FROM app_inventory WHERE kind=? ORDER BY updated DESC LIMIT 256", kind)
 	if err != nil {

@@ -1,7 +1,10 @@
 package app
 
 import (
+	"fmt"
+	"log"
 	"os"
+	"runtime/debug"
 
 	"charm.land/bubbletea/v2"
 	"charm.land/wish/v2/bubbletea"
@@ -16,7 +19,16 @@ import (
 // Wish foot-gun.) The client pointer is the one shared thing, and it's safe for
 // concurrent use.
 func SSHHandler(addr string, d Deps) bubbletea.Handler {
-	return func(sess ssh.Session) (tea.Model, []tea.ProgramOption) {
+	return func(sess ssh.Session) (model tea.Model, opts []tea.ProgramOption) {
+		// A panic while building one session must not take down the server
+		// and every other connected user with it.
+		defer func() {
+			if r := recover(); r != nil {
+				log.Printf("ssh session %s: panic: %v\n%s", sess.User(), r, debug.Stack())
+				fmt.Fprintln(sess, "DeepThought could not start this session (the error was logged). Please reconnect.")
+				model, opts = nil, nil
+			}
+		}()
 		d := d // never mutate the closure shared by concurrent connections
 		d.Context = sess.Context()
 		d.Registry = d.Registry.Fork()

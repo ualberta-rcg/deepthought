@@ -1834,6 +1834,14 @@ func startStream(ctx context.Context, client *babel.Client, req babel.ChatReques
 		ch := make(chan streamItem, 64)
 		go func() {
 			defer close(ch)
+			defer func() {
+				if r := recover(); r != nil {
+					select {
+					case ch <- streamItem{err: fmt.Errorf("model stream failed internally: %v", r), final: true}:
+					case <-ctx.Done():
+					}
+				}
+			}()
 			rep, err := client.ChatStream(ctx, req, func(d babel.StreamDelta) {
 				select {
 				case ch <- streamItem{delta: d.Content, reasoning: d.Reasoning}:

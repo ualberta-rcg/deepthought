@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -276,7 +277,15 @@ func (w *SettingsSync) Run() SyncStatus {
 	}
 	return w.failed(fmt.Errorf("server settings kept changing; changes remain pending, retry later"))
 }
+
+// syncStateExpired is reported when the server session could not be renewed;
+// the root then drops the connection instead of retrying every 5 minutes.
+const syncStateExpired = "Session expired"
+
 func (w *SettingsSync) failed(err error) SyncStatus {
+	if errors.Is(err, ErrSessionExpired) {
+		return SyncStatus{State: syncStateExpired, Detail: ErrSessionExpired.Error()}
+	}
 	w.stateMu.Lock()
 	w.record.LastError = credential.Redact(err.Error())
 	w.next = time.Now().Add(5 * time.Minute)

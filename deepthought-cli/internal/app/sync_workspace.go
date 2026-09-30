@@ -75,16 +75,7 @@ func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		m.showServerSync()
 		return m, settingsSyncCmd(m.syncWorker)
 	case "disconnect-server":
-		if m.syncWorker != nil {
-			m.syncWorker.Stop()
-		}
-		m.connecting = false
-		m.server = nil
-		m.syncWorker = nil
-		m.syncBusy = false
-		m.connectionNotice = "Disconnected — edits stay local and sync when you reconnect"
-		m.splash = m.splash.WithServer("Standalone — local settings only")
-		m.setServerLine("standalone")
+		m.dropServer("Disconnected — edits stay local and sync when you reconnect")
 		if s := m.localStore(); s != nil {
 			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), false)
 		}
@@ -122,4 +113,29 @@ func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		}
 	}
 	return m, nil
+}
+
+// dropServer ends the server connection locally (explicit disconnect or an
+// expired session): sync stops, edits and chats stay local until reconnect.
+func (m *RootModel) dropServer(notice string) {
+	if m.syncWorker != nil {
+		m.syncWorker.Stop()
+	}
+	m.connecting = false
+	m.server = nil
+	m.syncWorker = nil
+	m.syncBusy = false
+	m.connectionNotice = notice
+	m.splash = m.splash.WithServer("Standalone — local settings only")
+	m.setServerLine("standalone")
+}
+
+// sessionExpired handles a 401 that the one automatic re-login could not
+// fix: stop syncing (no blind retries) and tell the user once.
+func (m *RootModel) sessionExpired() {
+	m.dropServer("Server session expired — reconnect in Settings › Server; edits stay local until then")
+	m.chat = m.chat.Notice("⚠ " + m.connectionNotice)
+	if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
+		m.showServerSync()
+	}
 }

@@ -1,5 +1,12 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — expired server sessions, durable chat sync, crash containment
+- A 401 from the server now triggers one automatic re-login (when the password is bound locally and the connection settings are unchanged); the renewed token is shared by the sync worker and chat pushes. If that fails the client drops the connection, says "Server session expired — reconnect in Settings › Server", and stops the blind 5-minute retries.
+- Chat pushes that fail are recorded durably (`chat-push-pending` in the local store) and retried after the next login and after every successful push, instead of only showing a notice.
+- `recover()` at the SSH session boundary (a panic building one session is logged and that user is told to reconnect; the server and other sessions keep running) and in the model-stream goroutine (reported as a turn error). Bubble Tea already recovers panics in Update/View/commands.
+- Files: `internal/app/{server_login.go, settings_sync.go, sync_workspace.go, model.go, session.go, server_session_test.go (new)}`, `internal/config/local.go` (`DeleteRecord`), `internal/tui/chat.go`.
+- Verification: gofmt and `git diff --check` locally; new tests cover one renewal shared across session copies, expiry when renewal is impossible/fails/is rejected, the sync worker reporting an expired session, and a failed chat push being recorded then cleared by the retry. CI for 1d853d7 was green on all three jobs (CLI, server tests with MySQL, server image `server-1d853d7`).
+
 ## 2026-09-30 · deepthought-cli, deepthought-server — fix the first real CI failures; keep partial replies on provider errors
 - CI now reports failures (previous entry), which surfaced three: elapsed times of 10+ minutes ("59m 04s") need 7 cells, so the activity line's elapsed field is 7 wide; the sidebar context row duplicated the activity-line meter and broke the sidebar v2 "no clutter" rule, so it is removed (the meter stays on the idle activity line and Status); the store's tenant test expected a user's claim of the same record id to fail, but records are namespaced per user — it now asserts the claim lands in the claimant's own namespace and leaves the other user's record untouched.
 - A provider error mid-stream no longer drops the partial reply: streamed text and thinking are saved as a transmission before the turn is marked failed (same path as esc interrupt), and a failed local save is shown in the transcript instead of being ignored.
