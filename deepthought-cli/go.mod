@@ -9,6 +9,7 @@ require (
 	charm.land/wish/v2 v2.0.1
 	github.com/charmbracelet/colorprofile v0.4.3
 	github.com/charmbracelet/ssh v0.0.0-20250826160808-ebfa259c7309
+	github.com/charmbracelet/x/ansi v0.11.7
 	github.com/common-nighthawk/go-figure v0.0.0-20210622060536-734e95fb86be
 	github.com/go-sql-driver/mysql v1.9.3
 	github.com/santhosh-tekuri/jsonschema/v6 v6.0.2
@@ -25,7 +26,6 @@ require (
 	github.com/atotto/clipboard v0.1.4 // indirect
 	github.com/charmbracelet/keygen v0.5.4 // indirect
 	github.com/charmbracelet/ultraviolet v0.0.0-20260703014108-f5a850f9c2b7 // indirect
-	github.com/charmbracelet/x/ansi v0.11.7 // indirect
 	github.com/charmbracelet/x/conpty v0.1.1 // indirect
 	github.com/charmbracelet/x/errors v0.0.0-20251110184232-6ab307057ac7 // indirect
 	github.com/charmbracelet/x/term v0.2.2 // indirect

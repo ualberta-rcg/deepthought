@@ -306,9 +306,10 @@ func buildRuntime(cfg *config.Config, cfgPath, attachID string) (app.Deps, *hist
 			return science.Configured(ctx, live.Snapshot().Providers, nativeTools)
 		},
 		Status: tui.StatusInfo{
-			Model:  statusModel,
-			Mode:   permMode,
-			Effort: cfg.EffortLevel(),
+			Model:   statusModel,
+			Mode:    permMode,
+			Effort:  cfg.EffortLevel(),
+			Version: versionString(),
 		},
 		Settings: tui.SettingsInfo{
 			ConfigPath: cfgPath,

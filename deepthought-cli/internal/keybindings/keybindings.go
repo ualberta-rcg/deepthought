@@ -27,7 +27,20 @@ const (
 	Diagnostics Action = "app:diagnostics"
 )
 
-var reserved = map[string]bool{"ctrl+c": true, "ctrl+d": true, "ctrl+p": true}
+// reserved keys cannot be bound. F2 is held back for a future global action;
+// Help stays reachable through Ctrl+P and /help.
+var reserved = map[string]bool{"ctrl+c": true, "ctrl+d": true, "ctrl+p": true, "f2": true}
+
+// ReservedReason explains why a key cannot be bound, for editor errors.
+func ReservedReason(key string) string {
+	switch key {
+	case "f2":
+		return "F2 is reserved"
+	case "ctrl+p":
+		return "reserved key; Ctrl+P always opens navigation"
+	}
+	return "reserved key"
+}
 
 func WithOverrides(overrides map[string]Action) *Map {
 	m := Defaults()
@@ -58,7 +71,7 @@ func (m *Map) KeyFor(action Action) string {
 }
 
 var defaults = map[string]Action{
-	"f1": Settings, "f2": Help, "f3": Model, "f4": Effort,
+	"f1": Settings, "f3": Model, "f4": Effort,
 	"f5": NewChat, "f6": Resume, "f7": ContextView,
 	"f8":  Cron,
 	"f9":  QueenMode,

@@ -24,7 +24,7 @@ func keyboardFields() []fieldDef {
 			set: func(f *config.File, e *fieldEdit) error {
 				k := strings.ToLower(strings.TrimSpace(e.value()))
 				if keybindings.Reserved(k) {
-					return fmt.Errorf("reserved key; Ctrl+P always opens navigation")
+					return fmt.Errorf("%s", keybindings.ReservedReason(k))
 				}
 				valid := false
 				if n, err := strconv.Atoi(strings.TrimPrefix(k, "f")); strings.HasPrefix(k, "f") && err == nil && n >= 1 && n <= 12 {

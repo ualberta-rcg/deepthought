@@ -30,15 +30,14 @@ func TestBrandGradient(t *testing.T) {
 	}
 }
 
-// dontPanicHeader must always produce lines that fit the requested box, at
-// every size from tiny to huge, and degrade to the plain wordmark when no art
-// fits.
-func TestDontPanicHeaderFits(t *testing.T) {
+// wordmarkHeader must always produce lines that fit the requested box, at
+// every size from tiny to huge, and degrade to the plain name when no art fits.
+func TestWordmarkHeaderFits(t *testing.T) {
 	for _, sz := range [][2]int{{200, 30}, {100, 20}, {80, 17}, {60, 10}, {40, 6}} {
 		w, h := sz[0], sz[1]
-		got := dontPanicHeader(w, h)
+		got := wordmarkHeader(w, h)
 		if got == "" {
-			t.Fatalf("dontPanicHeader(%d,%d) is empty", w, h)
+			t.Fatalf("wordmarkHeader(%d,%d) is empty", w, h)
 		}
 		for i, ln := range strings.Split(got, "\n") {
 			if lw := lipgloss.Width(ln); lw > w {
@@ -49,10 +48,31 @@ func TestDontPanicHeaderFits(t *testing.T) {
 			t.Errorf("size %dx%d: header has %d rows, exceeds %d", w, h, rows, h)
 		}
 	}
-	// At a size where no art fits, the plain wordmark carries the message.
-	plain := splashANSI.ReplaceAllString(dontPanicHeader(30, 4), "")
-	if !strings.Contains(plain, "DON'T PANIC") {
-		t.Errorf("tiny-size fallback lost the wordmark: %q", plain)
+	plain := splashANSI.ReplaceAllString(wordmarkHeader(30, 4), "")
+	if !strings.Contains(plain, "DeepThought") {
+		t.Errorf("tiny-size fallback lost the name: %q", plain)
+	}
+}
+
+func TestHomeScreenIdentity(t *testing.T) {
+	m := NewSplashModel(BootInfo{Version: "DeepThought abc1234", Host: "login1", Cwd: "~/proj"}, "s")
+	full := splashANSI.ReplaceAllString(m.Resize(120, 40).View(), "")
+	for _, want := range []string{"Research computing harness", "DeepThought abc1234", "Standalone — local settings only", "login1", "~/proj", "No model configured"} {
+		if !strings.Contains(full, want) {
+			t.Errorf("home screen missing %q", want)
+		}
+	}
+	if strings.Contains(strings.ToUpper(full), "PANIC") {
+		t.Error("home screen still carries the old slogan")
+	}
+	compact := m.Resize(60, 20).View()
+	for _, ln := range strings.Split(compact, "\n") {
+		if lipgloss.Width(ln) > 60 {
+			t.Fatalf("compact home screen overflows 60 columns: %q", ln)
+		}
+	}
+	if !strings.Contains(splashANSI.ReplaceAllString(compact, ""), "DeepThought abc1234") {
+		t.Error("compact home screen lost the version")
 	}
 }
 

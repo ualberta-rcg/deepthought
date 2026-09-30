@@ -26,6 +26,7 @@ type SidebarData struct {
 	ClusterOK                                         bool
 	Env                                               EnvInfo
 	SessionIn, SessionOut, LastContext, ContextWindow int
+	ContextEstimated                                  bool
 	Providers                                         []ProviderRow
 	Skills                                            []string
 	ASCII                                             bool
@@ -199,8 +200,11 @@ func RenderSidebar(d SidebarData, w, h int) string {
 			lines = append(lines, clipLine(line, w))
 		}
 	}
+	if d.LastContext > 0 && len(lines) < h {
+		lines = append(lines, clipLine(ContextMeter(d.LastContext, d.ContextWindow, d.ContextEstimated, max(4, min(12, w-22))), w))
+	}
 	if len(lines) < h {
-		lines = append(lines, styleSettingsFoot.Render("Ctrl+P → Status"))
+		lines = append(lines, styleSettingsFoot.Render("Ctrl+P → Navigation"))
 	}
 	if ascii {
 		for i := range lines {

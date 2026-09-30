@@ -163,13 +163,14 @@ func (e *fieldEdit) view(width int) string {
 	return ""
 }
 
-// mask returns a masked form of a secret for display (never the real value).
+// mask returns a masked form of a secret for display (never the real value):
+// "no key bound" when empty, the $VAR reference as-is, else "•••••••• bound".
 func mask(secret string) string {
 	if secret == "" {
-		return "(unset)"
+		return "no key bound"
 	}
 	if strings.HasPrefix(secret, "$") {
 		return secret // env-var reference is safe to show
 	}
-	return strings.Repeat("•", 8)
+	return strings.Repeat("•", 8) + " bound"
 }

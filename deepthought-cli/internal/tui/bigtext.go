@@ -7,8 +7,7 @@ import (
 )
 
 const (
-	// bigTextFont is the splash wordmark's figlet font. "colossal" renders
-	// "DON'T PANIC" as the big boot statement. Pulled in via go-figure, which
+	// bigTextFont is a large figlet font for wordmarks. Pulled in via go-figure, which
 	// embeds its fonts (bindata) so the binary stays self-contained. TODO:
 	// vendor just the fonts we use to drop the unused ~148 if binary size ever
 	// matters.

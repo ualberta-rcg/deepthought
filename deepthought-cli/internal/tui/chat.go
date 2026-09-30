@@ -33,6 +33,9 @@ type StatusInfo struct {
 	Mode   string // permission preset, e.g. "review"
 	Addr   string // "local" or the SSH listen addr (e.g. ":2323") — shown on settings, not the bar
 	Effort string
+	// Version is the build identity ("DeepThought <sha>"), shown on the home
+	// screen, the Status page and /doctor.
+	Version string
 }
 
 const (
@@ -187,7 +190,6 @@ type ChatModel struct {
 
 	// Activity / session accounting.
 	turnStarted   time.Time // when the current busy turn began
-	activityVerb  string    // rotating verb for the activity line
 	sessionIn     int       // session prompt tokens (billing sum)
 	sessionOut    int       // session completion tokens
 	lastContext   int       // most recent prompt_tokens (= window fill)
@@ -195,6 +197,12 @@ type ChatModel struct {
 	sessionMsgs   int       // user + assistant messages echoed this session
 	queue         []string  // typed lines waiting while busy
 	liveTokens    int       // rough live estimate while streaming
+	betweenCalls  bool      // a model call finished and the turn is still busy: tools are running
+	liveTokensAt  time.Time // when liveTokens last changed (display rate cap)
+
+	sessionEstIn, sessionEstOut int  // portion of sessionIn/Out that is chars/4 estimated
+	contextEstimated            bool // lastContext is an estimate
+	contextWindow               int  // active model's context window (0 = unknown)
 
 	// currentProducer is the model driving the in-flight turn; stamped onto each
 	// Transmission/Incursion as Producer (provenance) at commit time.
@@ -418,8 +426,9 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 			m.refreshPending()
 		}
 		// Live token estimate from accumulated text while streaming.
-		if m.streaming {
+		if m.streaming && time.Since(m.liveTokensAt) >= liveEstimateEvery {
 			m.liveTokens = estimateTokens(m.acc) + estimateTokens(m.thinkAcc)
+			m.liveTokensAt = time.Now()
 		}
 		return m, cmd
 	}
@@ -642,8 +651,16 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		}
 		return m, nil
 	case val == "/help" || val == "?":
-		m.systemLine("keys: F1 settings · F2 help · F3 model · F4 effort · F5 new · F6 resume · F7 grid · F8 cron · F9 mode · F10 sidebar · F11 models · F12 status")
+		keys := make([]string, 0, len(fKeyLegend)+1)
+		keys = append(keys, "Ctrl+P navigation")
+		for _, k := range fKeyLegend {
+			keys = append(keys, k.key+" "+k.label)
+		}
+		m.systemLine("keys: " + strings.Join(keys, " · "))
 		m.systemLine("cmds: !cmd bash · /model · /effort · /settings · /status · /models · /cron · /context · /import · /resume · /quit")
+		if val == "/help" {
+			return m, func() tea.Msg { return WorkspaceAction{Kind: "help"} }
+		}
 		return m, nil
 	case val == "/settings":
 		return m, Goto(ScreenSettings)
@@ -716,7 +733,9 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		m.systemLine("No probe with that ID in this chat.")
 		return m, nil
 	case val == "/doctor":
-		m.systemLine(fmt.Sprintf("Standalone · workspace tools: %d · estimated context: %d/%d · server login: coming soon", len(m.reg.Names()), m.manifest.Estimated, m.manifest.Budget))
+		m.systemLine(fmt.Sprintf("%s · %s · workspace tools: %d · estimated context: %d/%d",
+			orDefault(m.env.Version, "DeepThought (development build)"), orDefault(m.env.Server, "standalone"),
+			len(m.reg.Names()), m.manifest.Estimated, m.manifest.Budget))
 		if m.src != nil {
 			if _, model, err := m.src.RoleClient(unimatrix.RoleAgentic); err != nil {
 				m.systemLine("Model configuration: " + err.Error())
@@ -893,12 +912,9 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 	m.acc = ""
 	m.thinkAcc = ""
 	m.liveTokens = 0
+	m.betweenCalls = false
+	m.contextWindow = model.Context
 	m.turnStarted = time.Now()
-	seed := model.ID
-	if m.coll != nil {
-		seed += m.coll.ID
-	}
-	m.activityVerb = verbFor(seed + fmt.Sprintf("%d", len(m.coll.Incursions)))
 	m.lines = append(m.lines, chatLine{}) // blank breathing row above the in-flight row
 	m.pendIdx = len(m.lines)
 	m.lines = append(m.lines, chatLine{text: m.pendingView()})
@@ -1062,6 +1078,9 @@ func (m ChatModel) requestMessages() []babel.Message {
 // SetEnv stamps the static environment (drives the per-request env brief).
 func (m ChatModel) SetEnv(e EnvInfo) ChatModel {
 	m.env = e
+	if m.ready && len(m.lines) == 0 {
+		m.render() // the empty-state line shows the server state
+	}
 	return m
 }
 
@@ -1226,6 +1245,7 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 	}
 	m.streaming = false
 	m.streamCh = nil
+	m.betweenCalls = true
 	m.pendIdx = -1
 
 	inc := m.coll.ActiveIncursion()
@@ -1255,14 +1275,14 @@ func (m ChatModel) handleStreamItem(it streamItemMsg) (ChatModel, tea.Cmd) {
 	inc.Status = history.IncursionDispatching
 	tx, _ := inc.AddTransmission(strings.TrimSpace(m.acc), it.toolCalls)
 	tx.Producer = m.currentProducer // provenance: which model produced this
-	usage := it.usage
+	usage, estimated := it.usage, false
 	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 {
 		// Gateway omitted usage — fall back to a chars/4 estimate so counts
 		// are never blank on the Stats screen / activity line.
-		usage = estimateUsage(m.requestMessages(), m.acc, m.thinkAcc)
+		usage, estimated = estimateUsage(m.requestMessages(), m.acc, m.thinkAcc), true
 	}
 	tx.Cost = history.Cost{InputTokens: usage.PromptTokens, OutputTokens: usage.CompletionTokens}
-	m.recordUsage(usage)
+	m.recordUsage(usage, estimated)
 	if m.thinkAcc != "" {
 		syn := tx.AddSynapse(m.thinkAcc, "reasoning")
 		if err := m.store.SaveObject(syn); err != nil {
@@ -1571,12 +1591,20 @@ func onOffValue(on bool) string {
 // noise (the once-over removed it).
 func (m ChatModel) pendingView() string { return "" }
 
+// phaseVerb names what the busy turn is doing right now.
+func (m ChatModel) phaseVerb() string {
+	switch {
+	case m.betweenCalls:
+		return verbTool
+	case m.streaming && m.acc != "":
+		return verbWriting
+	default:
+		return verbThinking
+	}
+}
+
 // activityView renders the 1-row strip above the input.
 func (m ChatModel) activityView() string {
-	tokens := m.liveTokens
-	if !m.busy && m.lastContext > 0 {
-		tokens = m.lastContext
-	}
 	var elapsed time.Duration
 	if m.busy && !m.turnStarted.IsZero() {
 		elapsed = time.Since(m.turnStarted)
@@ -1588,8 +1616,11 @@ func (m ChatModel) activityView() string {
 	return RenderActivity(m.width, ActivityState{
 		Busy:      m.busy,
 		Streaming: m.streaming,
-		Verb:      m.activityVerb,
-		Tokens:    tokens,
+		Verb:      m.phaseVerb(),
+		Tokens:    m.liveTokens,
+		Estimated: m.busy || m.contextEstimated,
+		Context:   m.lastContext,
+		Window:    m.contextWindow,
 		Elapsed:   elapsed,
 		Queued:    queued,
 		Awaiting:  m.awaiting != nil,
@@ -1598,14 +1629,27 @@ func (m ChatModel) activityView() string {
 	})
 }
 
-// recordUsage updates session billing totals and last-turn context size.
-func (m *ChatModel) recordUsage(u babel.Usage) {
+// liveEstimateEvery caps how often the streaming token estimate changes on
+// screen (≤ 2 Hz) so the number is readable rather than flickering.
+const liveEstimateEvery = 500 * time.Millisecond
+
+// recordUsage updates session totals and last-turn context size. Estimated
+// usage (the gateway reported none) is counted separately so displays can
+// mark totals that are not provider-measured.
+func (m *ChatModel) recordUsage(u babel.Usage, estimated bool) {
 	if u.PromptTokens > 0 {
 		m.sessionIn += u.PromptTokens
 		m.lastContext = u.PromptTokens // most recent = window fill
+		m.contextEstimated = estimated
+		if estimated {
+			m.sessionEstIn += u.PromptTokens
+		}
 	}
 	if u.CompletionTokens > 0 {
 		m.sessionOut += u.CompletionTokens
+		if estimated {
+			m.sessionEstOut += u.CompletionTokens
+		}
 	}
 	m.liveTokens = u.PromptTokens + u.CompletionTokens
 	m.sessionCycles++ // one LLM round completed
@@ -1638,15 +1682,22 @@ func estimateUsage(msgs []babel.Message, reply, thinking string) babel.Usage {
 }
 
 // SessionUsageMsg carries live session token totals to the root (Stats + status line).
+// In/Out include EstIn/EstOut, the chars/4-estimated portion.
 type SessionUsageMsg struct {
 	In, Out, LastContext int
+	EstIn, EstOut        int
+	ContextEstimated     bool
 	Cycles, Messages     int
 }
+
+// Estimated reports whether any part of the totals is an estimate.
+func (u SessionUsageMsg) Estimated() bool { return u.EstIn+u.EstOut > 0 }
 
 func sessionUsageCmd(m ChatModel) tea.Cmd {
 	return func() tea.Msg {
 		return SessionUsageMsg{
 			In: m.sessionIn, Out: m.sessionOut, LastContext: m.lastContext,
+			EstIn: m.sessionEstIn, EstOut: m.sessionEstOut, ContextEstimated: m.contextEstimated,
 			Cycles: m.sessionCycles, Messages: m.sessionMsgs,
 		}
 	}
@@ -2002,6 +2053,10 @@ func (m *ChatModel) render() {
 	if w <= 0 {
 		w = 80
 	}
+	if len(m.lines) == 0 {
+		m.vp.SetContent(wrapStyled(styleSystem.Render(m.emptyState()), w))
+		return
+	}
 	rows := make([]string, len(m.lines))
 	for i := range m.lines {
 		l := &m.lines[i]
@@ -2011,6 +2066,15 @@ func (m *ChatModel) render() {
 		rows[i] = l.out
 	}
 	m.vp.SetContent(strings.Join(rows, "\n"))
+}
+
+// emptyState is the one dim line a fresh chat shows before the first turn.
+func (m ChatModel) emptyState() string {
+	parts := []string{orDefault(m.env.Server, "standalone")}
+	if m.env.Cwd != "" {
+		parts = append(parts, m.env.Cwd)
+	}
+	return strings.Join(parts, " · ") + " — Ctrl+P for navigation · ? for shortcuts"
 }
 
 // userEcho renders a full-width tinted block with a dim "❯ " prefix (no label).

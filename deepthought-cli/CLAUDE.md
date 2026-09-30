@@ -8,6 +8,8 @@ requires it or a model to start.
 Named for Deep Thought in *The Hitchhiker's Guide to the Galaxy*. Keep the existing
 Borg package terminology (`queen`, `unimatrix`, `assimilation`, `alcove`) and history
 objects (Collective, Incursion, Transmission, Probe, Pattern, Synapse, Vinculum).
+User-facing copy is plain research-computing language: lore stays in package names
+and command aliases, not in labels, verbs, or the home screen.
 
 ## Working agreement
 

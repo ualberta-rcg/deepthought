@@ -68,8 +68,9 @@ identifiers must not reintroduce them.
 - Idiomatic Go: `gofmt`, table-driven tests, wrap errors with `%w`, no `panic`
   in the request path.
 - `CGO_ENABLED=0` static binaries where possible.
-- Component naming inside the CLI follows its own lore (Borg package names,
-  Hitchhiker's Guide flavor) — see `deepthought-cli/CLAUDE.md`.
+- Component naming inside the CLI follows its own lore (Borg package names;
+  Hitchhiker's Guide only in command aliases like `/fish`, never in UI copy) —
+  see `deepthought-cli/CLAUDE.md`.
 
 ## Build & run (deepthought-cli)
 

@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -44,9 +45,14 @@ type EnvInfo struct {
 	Arch      string // runtime.GOARCH (native builds = host arch)
 	CPUs      int
 	MemGB     int
+
+	// Session identity for the home/status surfaces.
+	Version string // "DeepThought <build>"
+	Server  string // "standalone" or "server user @ host"
+	Cwd     string // working directory, ~-shortened
 }
 
-func (m StatusModel) SetEnv(e EnvInfo) StatusModel { m.env = e; return m }
+func (m StatusModel) SetEnv(e EnvInfo) StatusModel { m.env = e; m.rebuild(); return m }
 
 // StatusInputs bundles the Status page's external inputs (kept out of the model
 // so the constructor stays readable).
@@ -80,6 +86,7 @@ type StatusModel struct {
 	gathered  bool // first Slurm snapshot has arrived
 	// This-session usage totals (fed from the chat) for the Usage section.
 	sessionIn, sessionOut, lastContext, cycles, messages int
+	sessionEstIn, sessionEstOut                          int
 	vp                                                   viewport.Model
 	width                                                int
 	height                                               int
@@ -111,21 +118,25 @@ func (m StatusModel) Resize(w, h int) StatusModel {
 		bodyH = 1
 	}
 	m.vp.SetHeight(bodyH)
+	m.rebuild()
 	return m
 }
 
 // SetHealth refreshes the model-reachability state.
 func (m StatusModel) SetHealth(ok bool, reason string) StatusModel {
 	m.healthOK, m.health = ok, reason
+	m.rebuild()
 	return m
 }
 
-// SetClock stamps the live clock (date/timezone tick every second).
+// SetClock stamps the live clock (date/timezone tick every second). The clock
+// renders in the title, so a tick never rebuilds the body or moves the scroll.
 func (m StatusModel) SetClock(t time.Time) StatusModel { m.clock = t; return m }
 
 // SetCluster fills the cached Slurm snapshot from the background poller.
 func (m StatusModel) SetCluster(s slurm.ClusterSnapshot) StatusModel {
 	m.cluster, m.gathered = s, true
+	m.rebuild()
 	return m
 }
 
@@ -133,7 +144,31 @@ func (m StatusModel) SetCluster(s slurm.ClusterSnapshot) StatusModel {
 func (m StatusModel) SetSession(in, out, lastContext, cycles, messages int) StatusModel {
 	m.sessionIn, m.sessionOut, m.lastContext = in, out, lastContext
 	m.cycles, m.messages = cycles, messages
+	m.rebuild()
 	return m
+}
+
+// SetSessionEstimate records how much of the session totals is estimated.
+func (m StatusModel) SetSessionEstimate(estIn, estOut int) StatusModel {
+	m.sessionEstIn, m.sessionEstOut = estIn, estOut
+	m.rebuild()
+	return m
+}
+
+// rebuild renders the page body into the viewport. It runs only when page
+// data changes (never per frame), and SetContent keeps the scroll offset.
+func (m *StatusModel) rebuild() {
+	var rows []string
+	for _, sec := range statusSections() {
+		if !sec.show(*m) {
+			continue
+		}
+		if len(rows) > 0 {
+			rows = append(rows, "")
+		}
+		rows = append(rows, trimTrailingBlanks(sec.rows(*m))...)
+	}
+	m.vp.SetContent(lipgloss.JoinVertical(lipgloss.Left, rows...))
 }
 
 func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
@@ -192,25 +227,17 @@ func (m StatusModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	var rows []string
-	for _, sec := range statusSections() {
-		if !sec.show(m) {
-			continue
-		}
-		if len(rows) > 0 {
-			rows = append(rows, "")
-		}
-		rows = append(rows, trimTrailingBlanks(sec.rows(m))...)
-	}
-	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	m.vp.SetContent(body)
 	keybar := KeyBar([]KeyHint{
 		{Key: "↑/↓", Label: "scroll"},
 		{Key: "PgUp/PgDn", Label: "page"},
 		{Key: "r", Label: "refresh"},
 		{Key: "esc", Label: "back"},
 	})
-	return AppScreenScroll(m.width, m.height, screenTitle("Status"), m.vp.View(), m.vp.Height(), keybar)
+	title := screenTitle("Status")
+	if !m.clock.IsZero() {
+		title += styleSettingsFoot.Render("  " + m.clock.Format("2006-01-02 15:04:05 MST"))
+	}
+	return AppScreenScroll(m.width, m.height, title, m.vp.View(), m.vp.Height(), keybar)
 }
 
 // --- section renderers ------------------------------------------------------
@@ -229,10 +256,6 @@ func (m StatusModel) sessionRows() []string {
 			label = mm.ID
 		}
 	}
-	clockStr := "—"
-	if !m.clock.IsZero() {
-		clockStr = m.clock.Format("2006-01-02 15:04:05 MST")
-	}
 	return Section{
 		Title: "Session",
 		Rows: []string{
@@ -240,7 +263,8 @@ func (m StatusModel) sessionRows() []string {
 			kv("effort", EffortLabel(babel.Effort(orDefault(m.status.Effort, "medium")))),
 			kv("mode", orDefault(m.status.Mode, "—")),
 			kv("health", healthChip(m.healthOK, m.health)),
-			kv("now", clockStr),
+			kv("server", orDefault(m.env.Server, "standalone")),
+			kv("version", orDefault(m.env.Version, "development build")),
 		},
 	}.Render()
 }
@@ -326,9 +350,9 @@ func (m StatusModel) modelsRows() []string {
 func (m StatusModel) usageRows() []string {
 	body := []string{
 		kv("context", contextMeter(m.lastContext, m.activeContextWindow())),
-		kv("input", fmt.Sprintf("%s tokens", formatTokens(m.sessionIn))),
-		kv("output", fmt.Sprintf("%s tokens", formatTokens(m.sessionOut))),
-		kv("total", fmt.Sprintf("%s tokens", formatTokens(m.sessionIn+m.sessionOut))),
+		kv("input", estimatedTokens(m.sessionIn, m.sessionEstIn)),
+		kv("output", estimatedTokens(m.sessionOut, m.sessionEstOut)),
+		kv("total", estimatedTokens(m.sessionIn+m.sessionOut, m.sessionEstIn+m.sessionEstOut)),
 		kv("rounds", fmt.Sprintf("%d LLM · %d msgs", m.cycles, m.messages)),
 		kv("est. cost", estSessionCost(m.sessionIn, m.sessionOut)),
 	}
@@ -337,7 +361,13 @@ func (m StatusModel) usageRows() []string {
 		body = append(body, styleSettingsFoot.Render("  lifetime: (no recorded usage yet)"))
 	} else {
 		body = append(body, styleSettingsFoot.Render("  lifetime (all chats):"))
-		for id, c := range usage {
+		ids := make([]string, 0, len(usage))
+		for id := range usage {
+			ids = append(ids, id)
+		}
+		sort.Strings(ids)
+		for _, id := range ids {
+			c := usage[id]
 			body = append(body, fmt.Sprintf("    %s  %s",
 				truncatePad(id, 26),
 				styleSettingsFoot.Render(fmt.Sprintf("in %s · out %s",
@@ -469,4 +499,13 @@ func orDefault(s, def string) string {
 		return def
 	}
 	return s
+}
+
+// estimatedTokens renders a session total, marking the estimated portion:
+// "12.3k tokens" when measured, "~12.3k tokens (1.1k estimated)" otherwise.
+func estimatedTokens(total, estimated int) string {
+	if estimated <= 0 {
+		return formatTokens(total) + " tokens"
+	}
+	return fmt.Sprintf("~%s tokens (%s estimated)", formatTokens(total), formatTokens(estimated))
 }

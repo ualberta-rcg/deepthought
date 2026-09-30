@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
@@ -40,69 +39,22 @@ var (
 // DefaultSpinner is the frame set used by splash + chat activity.
 var DefaultSpinner = spinnerBraille
 
-// Activity verbs (trimmed from the reference spinnerVerbs list, with a few
-// HHGTTG-flavored ones). Seeded per-turn so the activity line feels alive.
-var activityVerbs = []string{
-	"Accomplishing", "Architecting", "Beaming", "Bootstrapping", "Brewing",
-	"Calculating", "Cascading", "Cerebrating", "Channeling", "Coalescing",
-	"Cogitating", "Composing", "Computing", "Concocting", "Contemplating",
-	"Crafting", "Crunching", "Deciphering", "Deliberating", "Envisioning",
-	"Forging", "Generating", "Harmonizing", "Hyperspacing", "Ideating",
-	"Imagining", "Inferring", "Manifesting", "Marinating", "Mulling",
-	"Musing", "Noodling", "Orbiting", "Orchestrating", "Percolating",
-	"Pondering", "Pontificating", "Processing", "Quantumizing", "Reticulating",
-	"Ruminating", "Synthesizing", "Thinking", "Tinkering", "Transmuting",
-	"Warping", "Wrangling",
-	// HHGTTG-flavored
-	"Improbabilitizing", "Toweling", "Don't-Panic-ing", "42-ing",
-}
-
-// verbFor picks a verb deterministically from seed (e.g. session+turn id) so
-// each turn gets a different word without touching rand/time in the model path.
-func verbFor(seed string) string {
-	var n int
-	for _, r := range seed {
-		n += int(r)
-	}
-	if n < 0 {
-		n = -n
-	}
-	return activityVerbs[n%len(activityVerbs)]
-}
-
-// formatTokens abbreviates a token count: 1200 → "1.2k", 42 → "42".
-func formatTokens(n int) string {
-	if n < 1000 {
-		return fmt.Sprintf("%d", n)
-	}
-	if n < 10000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprintf("%dk", n/1000)
-}
-
-// formatElapsed renders a duration as "12s" / "1m 4s" / "1h 2m".
-func formatElapsed(d time.Duration) string {
-	if d < 0 {
-		d = 0
-	}
-	s := int(d.Seconds())
-	switch {
-	case s < 60:
-		return fmt.Sprintf("%ds", s)
-	case s < 3600:
-		return fmt.Sprintf("%dm %ds", s/60, s%60)
-	default:
-		return fmt.Sprintf("%dh %dm", s/3600, (s%3600)/60)
-	}
-}
+// Activity verbs name the turn's actual phase — no rotating flavor words.
+const (
+	verbThinking = "Thinking"
+	verbWriting  = "Writing"
+	verbTool     = "Running tool"
+)
 
 // ActivityState is what the activity line renders.
 type ActivityState struct {
 	Busy      bool
 	Streaming bool
 	Verb      string
-	Tokens    int // live / last-turn token count (0 = omit)
+	Tokens    int  // live token count while busy (0 = omit)
+	Estimated bool // Tokens / Context are chars/4 estimates, not provider counts
+	Context   int  // idle: prompt tokens of the last turn (window fill)
+	Window    int  // idle: the active model's context window (0 = unknown)
 	Elapsed   time.Duration
 	Queued    string // pending queued input chip
 	Awaiting  bool   // Queen approval on screen
@@ -124,17 +76,18 @@ func RenderActivity(w int, st ActivityState) string {
 			verb = "Thinking"
 		}
 		parts = append(parts, glyph+" "+styleSystem.Render(verb+"…"))
-		if st.Tokens > 0 {
-			parts = append(parts, styleSystem.Render(formatTokens(st.Tokens)+" tokens"))
-		}
-		if st.Elapsed > 0 {
-			parts = append(parts, styleSystem.Render(formatElapsed(st.Elapsed)))
-		}
+		// Both segments are always present and fixed-width so nothing to
+		// their right shifts while the numbers tick.
+		parts = append(parts, styleSystem.Render(fixedTokens(st.Tokens, st.Estimated)+" tokens"))
+		parts = append(parts, styleSystem.Render(formatElapsed(st.Elapsed)))
 		parts = append(parts, styleSystem.Render("esc to interrupt"))
 	case st.Queued != "":
 		parts = append(parts, styleSystem.Render("queued: "+truncate(st.Queued, max(8, w/3))))
 	default:
-		// Idle: short discoverability hints.
+		// Idle: context fill of the last turn, then discoverability hints.
+		if st.Context > 0 {
+			parts = append(parts, ContextMeter(st.Context, st.Window, st.Estimated, 10))
+		}
 		hint := "? for shortcuts"
 		if st.BashHint {
 			hint = "! for bash · ? for shortcuts"

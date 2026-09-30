@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"image/color"
 	"strconv"
 	"strings"
@@ -11,68 +12,52 @@ import (
 )
 
 const (
-	splashVersion = "DeepThought v0.0.1"
+	splashTagline = "Research computing harness · University of Alberta / AMII"
 	splashHint    = "↑/↓ choose · enter select"
 )
-
-// splashSubtitles are the rotating HHGTTG one-liners shown under the DON'T
-// PANIC wordmark. One is chosen per boot (see subtitleFor) so the splash feels
-// alive without flickering.
-var splashSubtitles = []string{
-	"Share and Enjoy.",
-	"Mostly Harmless.",
-	"We Apologize for the Inconvenience.",
-	"So Long, and Thanks for All the Fish.",
-	"Bring a towel.",
-	"42.",
-}
-
-// footerRows is the splash chrome below the wordmark: blank + subtitle +
-// status + version + spinner + blank + hint.
-const footerRows = 7
 
 // splashSpinner aliases the default braille set (see spinners.go).
 var splashSpinner = DefaultSpinner
 
-// BootInfo is the resolved boot-time model/provider the splash status line
-// shows. Set once at construction from the live settings.
+// BootInfo is what the home screen's info block shows. Set once at
+// construction from the live settings and host; Server is refreshed by the
+// root after a login.
 type BootInfo struct {
 	Model    string // active chat-role model label
 	Provider string // provider name serving it
 	Ready    bool   // false when no API key / nothing configured
+	Version  string // "DeepThought <build>"
+	Server   string // "Standalone — local settings only" / "Connected as …"
+	Host     string
+	Cwd      string
 }
 
-// SplashModel is the boot screen: the big DON'T PANIC wordmark + status +
-// rotating subtitle + version + spinner. It is a plain struct, not a
-// tea.Model — the root wraps it.
+// SplashModel is the home screen: wordmark, tagline, version, an info block
+// (model, server, host, working directory) and the start actions. It is a
+// plain struct, not a tea.Model — the root wraps it.
 type SplashModel struct {
 	spin      spinner.Model
 	spinFrame int // our own frame counter; the spinner's frame field is unexported
 	verb      string
 	boot      BootInfo
-	sub       string // chosen subtitle for this boot
 	width     int
 	height    int
 	selected  int
 	notice    string
 }
 
-// NewSplashModel builds a splash with the braille spinner. boot feeds the
-// status line; sessionID seeds the per-boot subtitle (no time/rand — both are
-// forbidden in the model path).
+// NewSplashModel builds the home screen. sessionID is kept for API
+// stability; nothing on the screen varies per session any more.
 func NewSplashModel(boot BootInfo, sessionID string) SplashModel {
+	_ = sessionID
 	sp := spinner.New(spinner.WithSpinner(splashSpinner), spinner.WithStyle(styleVerb))
-	return SplashModel{spin: sp, verb: "Booting", boot: boot, sub: subtitleFor(sessionID)}
+	return SplashModel{spin: sp, verb: "Booting", boot: boot}
 }
 
-// subtitleFor picks one HHGTTG subtitle deterministically from sessionID, so
-// each launch shows a different line without touching time or rand.
-func subtitleFor(sessionID string) string {
-	var n int
-	for _, r := range sessionID {
-		n += int(r)
-	}
-	return splashSubtitles[n%len(splashSubtitles)]
+// WithServer updates the server line (after login or disconnect).
+func (m SplashModel) WithServer(line string) SplashModel {
+	m.boot.Server = line
+	return m
 }
 
 // Init kicks the spinner (its Update reschedules later ticks). The splash stays
@@ -128,41 +113,57 @@ func (m SplashModel) WithNotice(text string) SplashModel {
 	return m
 }
 
-// View composes the splash: the DON'T PANIC wordmark (dontPanicHeader picks
-// the biggest rendering that fits), a rotating HHGTTG subtitle, a status line
-// (model · provider), version + spinner, and the hint. The whole block is
-// centered as one unit. Colors are the solid brand pair.
+// View composes the home screen as one centered block. Below 90 columns or
+// 24 rows it goes compact: plain-text name, no tagline, model line only.
 func (m SplashModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	header := dontPanicHeader(m.width, m.height-footerRows-7)
+	compact := m.width < 90 || m.height < 24
 	choices := []string{"  Run standalone", "  Log in to server", "  Set up AI providers", "  Explore / Settings", "  Install on another machine"}
 	choices[m.selected] = "› " + strings.TrimSpace(choices[m.selected])
 
-	block := lipgloss.JoinVertical(lipgloss.Center,
-		header,
-		styleName.Render("DeepThought"),
-		"",
-		styleVersion.Render(m.sub),
-		styleVersion.Render(m.statusLine()),
-		styleVersion.Render(splashVersion),
-		styleName.Render(choices[0]),
-		styleVersion.Render(choices[1]),
-		styleVersion.Render(choices[2]),
-		styleVersion.Render(choices[3]),
-		styleVersion.Render(choices[4]),
-		styleVersion.Render(m.notice),
-		"",
-		styleVersion.Render(splashHint),
-	)
+	var rows []string
+	if compact {
+		rows = append(rows, styleName.Render("DeepThought")+"  "+styleVersion.Render(m.version()))
+	} else {
+		rows = append(rows, wordmarkHeader(m.width, m.height-18), "",
+			styleVersion.Render(splashTagline), styleVersion.Render(m.version()))
+	}
+	rows = append(rows, "", m.infoBlock(compact), "")
+	rows = append(rows, styleName.Render(choices[0]))
+	for _, c := range choices[1:] {
+		rows = append(rows, styleVersion.Render(c))
+	}
+	rows = append(rows, styleVersion.Render(m.notice), styleVersion.Render(splashHint))
+	block := lipgloss.JoinVertical(lipgloss.Center, rows...)
 	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(placeCenter(m.width, m.height, block))
 }
 
-// statusLine renders the boot model + provider (or a not-ready hint).
+func (m SplashModel) version() string {
+	return orDefault(m.boot.Version, "DeepThought (development build)")
+}
+
+// infoBlock is the left-aligned label/value block under the tagline.
+func (m SplashModel) infoBlock(compact bool) string {
+	row := func(label, value string) string {
+		return styleSettingsKey.Render(fmt.Sprintf("%-7s", label)) + " " + styleVersion.Render(clipLine(value, max(10, m.width-12)))
+	}
+	rows := []string{row("model", m.statusLine())}
+	if !compact {
+		rows = append(rows,
+			row("server", orDefault(m.boot.Server, "Standalone — local settings only")),
+			row("host", orDefault(m.boot.Host, "unknown")),
+			row("cwd", orDefault(m.boot.Cwd, "unknown")),
+		)
+	}
+	return lipgloss.JoinVertical(lipgloss.Left, rows...)
+}
+
+// statusLine renders the boot model + provider (or the setup hint).
 func (m SplashModel) statusLine() string {
 	if !m.boot.Ready {
-		return "Ready to explore · AI setup is optional · Ctrl+P menu"
+		return "No model configured → Set up AI providers"
 	}
 	if m.boot.Model == "" {
 		return "ready"
@@ -170,21 +171,19 @@ func (m SplashModel) statusLine() string {
 	return m.boot.Model + " · " + m.boot.Provider
 }
 
-// dontPanicHeader picks the biggest DON'T PANIC wordmark that fits the given
-// width×height, in order: the colossal font on one line, colossal stacked
-// (DON'T over PANIC), the small font on one line, then styled plain text.
-// Every art candidate is painted with paintGradient — a restrained left→right
-// cyan→violet brand shade, static.
-func dontPanicHeader(width, height int) string {
+// wordmarkHeader picks the biggest "DeepThought" wordmark that fits
+// width×height (standard font, then small), painted along the brand
+// gradient; plain styled text when no art fits.
+func wordmarkHeader(width, height int) string {
 	for _, cand := range [][]string{
-		bigTextIn("standard", "DON'T PANIC"),
-		bigTextIn(smallTextFont, "DON'T PANIC"),
+		bigTextIn("standard", "DeepThought"),
+		bigTextIn(smallTextFont, "DeepThought"),
 	} {
 		if len(cand) > 0 && widestRow(cand) <= width && len(cand) <= height {
 			return paintGradient(cand)
 		}
 	}
-	return styleName.Render("DON'T PANIC")
+	return styleName.Render("DeepThought")
 }
 
 // stackArt joins two art blocks with one blank row between them.

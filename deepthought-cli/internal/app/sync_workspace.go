@@ -82,7 +82,9 @@ func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 		m.server = nil
 		m.syncWorker = nil
 		m.syncBusy = false
-		m.connectionNotice = "Disconnected"
+		m.connectionNotice = "Disconnected — edits stay local and sync when you reconnect"
+		m.splash = m.splash.WithServer("Standalone — local settings only")
+		m.setServerLine("standalone")
 		if s := m.localStore(); s != nil {
 			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), false)
 		}

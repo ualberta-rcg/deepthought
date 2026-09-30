@@ -63,9 +63,8 @@ var settingsTabs = []settingsTab{
 	{"system", "System"}, // read-only: host descriptor + storage + keybindings
 }
 
-// settingsRoadmap is the dim one-liner under the tab row marking where the
-// not-yet-configurable sections live (they were dead "coming soon" tree rows).
-const settingsRoadmap = "planned: shell & env · memory · privacy"
+// settingsHint is the dim one-liner under the tab row.
+const settingsHint = "enter edit · esc back · every change saves immediately"
 
 // settingsView is the level inside the current tab.
 type settingsView int
@@ -937,6 +936,9 @@ func (m SettingsModel) systemRows() []string {
 	add("scratch", envOr("SCRATCH", "—")+" · 60-day purge")
 	add("project", envOr("PROJECT", "—")+" · backed up")
 	for i := 1; i <= 12; i++ {
+		if keybindings.Reserved(fmt.Sprintf("f%d", i)) {
+			continue
+		}
 		add(fmt.Sprintf("F%d", i), functionKeyLabel(i))
 	}
 	out := make([]string, len(rows))
@@ -990,7 +992,7 @@ func (m SettingsModel) View() string {
 		}
 		title += strings.Repeat(" ", gap) + styleToast.Render(m.saved)
 	}
-	body := m.tabRow() + "\n" + styleSettingsFoot.Render(settingsRoadmap) + "\n" + m.vp.View()
+	body := m.tabRow() + "\n" + styleSettingsFoot.Render(settingsHint) + "\n" + m.vp.View()
 	return AppScreenScroll(m.width, m.height, title, body, m.vp.Height()+2, KeyBar(m.keybar()))
 }
 

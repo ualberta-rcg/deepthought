@@ -7,6 +7,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
+	"net/url"
 	"os"
 	"os/exec"
 	"runtime"
@@ -128,6 +129,7 @@ type RootModel struct {
 	lastContext       int
 	sessionCycles     int
 	sessionMsgs       int
+	sessionEstimated  bool      // some session totals are chars/4 estimates
 	cachedStatusCmd   string    // last stdout from StatusLine.Command (async)
 	lastStatusCmdPoll time.Time // wall clock of last status-command spawn
 }
@@ -137,6 +139,10 @@ type RootModel struct {
 // client + model id.
 func NewRootModel(d Deps) RootModel {
 	env := gatherEnv()
+	env.Version, env.Server = d.Status.Version, "standalone"
+	if wd, err := os.Getwd(); err == nil {
+		env.Cwd = shortHome(wd)
+	}
 	sid := d.SessionID
 	if sid == "" {
 		sid = newSessionID()
@@ -149,7 +155,7 @@ func NewRootModel(d Deps) RootModel {
 		sessionID: sid,
 		env:       env,
 		sidebar:   tui.SidebarData{Env: env, Skills: skillNames(d.Skills)},
-		splash:    tui.NewSplashModel(splashBoot(d.Live), sid),
+		splash:    tui.NewSplashModel(splashBoot(d), sid),
 		chat:      tui.NewChatModel(d.Live, d.Registry, d.Gate, sid, d.ChatSource).SetSkills(d.Skills).SetEnv(env),
 		continue_: tui.NewContinueModel(d.ChatSource),
 		settings:  tui.NewSettingsModel(d.Live, d.Settings),
@@ -310,16 +316,44 @@ func (m RootModel) advanceFromSplash() (RootModel, tea.Cmd) {
 
 // splashBoot resolves the chat role's model + provider for the splash status
 // line, and reports whether the provider has a key (ready vs. not-ready hint).
-func splashBoot(live *Settings) tui.BootInfo {
+func splashBoot(d Deps) tui.BootInfo {
+	info := tui.BootInfo{Version: d.Status.Version, Server: "Standalone — local settings only"}
+	if h, err := os.Hostname(); err == nil {
+		info.Host = h
+	}
+	if wd, err := os.Getwd(); err == nil {
+		info.Cwd = shortHome(wd)
+	}
+	live := d.Live
 	if live == nil {
-		return tui.BootInfo{Ready: false}
+		return info
+	}
+	if srv := live.Snapshot().Server; srv != nil && srv.URL != "" {
+		info.Server = "Server " + serverHost(srv.URL) + " configured · not connected"
 	}
 	client, m, err := live.RoleClient(unimatrix.RoleChat)
 	if err != nil || client == nil {
-		return tui.BootInfo{Ready: false}
+		return info
 	}
 	// m.Provider is already the config provider name; show it directly.
-	return tui.BootInfo{Ready: true, Model: m.Label, Provider: m.Provider}
+	info.Ready, info.Model, info.Provider = true, m.Label, m.Provider
+	return info
+}
+
+// setServerLine records the connection state on every surface that shows it.
+func (m *RootModel) setServerLine(line string) {
+	m.env.Server = line
+	m.sidebar.Env = m.env
+	m.statusScr = m.statusScr.SetEnv(m.env)
+	m.chat = m.chat.SetEnv(m.env)
+}
+
+// serverHost reduces a server URL to its host for display.
+func serverHost(raw string) string {
+	if u, err := url.Parse(raw); err == nil && u.Host != "" {
+		return u.Host
+	}
+	return raw
 }
 
 // Init starts the session-wide clock plus the entering screen's Init. Using
@@ -511,6 +545,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tui.SessionUsageMsg:
 		m.sidebar.SessionIn, m.sidebar.SessionOut, m.sidebar.LastContext = msg.In, msg.Out, msg.LastContext
+		m.sidebar.ContextEstimated = msg.ContextEstimated
 		if m.deps.Live != nil {
 			if snap := m.deps.Live.Snapshot(); snap.Models != nil {
 				if mm, ok := activeModelOf(snap); ok {
@@ -520,7 +555,9 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.sessionIn, m.sessionOut, m.lastContext = msg.In, msg.Out, msg.LastContext
 		m.sessionCycles, m.sessionMsgs = msg.Cycles, msg.Messages
-		m.statusScr = m.statusScr.SetSession(msg.In, msg.Out, msg.LastContext, msg.Cycles, msg.Messages)
+		m.sessionEstimated = msg.Estimated()
+		m.statusScr = m.statusScr.SetSession(msg.In, msg.Out, msg.LastContext, msg.Cycles, msg.Messages).
+			SetSessionEstimate(msg.EstIn, msg.EstOut)
 		m.statusLine = m.renderStatusLine()
 		return m, nil
 	case modelHealthMsg:
@@ -614,7 +651,8 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s := m.localStore(); s != nil {
 			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), true)
 		}
-		m.splash = m.splash.WithNotice("")
+		m.splash = m.splash.WithNotice("").WithServer("Connected as " + m.server.User + " @ " + serverHost(m.server.URL))
+		m.setServerLine("server " + m.server.User + " @ " + serverHost(m.server.URL))
 		// Settings use the serialized worker; chat transfers have their own notice.
 		if m.screen == tui.ScreenSplash {
 			m.screen = tui.ScreenChat
@@ -784,7 +822,7 @@ func (m RootModel) handleAction(action keybindings.Action) (tea.Model, tea.Cmd) 
 	switch action {
 	case keybindings.Settings:
 		m.settings = m.settings.Refresh()
-		// F2 — push Settings onto the nav stack (esc returns here).
+		// F1 — push Settings onto the nav stack (esc returns here).
 		m.pushScreenOnce(tui.ScreenSettings)
 		return m, m.settings.Init()
 	case keybindings.Model:
@@ -940,11 +978,11 @@ func (m *RootModel) popOverlay() {
 func checkModelCmd(live *Settings) tea.Cmd {
 	return func() tea.Msg {
 		if live == nil {
-			return modelHealthMsg{reason: "no settings — F2 to configure"}
+			return modelHealthMsg{reason: "no settings — F1 or Ctrl+P → Settings to configure"}
 		}
 		client, model, err := live.RoleClient(unimatrix.RoleAgentic)
 		if err != nil {
-			return modelHealthMsg{reason: err.Error() + " — F2 to configure"}
+			return modelHealthMsg{reason: err.Error() + " — F1 or Ctrl+P → Settings to configure"}
 		}
 		_, err = client.Chat(context.Background(), babel.ChatRequest{
 			Model:          model.RequestID(),
@@ -954,7 +992,7 @@ func checkModelCmd(live *Settings) tea.Cmd {
 			ReasoningStyle: model.EffectiveReasoningStyle(),
 		})
 		if err != nil {
-			return modelHealthMsg{reason: err.Error() + " — F2 to configure"}
+			return modelHealthMsg{reason: err.Error() + " — F1 or Ctrl+P → Settings to configure"}
 		}
 		return modelHealthMsg{ok: true}
 	}
@@ -1180,8 +1218,8 @@ func (m RootModel) renderStatusLine() string {
 			}
 		case "tokens":
 			if m.sessionIn+m.sessionOut > 0 {
-				parts = append(parts, fmt.Sprintf("↑%s ↓%s",
-					tuiFormatTokens(m.sessionIn), tuiFormatTokens(m.sessionOut)))
+				parts = append(parts, fmt.Sprintf("session ↑%s ↓%s",
+					tui.FixedTokens(m.sessionIn, m.sessionEstimated), tui.FixedTokens(m.sessionOut, m.sessionEstimated)))
 			}
 		case "clock":
 			parts = append(parts, m.clock.Format("15:04:05"))
@@ -1195,16 +1233,6 @@ func (m RootModel) renderStatusLine() string {
 		parts = append(parts, cmdOut)
 	}
 	return strings.Join(parts, " · ")
-}
-
-func tuiFormatTokens(n int) string {
-	if n < 1000 {
-		return fmt.Sprintf("%d", n)
-	}
-	if n < 10000 {
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprintf("%dk", n/1000)
 }
 
 func shortHome(p string) string {

@@ -81,13 +81,13 @@ func RenderTopBar(w int, clock time.Time, st StatusInfo) string {
 // order. Single source of truth so the row (and any future legend surface)
 // stays in sync with the actual bindings.
 var fKeyLegend = []struct{ key, label string }{
-	{"F1", "settings"}, {"F2", "help"}, {"F3", "model"}, {"F4", "effort"},
+	{"F1", "settings"}, {"F3", "model"}, {"F4", "effort"},
 	{"F5", "new"}, {"F6", "resume"}, {"F7", "grid"},
 	{"F8", "cron"}, {"F9", "mode"}, {"F10", "sidebar"}, {"F11", "models"}, {"F12", "status"},
 }
 
 // RenderKeyLegendRow paints the 1-row F-key legend on the same solid band as the
-// top bar: " F1 help   F2 settings   …  F12 status ". It degrades gracefully as
+// top bar: " F1 settings   F3 model   …  F12 status ". It degrades gracefully as
 // the terminal narrows — first dropping the labels (keys only), then truncating —
 // so it never wraps or overflows the row.
 func RenderKeyLegendRow(w int) string {
@@ -103,7 +103,7 @@ func RenderKeyLegendRow(w int) string {
 	return styleBarPad.Width(w).MaxWidth(w).Render(legendCells(false))
 }
 
-// legendCells joins the F-key chips; withLabel renders "F1 help", without just
+// legendCells joins the F-key chips; withLabel renders "F1 settings", without just
 // "F1" for narrow terminals.
 func legendCells(withLabel bool) string {
 	parts := make([]string, 0, len(fKeyLegend))

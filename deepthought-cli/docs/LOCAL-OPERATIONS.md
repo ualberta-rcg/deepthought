@@ -1,8 +1,8 @@
 # Standalone and resident operation
 
 The CLI starts without DeepThought Server or a model. Welcome offers standalone
-operation and optional server login. Ctrl+P opens navigation; F1 and F2 remain
-Settings and Help shortcuts. See [startup and configuration](../../docs/SETUP.md).
+operation and optional server login. Ctrl+P opens navigation (Help lives there and
+under `/help`); F1 opens Settings. F2 is reserved and cannot be rebound. See [startup and configuration](../../docs/SETUP.md).
 
 ## Sessions
 
