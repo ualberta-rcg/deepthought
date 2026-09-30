@@ -763,8 +763,13 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.refreshBindings()
-		// An open overlay owns all keys (it swallows F-keys too) until done.
+		// An open overlay owns all keys (it swallows F-keys too) until done;
+		// ctrl+c closes it (the progressive chain: overlay → turn → input → quit).
 		if m.overlay != nil {
+			if msg.String() == "ctrl+c" {
+				m.popOverlay()
+				return m, nil
+			}
 			var cmd tea.Cmd
 			m.overlay, cmd = m.overlay.Update(msg)
 			if m.overlay != nil && m.overlay.Done() {
@@ -782,6 +787,10 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				var cmd tea.Cmd
 				m.chat, cmd = m.chat.Update(msg)
 				return m, cmd
+			}
+			if m.screen == tui.ScreenChat && !m.chat.InputEmpty() {
+				m.chat = m.chat.ClearInput()
+				return m, nil
 			}
 			now := time.Now()
 			if !m.lastCtrlC.IsZero() && now.Sub(m.lastCtrlC) <= 2*time.Second {
@@ -949,7 +958,8 @@ func (m *RootModel) pushScreenOnce(to tui.Screen) {
 func (m RootModel) screenCapturesKeys() bool {
 	return (m.screen == tui.ScreenSettings && m.settings.CapturingKeys()) ||
 		(m.screen == tui.ScreenModels && m.modelsScr.CapturingKeys()) ||
-		(m.screen == tui.ScreenCron && m.cronScr.CapturingKeys())
+		(m.screen == tui.ScreenCron && m.cronScr.CapturingKeys()) ||
+		(m.screen == tui.ScreenContinue && m.continue_.CapturingKeys())
 }
 
 // pushOverlay suspends the current overlay (if any) onto the stack and makes o

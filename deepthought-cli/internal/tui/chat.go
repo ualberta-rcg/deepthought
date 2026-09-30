@@ -889,6 +889,21 @@ func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
 // Busy reports whether a model/tool turn is active.
 func (m ChatModel) Busy() bool { return m.busy }
 
+// InputEmpty reports whether the prompt has no typed text.
+func (m ChatModel) InputEmpty() bool { return m.input.Value() == "" }
+
+// SetInput replaces the typed prompt.
+func (m ChatModel) SetInput(v string) ChatModel {
+	m.input.SetValue(v)
+	return m
+}
+
+// ClearInput discards the typed prompt (ctrl+c's step before quit).
+func (m ChatModel) ClearInput() ChatModel {
+	m.input.SetValue("")
+	return m
+}
+
 // QueuedHint returns the front of the input queue (for the activity chip), or "".
 func (m ChatModel) QueuedHint() string {
 	if len(m.queue) == 0 {

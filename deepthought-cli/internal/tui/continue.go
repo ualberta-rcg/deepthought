@@ -2,28 +2,30 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/bubbletea/v2"
-	"charm.land/lipgloss/v2"
 
 	"deepthought-cli/internal/history"
+	"deepthought-cli/internal/tui/kit"
 )
 
 // ContinueModel lists saved chats (from the ChatStore) and resumes the selected
 // one into the chat screen — the "which chat do you want to rejoin" picker.
+// Built on the kit List: `/` filters by title (fuzzy subsequence).
 // Plain struct, not a tea.Model.
 type ContinueModel struct {
-	source history.ChatStoreSource
-	chats  []history.ChatSummary
-	sel    int
-	toast  string
-	width  int
-	height int
+	source    history.ChatStoreSource
+	list      kit.List
+	filtering bool
+	toast     string
+	width     int
+	height    int
 }
 
 // NewContinueModel builds the chat lister backed by source.
 func NewContinueModel(source history.ChatStoreSource) ContinueModel {
-	return ContinueModel{source: source}
+	return ContinueModel{source: source, list: kit.List{Empty: "No saved chats yet"}}
 }
 
 func (m ContinueModel) Init() tea.Cmd { return nil }
@@ -39,33 +41,76 @@ func (m *ContinueModel) Refresh() {
 		m.toast = "✗ " + err.Error()
 		chats = nil
 	}
-	m.chats = chats
-	m.sel = 0
+	items := make([]kit.Item, len(chats))
+	for i, c := range chats {
+		turns := "turns"
+		if c.Incursions == 1 {
+			turns = "turn"
+		}
+		items[i] = kit.Item{
+			Label:  c.Title,
+			Detail: fmt.Sprintf("%s · %d %s", c.UpdatedAt.Format("2006-01-02 15:04"), c.Incursions, turns),
+			Value:  c.ID,
+		}
+	}
+	m.list = kit.List{Items: items, Empty: "No saved chats yet"}
+	m.filtering = false
 }
 
 // SetError surfaces a resume failure (or any error) on the Continue screen.
 func (m *ContinueModel) SetError(msg string) { m.toast = "✗ " + msg }
 
+// CapturingKeys reports whether typed letters belong to the filter.
+func (m ContinueModel) CapturingKeys() bool { return m.filtering }
+
 // Update returns the concrete ContinueModel type.
 func (m ContinueModel) Update(msg tea.Msg) (ContinueModel, tea.Cmd) {
-	if key, ok := msg.(tea.KeyPressMsg); ok {
+	key, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		return m, nil
+	}
+	if m.filtering {
 		switch key.String() {
-		case "q", "esc", "left", "h":
-			return m, Back()
-		case "up", "k":
-			if len(m.chats) > 0 {
-				m.sel = (m.sel - 1 + len(m.chats)) % len(m.chats)
-			}
-		case "down", "j":
-			if len(m.chats) > 0 {
-				m.sel = (m.sel + 1) % len(m.chats)
-			}
+		case "esc":
+			m.filtering = false
+			m.list.SetFilter("")
 		case "enter":
-			if len(m.chats) == 0 {
-				return m, Back()
+			m.filtering = false
+		case "backspace":
+			if f := []rune(m.list.Filter); len(f) > 0 {
+				m.list.SetFilter(string(f[:len(f)-1]))
 			}
-			return m, func() tea.Msg { return ResumeChatMsg{CollectID: m.chats[m.sel].ID} }
+		case "up", "ctrl+p":
+			m.list.Move(-1)
+		case "down", "ctrl+n":
+			m.list.Move(1)
+		default:
+			if key.Text != "" {
+				m.list.SetFilter(m.list.Filter + key.Text)
+			}
 		}
+		return m, nil
+	}
+	switch key.String() {
+	case "q", "esc", "left", "h":
+		if m.list.Filter != "" {
+			m.list.SetFilter("")
+			return m, nil
+		}
+		return m, Back()
+	case "up", "k", "ctrl+p":
+		m.list.Move(-1)
+	case "down", "j", "ctrl+n":
+		m.list.Move(1)
+	case kit.Mnemonics.Filter:
+		m.filtering = true
+	case "enter":
+		it, ok := m.list.Selected()
+		if !ok {
+			return m, Back()
+		}
+		id, _ := it.Value.(string)
+		return m, func() tea.Msg { return ResumeChatMsg{CollectID: id} }
 	}
 	return m, nil
 }
@@ -81,36 +126,27 @@ func (m ContinueModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	rows := []string{""}
-	if len(m.chats) == 0 {
-		rows = append(rows, emptyRow("saved chats"))
-	} else {
-		rows = append(rows, m.header())
-		for i, c := range m.chats {
-			line := fmt.Sprintf("%-50s %s  %d turns",
-				truncatePad(c.Title, 50),
-				c.UpdatedAt.Format("2006-01-02 15:04"),
-				c.Incursions)
-			if i == m.sel {
-				line = styleMenuSel.Render("▶ " + line)
-			} else {
-				line = styleMenuUnsel.Render("  " + line)
-			}
-			rows = append(rows, line)
+	inner := m.width - 4
+	var head []string
+	if m.filtering || m.list.Filter != "" {
+		cursor := ""
+		if m.filtering {
+			cursor = "█"
 		}
+		head = append(head, styleSettingsKey.Render("/ ")+m.list.Filter+cursor)
 	}
-	rows = append(rows, "")
+	var tail []string
 	if m.toast != "" {
-		rows = append(rows, "", styleToast.Render(m.toast))
+		tail = append(tail, styleToast.Render(m.toast))
 	}
-	body := lipgloss.JoinVertical(lipgloss.Left, rows...)
-	keybar := KeyBar([]KeyHint{
-		{"↑↓", "move"}, {"enter", "resume"}, {"esc", "back"},
-	})
-	return AppScreen(m.width, m.height, screenTitle("Continue"), body, keybar)
-}
-
-// header renders a column header aligned with the list rows.
-func (m ContinueModel) header() string {
-	return styleSettingsKey.Render(fmt.Sprintf("%-50s %-16s %s", "prompt", "when", "turns"))
+	// frame border (2) + title (1) + keybar (1) + blank spacer (1)
+	listH := max(1, m.height-5-len(head)-len(tail))
+	rows := append([]string{""}, head...)
+	rows = append(rows, m.list.Render(inner, listH, true)...)
+	rows = append(rows, tail...)
+	keys := []kit.Key{{Key: "↑↓", Help: "move"}, {Key: "enter", Help: "resume"}, {Key: "/", Help: "filter"}, {Key: "esc", Help: "back"}}
+	if m.filtering {
+		keys = []kit.Key{{Key: "type", Help: "filter"}, {Key: "enter", Help: "keep"}, {Key: "esc", Help: "clear"}}
+	}
+	return AppScreen(m.width, m.height, screenTitle("Continue"), strings.Join(rows, "\n"), kit.KeyBar(keys, inner))
 }

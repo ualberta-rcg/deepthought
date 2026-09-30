@@ -1,5 +1,13 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — TUI kit, progressive ctrl+c, Continue on the kit
+- New `internal/tui/kit`: `Panel` (title in border, status dropped when it can't fit, footnote dropped first, exact size), `FitHeights` (priority-ordered card heights with a fixed drop order), `List` (fuzzy subsequence `/` filter with highlighted letters, empty phrase, key column hidden past 25% of the row, overflow rows), `KeyBar` (packed to width, ends with `…` never a dangling separator), `Dialog` (one overlay chrome clamped to the area), a glyph table with ASCII fallbacks (`--ascii`, `DEEPTHOUGHT_ASCII=1`, `TERM=dumb|linux`) and a theme fed from `styles.go`.
+- ctrl+c is progressive: close overlay → interrupt the turn → clear the typed prompt → a second press within 2 s quits.
+- Continue screen is the first migrated screen: kit list with `/` filter, `ctrl+n`/`ctrl+p` as arrows, "No saved chats yet" empty state, packed key bar. The sidebar's ASCII mode follows the kit.
+- Docs: `deepthought-cli/docs/TUI.md` (the standard).
+- Files: `internal/tui/kit/{theme,glyphs,fuzzy,layout,panel,keybar,list,dialog}.go`, `internal/tui/kit/kit_test.go`, `internal/tui/{continue.go, continue_test.go (new), styles.go, sidebar.go, chat.go}`, `internal/app/{model.go, ctrlc_test.go (new)}`, `cmd/deepthought-cli/main.go`, `docs/TUI.md` (new).
+- Verification: gofmt and `git diff --check` locally; kit tests (fuzzy order/positions, key bar width + no dangling separator at 6 widths, panel exact size across 12 sizes + status drop, height shrink order, list filter/key column/overflow, dialog in 40×12, ASCII glyphs and ASCII panel), Continue fixture (80-col frame, filter + resume), progressive ctrl+c. Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — expired server sessions, durable chat sync, crash containment
 - A 401 from the server now triggers one automatic re-login (when the password is bound locally and the connection settings are unchanged); the renewed token is shared by the sync worker and chat pushes. If that fails the client drops the connection, says "Server session expired — reconnect in Settings › Server", and stops the blind 5-minute retries.
 - Chat pushes that fail are recorded durably (`chat-push-pending` in the local store) and retried after the next login and after every successful push, instead of only showing a notice.

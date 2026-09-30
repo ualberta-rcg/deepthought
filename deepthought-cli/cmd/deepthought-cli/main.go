@@ -31,6 +31,7 @@ import (
 	"deepthought-cli/internal/tools"
 	"deepthought-cli/internal/transwarp"
 	"deepthought-cli/internal/tui"
+	"deepthought-cli/internal/tui/kit"
 	"deepthought-cli/internal/unimatrix"
 	"deepthought-cli/internal/workflow"
 )
@@ -56,7 +57,11 @@ func main() {
 	configPath := flag.String("config", "", "path to settings file (default: ~/.deepthought/config.json; $DEEPTHOUGHT_CLI_HOME overrides the dir)")
 	noSplash := flag.Bool("no-splash", false, "skip the splash screen and start straight in chat")
 	towel := flag.Bool("towel", false, "start or attach the user-space resident daemon")
+	asciiOnly := flag.Bool("ascii", false, "ASCII-only glyphs for terminals without Unicode box/braille characters (also DEEPTHOUGHT_ASCII=1)")
 	flag.Parse()
+	if *asciiOnly {
+		kit.SetASCII(true)
+	}
 	if *towel {
 		if err := startResident(*configPath); err != nil {
 			fmt.Fprintln(os.Stderr, "deepthought-cli:", err)

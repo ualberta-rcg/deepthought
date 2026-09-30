@@ -3,12 +3,12 @@ package tui
 import (
 	"fmt"
 	"math"
-	"os"
 	"strings"
 	"time"
 
 	"charm.land/lipgloss/v2"
 	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tui/kit"
 )
 
 const SidebarWidth = 44
@@ -81,7 +81,7 @@ func RenderSidebar(d SidebarData, w, h int) string {
 	if w < 10 || h < 1 {
 		return ""
 	}
-	ascii := d.ASCII || os.Getenv("TERM") == "dumb"
+	ascii := d.ASCII || kit.ASCII()
 	now := d.Clock
 	if now.IsZero() {
 		now = time.Now()

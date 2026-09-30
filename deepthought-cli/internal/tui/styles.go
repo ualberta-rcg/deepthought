@@ -6,7 +6,16 @@ package tui
 
 import (
 	"charm.land/lipgloss/v2"
+
+	"deepthought-cli/internal/tui/kit"
 )
+
+func init() {
+	kit.SetTheme(kit.Theme{
+		Accent: colPrimary, Muted: lipgloss.Color("244"), Text: colBarClock, OnAccent: colOnAccent,
+		Success: colSuccess, Warning: colWarning, Danger: colDanger, Match: colWarning,
+	})
+}
 
 // Palette. Named by ROLE, not hue, so a retheme touches only this file.
 var (
