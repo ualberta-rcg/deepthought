@@ -33,7 +33,7 @@ spec:
         node-role.kubernetes.io/control-plane: "true"
       containers:
         - name: server
-          image: rkhoja/deepthought:server-<sha>
+          image: rkhoja/deepthought-server:server-<sha>
           imagePullPolicy: IfNotPresent
           ports:
             - containerPort: 8080

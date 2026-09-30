@@ -52,6 +52,7 @@ func main() {
 		Password: password,
 		Sessions: dserver.NewSessionStore(24 * time.Hour),
 		Version:  version(),
+		Admins:   adminUsers(os.Getenv("DEEPTHOUGHT_ADMIN_USERS")),
 	}
 	if dsn := os.Getenv("DEEPTHOUGHT_MYSQL_DSN"); dsn != "" {
 		db, users, err := dserver.OpenDB(dsn)
@@ -136,9 +137,26 @@ func logRequests(next http.Handler) http.Handler {
 	})
 }
 
+// buildVersion is stamped at image build time (-X main.buildVersion=…).
+var buildVersion = ""
+
 func version() string {
 	if v := os.Getenv("DEEPTHOUGHT_VERSION"); v != "" {
 		return v
 	}
+	if buildVersion != "" {
+		return buildVersion
+	}
 	return "dev"
+}
+
+// adminUsers parses a comma-separated login-name list.
+func adminUsers(list string) map[string]bool {
+	out := map[string]bool{}
+	for _, name := range strings.Split(list, ",") {
+		if name = strings.TrimSpace(name); name != "" {
+			out[name] = true
+		}
+	}
+	return out
 }

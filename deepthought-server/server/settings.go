@@ -2,8 +2,8 @@ package server
 
 // Server-side settings defaults: the "server" layer of the client's layered
 // settings resolver (internal/config.ResolveLayers). Stored as JSON under the
-// data dir; credential-bearing keys are rejected so a default can never push
-// a secret down to clients (mirrors config.containsCredential).
+// data dir; credential values are rejected so a default can never push a
+// secret down to clients (mirrors config.containsCredential).
 
 import (
 	"encoding/json"
@@ -50,24 +50,29 @@ func SaveDefaults(dataDir string, defaults map[string]any) error {
 	return os.Rename(tmp, path)
 }
 
-// credentialKeyFragments names (key path segments or map keys) that mark a
-// credential slot. A default carrying any of these is rejected outright.
-var credentialKeyFragments = []string{
-	"apikey", "api_key", "token", "secret", "password", "credential", "authorization",
+// credentialKeys are the setting names that hold secrets. Matching is exact
+// (case-insensitive) so ordinary keys such as max_tokens pass; a credential
+// key is allowed only when empty, which is how clients send their portable
+// settings (keys blanked, bound locally).
+var credentialKeys = map[string]bool{
+	"api_key": true, "apikey": true, "password": true, "token": true,
+	"access_token": true, "refresh_token": true, "secret": true,
+	"client_secret": true, "credential": true, "credentials": true,
+	"authorization": true,
 }
 
-// rejectCredentialKeys walks v recursively and fails on credential-named keys.
+// rejectCredentialKeys walks v recursively and fails on any non-empty value
+// under a credential key: neither the defaults layer nor the synced user
+// settings may carry a secret.
 func rejectCredentialKeys(path string, v any) error {
 	switch t := v.(type) {
 	case map[string]any:
 		for k, sub := range t {
-			key := strings.ToLower(k)
-			for _, frag := range credentialKeyFragments {
-				if strings.Contains(key, frag) {
-					return fmt.Errorf("server defaults cannot contain credential keys (%s)", filepath.Join(path, k))
-				}
+			at := path + "/" + k
+			if credentialKeys[strings.ToLower(k)] && !emptyValue(sub) {
+				return fmt.Errorf("settings cannot contain credentials (%s); keys are bound on each machine", at)
 			}
-			if err := rejectCredentialKeys(filepath.Join(path, k), sub); err != nil {
+			if err := rejectCredentialKeys(at, sub); err != nil {
 				return err
 			}
 		}
@@ -79,4 +84,14 @@ func rejectCredentialKeys(path string, v any) error {
 		}
 	}
 	return nil
+}
+
+func emptyValue(v any) bool {
+	switch t := v.(type) {
+	case nil:
+		return true
+	case string:
+		return t == ""
+	}
+	return false
 }

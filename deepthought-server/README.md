@@ -19,4 +19,12 @@ does no testing).
   files aligned with whatever is applied so a rebuild is reproducible.
 
 Config: `$DEEPTHOUGHT_SERVER_PASSWORD` (auth), `$DEEPTHOUGHT_MYSQL_DSN`
-(database; without it the DB endpoints answer 503), `--addr`, `--data`.
+(database; without it the DB endpoints answer 503),
+`$DEEPTHOUGHT_ADMIN_USERS` (comma-separated login names allowed to
+`PUT /api/v1/settings/defaults`; empty = nobody), `--addr`, `--data`. The image
+stamps its tag as the version (`/healthz`); `$DEEPTHOUGHT_VERSION` overrides it.
+
+Tests: `graph/golden_test.go` decodes the wire fixture shared with the CLI
+(`graph/testdata/golden_collective.json`, an identical copy lives in
+`deepthought-cli/internal/history/testdata/`; change both together). The store
+tests need `$DEEPTHOUGHT_MYSQL_DSN`; CI provides a throwaway MySQL service.

@@ -144,12 +144,51 @@ func (s *MySQLStore) CreateCollective(req graph.SpawnCollectiveRequest) (*graph.
 	return coll, nil
 }
 
+// ErrForeignID is returned when a save targets an interaction id that
+// belongs to another user (ids are global; ownership is not transferable).
+var ErrForeignID = errors.New("mysql store: interaction id belongs to another user")
+
 func (s *MySQLStore) SaveObject(obj graph.Entity) error {
+	return s.inTx(context.Background(), func(tx *sql.Tx) error {
+		return s.saveEntityTx(context.Background(), tx, obj)
+	})
+}
+
+// SaveCollective writes the whole graph in one transaction: a failure (or a
+// foreign id anywhere in it) leaves no partially saved chat behind.
+func (s *MySQLStore) SaveCollective(coll *graph.Collective) error {
+	if coll == nil {
+		return errors.New("mysql store: nil collective")
+	}
+	ctx := context.Background()
+	return s.inTx(ctx, func(tx *sql.Tx) error {
+		for _, obj := range graph.LoadEntitiesWithPatterns(coll) {
+			if err := s.saveEntityTx(ctx, tx, obj); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func (s *MySQLStore) inTx(ctx context.Context, fn func(*sql.Tx) error) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := fn(tx); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (s *MySQLStore) saveEntityTx(ctx context.Context, tx *sql.Tx, obj graph.Entity) error {
 	if obj == nil {
 		return errors.New("mysql store: nil object")
 	}
 	if drone, ok := obj.(*graph.Drone); ok {
-		return s.SaveDrone(context.Background(), drone, nil)
+		return s.saveDroneTx(ctx, tx, drone, nil)
 	}
 	drone, err := graph.WrapEntity(obj)
 	if err != nil {
@@ -159,19 +198,7 @@ func (s *MySQLStore) SaveObject(obj graph.Entity) error {
 	if err != nil {
 		return err
 	}
-	return s.SaveDrone(context.Background(), drone, legacy)
-}
-
-func (s *MySQLStore) SaveCollective(coll *graph.Collective) error {
-	if coll == nil {
-		return errors.New("mysql store: nil collective")
-	}
-	for _, obj := range graph.LoadEntitiesWithPatterns(coll) {
-		if err := s.SaveObject(obj); err != nil {
-			return err
-		}
-	}
-	return nil
+	return s.saveDroneTx(ctx, tx, drone, legacy)
 }
 
 // UsageByModel aggregates token usage across THIS USER's graph.
@@ -203,6 +230,10 @@ func (s *MySQLStore) UsageByModel() (map[string]graph.Cost, error) {
 }
 
 func (s *MySQLStore) SaveDrone(ctx context.Context, drone *graph.Drone, legacy []byte) error {
+	return s.inTx(ctx, func(tx *sql.Tx) error { return s.saveDroneTx(ctx, tx, drone, legacy) })
+}
+
+func (s *MySQLStore) saveDroneTx(ctx context.Context, tx *sql.Tx, drone *graph.Drone, legacy []byte) error {
 	if drone == nil || drone.ID == "" {
 		return errors.New("mysql store: empty drone")
 	}
@@ -213,7 +244,15 @@ func (s *MySQLStore) SaveDrone(ctx context.Context, drone *graph.Drone, legacy [
 		}
 		drone.Body, drone.BodyHash = raw, hash
 	}
-	body, bodyRef, err := s.inlineOrStore(drone.Body, drone.BodyHash)
+	var owner string
+	switch err := tx.QueryRowContext(ctx, `SELECT user_id FROM interactions WHERE id=? FOR UPDATE`, drone.ID).Scan(&owner); {
+	case errors.Is(err, sql.ErrNoRows):
+	case err != nil:
+		return fmt.Errorf("mysql store: owner check: %w", err)
+	case owner != s.userID:
+		return ErrForeignID
+	}
+	body, bodyRef, err := s.inlineOrStore(ctx, tx, drone.Body, drone.BodyHash)
 	if err != nil {
 		return err
 	}
@@ -228,13 +267,8 @@ func (s *MySQLStore) SaveDrone(ctx context.Context, drone *graph.Drone, legacy [
 	if drone.Kind == "collective" {
 		collectiveID = drone.ID
 	}
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return err
-	}
-	defer tx.Rollback()
-	// IDs are app-generated (UUIDv7/newID prefixes), so the global PK is safe;
-	// user_id is written once and never re-homed on update.
+	// IDs are app-generated (UUIDv7/newID prefixes) and the owner check above
+	// refuses another user's id, so user_id is written once and never re-homed.
 	_, err = tx.ExecContext(ctx, `
 INSERT INTO interactions
 (id,user_id,kind,session_id,collective_id,parent_id,body,body_ref,body_hash,state,pinned,poisoned,tokens,cost,producer,outcome,fail_class,sensitivity,use_count,last_used,created_at,updated_at,legacy_json)
@@ -268,21 +302,18 @@ INSERT INTO drone_metadata(interaction_id,summaries,links) VALUES(?,?,?)
 AS new
 ON DUPLICATE KEY UPDATE summaries=new.summaries, links=new.links`,
 		drone.ID, string(summaryJSON), string(linksJSON))
-	if err != nil {
-		return err
-	}
-	return tx.Commit()
+	return err
 }
 
 // inlineOrStore keeps small bodies inline and moves >1 MiB bodies to the
 // content-addressed bodies table (the MySQL replacement for the filesystem
 // spill). bodyRef is the hex sha256; reads re-verify the hash.
-func (s *MySQLStore) inlineOrStore(body, hash []byte) ([]byte, any, error) {
+func (s *MySQLStore) inlineOrStore(ctx context.Context, tx *sql.Tx, body, hash []byte) ([]byte, any, error) {
 	if len(body) <= graph.InlineBodyLimit {
 		return body, nil, nil
 	}
 	ref := hex.EncodeToString(hash)
-	_, err := s.db.Exec(`INSERT IGNORE INTO bodies(sha256,body,created_at) VALUES(?,?,?)`, hash, body, time.Now().UTC().Format(time.RFC3339Nano))
+	_, err := tx.ExecContext(ctx, `INSERT IGNORE INTO bodies(sha256,body,created_at) VALUES(?,?,?)`, hash, body, time.Now().UTC().Format(time.RFC3339Nano))
 	if err != nil {
 		return nil, nil, err
 	}
@@ -298,7 +329,7 @@ func (s *MySQLStore) readBody(ref string, hash []byte) ([]byte, error) {
 }
 
 func (s *MySQLStore) GetDrone(ctx context.Context, id string) (*graph.Drone, error) {
-	row := s.db.QueryRowContext(ctx, `SELECT kind,session_id,collective_id,parent_id,body,body_ref,body_hash,state,pinned,poisoned,tokens,cost,producer,outcome,fail_class,sensitivity,use_count,last_used,created_at,updated FROM interactions WHERE id=? AND user_id=?`, id, s.userID)
+	row := s.db.QueryRowContext(ctx, `SELECT kind,session_id,collective_id,parent_id,body,body_ref,body_hash,state,pinned,poisoned,tokens,cost,producer,outcome,fail_class,sensitivity,use_count,last_used,created_at,updated_at FROM interactions WHERE id=? AND user_id=?`, id, s.userID)
 	var d graph.Drone
 	d.ID = id
 	var body, hash []byte

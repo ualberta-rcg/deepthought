@@ -1,0 +1,46 @@
+{
+  "ID": "coll_golden",
+  "Kind": "collective",
+  "SessionID": "sess_golden",
+  "CreatedAt": "2026-09-30T12:00:00Z",
+  "State": "FULL",
+  "Title": "Golden wire fixture",
+  "SystemPrompt": "system",
+  "MaxCycles": 25,
+  "Cycles": 3,
+  "Incursions": [
+    {
+      "ID": "inc_golden",
+      "Kind": "incursion",
+      "CollectiveID": "coll_golden",
+      "ParentID": "coll_golden",
+      "CreatedAt": "2026-09-30T12:00:01Z",
+      "Status": 3,
+      "Prompt": "run the probes",
+      "Cycles": 3,
+      "Cost": {"input_tokens": 120, "output_tokens": 40},
+      "Producer": {"provider": "vulcan", "model_id": "qwen3"},
+      "Environment": {"job_id": "12345", "captured_at": "2026-09-30T12:00:01Z"},
+      "Transmissions": [
+        {
+          "ID": "tx_golden",
+          "Kind": "transmission",
+          "ParentID": "inc_golden",
+          "CreatedAt": "2026-09-30T12:00:02Z",
+          "Text": "done",
+          "Synapses": [
+            {"ID": "syn_golden", "Kind": "synapse", "ParentID": "tx_golden", "CreatedAt": "2026-09-30T12:00:02Z", "Content": "thinking", "Type": "reasoning"}
+          ],
+          "Probes": [
+            {"ID": "probe_pending", "Kind": "probe", "Name": "bash", "Status": 0, "CreatedAt": "2026-09-30T12:00:03Z"},
+            {"ID": "probe_allowed", "Kind": "probe", "Name": "bash", "Status": 1, "Decision": 0, "CreatedAt": "2026-09-30T12:00:03Z"},
+            {"ID": "probe_running", "Kind": "probe", "Name": "bash", "Status": 2, "CreatedAt": "2026-09-30T12:00:03Z"},
+            {"ID": "probe_completed", "Kind": "probe", "Name": "read", "Status": 3, "Result": {"Content": "ok", "IsError": false}, "CreatedAt": "2026-09-30T12:00:03Z"},
+            {"ID": "probe_denied", "Kind": "probe", "Name": "bash", "Status": 4, "Decision": 1, "DecisionReason": "destructive", "CreatedAt": "2026-09-30T12:00:03Z"},
+            {"ID": "probe_failed", "Kind": "probe", "Name": "bash", "Status": 5, "Result": {"Content": "exit 1", "IsError": true}, "CreatedAt": "2026-09-30T12:00:03Z"}
+          ]
+        }
+      ]
+    }
+  ]
+}

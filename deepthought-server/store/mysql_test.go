@@ -7,11 +7,12 @@ package store
 // remaining tests cover tenant isolation and the settings revision conflict.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"os"
 	"testing"
-
 	"time"
 
 	"deepthought-server/graph"
@@ -43,17 +44,17 @@ func buildGraph(t *testing.T, store graph.ChatStore) *graph.Collective {
 	inc := coll.StartIncursion("what is the answer?")
 	inc.Status = graph.IncursionCompleted
 	tx := &graph.Transmission{
-		Vinculum: graph.Vinculum{ID: "tx-golden-1", Kind: "transmission", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: inc.ID, CreatedAt: time.Now()},
+		Vinculum: graph.Vinculum{ID: "tx-" + coll.ID, Kind: "transmission", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: inc.ID, CreatedAt: time.Now()},
 		Text:     "42",
 	}
 	inc.Transmissions = append(inc.Transmissions, tx)
 	probe := &graph.Probe{
-		Vinculum: graph.Vinculum{ID: "prb-golden-1", Kind: "probe", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: tx.ID, CreatedAt: time.Now()},
+		Vinculum: graph.Vinculum{ID: "prb-" + coll.ID, Kind: "probe", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: tx.ID, CreatedAt: time.Now()},
 		WireID:   "bash", Name: "bash", Status: graph.ProbeCompleted, Result: graph.ResultView{Content: "ok"},
 	}
 	tx.Probes = append(tx.Probes, probe)
 	pattern := &graph.Pattern{
-		Vinculum: graph.Vinculum{ID: "pat-golden-1", Kind: "pattern", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: probe.ID, CreatedAt: time.Now()},
+		Vinculum: graph.Vinculum{ID: "pat-" + coll.ID, Kind: "pattern", SessionID: coll.SessionID, CollectiveID: coll.ID, ParentID: probe.ID, CreatedAt: time.Now()},
 		Category: "env", Content: "the answer is 42",
 	}
 	probe.Patterns = append(probe.Patterns, pattern)
@@ -153,6 +154,55 @@ func TestMySQLTenantIsolation(t *testing.T) {
 	}
 	if err := alice.ReplaceRecord("journal", "job-1", 1, map[string]int{"revision": 2}); err != nil {
 		t.Errorf("fresh revision replace failed: %v", err)
+	}
+}
+
+// TestMySQLForeignIDRefused: ids are global, so a save that names another
+// user's interaction id must fail (and roll back) instead of overwriting it.
+func TestMySQLForeignIDRefused(t *testing.T) {
+	db := mysqlDB(t)
+	alice := ForUser(db, "own-alice")
+	bob := ForUser(db, "own-bob")
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM interactions WHERE user_id IN ('own-alice','own-bob')`) })
+
+	coll := buildGraph(t, alice)
+	stolen := *coll.Incursions[0].Transmissions[0]
+	stolen.Text = "overwritten by bob"
+	hijack := graph.NewCollective(graph.SpawnCollectiveRequest{})
+	inc := hijack.StartIncursion("hijack")
+	stolen.CollectiveID, stolen.ParentID = hijack.ID, inc.ID
+	inc.Transmissions = []*graph.Transmission{&stolen}
+	if err := bob.SaveCollective(hijack); !errors.Is(err, ErrForeignID) {
+		t.Fatalf("SaveCollective with alice's id = %v, want ErrForeignID", err)
+	}
+	if _, err := bob.GetCollective(hijack.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("failed save left bob's collective behind: %v", err)
+	}
+	got, err := alice.GetCollective(coll.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if text := got.Incursions[0].Transmissions[0].Text; text != "42" {
+		t.Errorf("alice's transmission = %q, want 42", text)
+	}
+}
+
+func TestMySQLGetDroneRoundTrip(t *testing.T) {
+	db := mysqlDB(t)
+	my := ForUser(db, "drone-user")
+	t.Cleanup(func() { _, _ = db.Exec(`DELETE FROM interactions WHERE user_id='drone-user'`) })
+
+	coll := buildGraph(t, my)
+	probe := coll.Incursions[0].Transmissions[0].Probes[0]
+	d, err := my.GetDrone(context.Background(), probe.ID)
+	if err != nil {
+		t.Fatalf("GetDrone: %v", err)
+	}
+	if d.Kind != "probe" || d.Outcome != graph.OutcomeSuccess || d.ParentID != probe.ParentID {
+		t.Errorf("drone = kind %q outcome %q parent %q", d.Kind, d.Outcome, d.ParentID)
+	}
+	if _, err := ForUser(db, "someone-else").GetDrone(context.Background(), probe.ID); !errors.Is(err, sql.ErrNoRows) {
+		t.Errorf("another user read the drone: %v", err)
 	}
 }
 

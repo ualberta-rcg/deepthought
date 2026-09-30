@@ -6,7 +6,8 @@ WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/deepthought-server .
+ARG DEEPTHOUGHT_VERSION=dev
+RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w -X main.buildVersion=${DEEPTHOUGHT_VERSION}" -o /out/deepthought-server .
 
 FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=build /out/deepthought-server /deepthought-server

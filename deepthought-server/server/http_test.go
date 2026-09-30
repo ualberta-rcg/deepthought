@@ -132,8 +132,9 @@ func TestDBEndpoints503WithoutDSN(t *testing.T) {
 }
 
 func TestSettingsDefaultsRoundTrip(t *testing.T) {
-	_, ts := testAPI("pw", t.TempDir())
+	a, ts := testAPI("pw", t.TempDir())
 	defer ts.Close()
+	a.Admins = map[string]bool{"ada": true}
 	token := loginSession(t, ts, "ada", "pw")
 
 	// Absent defaults → empty object.
@@ -168,6 +169,52 @@ func TestSettingsDefaultsRoundTrip(t *testing.T) {
 	resp, _ = http.DefaultClient.Do(req)
 	if resp.StatusCode != 400 {
 		t.Errorf("credential defaults = %d, want 400", resp.StatusCode)
+	}
+}
+
+func TestDefaultsWriteIsAdminOnly(t *testing.T) {
+	a, ts := testAPI("pw", t.TempDir())
+	defer ts.Close()
+	a.Admins = map[string]bool{"ada": true}
+	token := loginSession(t, ts, "bob", "pw")
+	put, _ := json.Marshal(map[string]any{"effort": "high"})
+	req, _ := http.NewRequest("PUT", ts.URL+"/api/v1/settings/defaults", bytes.NewReader(put))
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusForbidden {
+		t.Fatalf("non-admin put defaults = %v %v, want 403", err, resp)
+	}
+	if resp, _ := authedGet(ts, "/api/v1/settings/defaults", token); resp.StatusCode != 200 {
+		t.Errorf("non-admin get defaults = %d, want 200", resp.StatusCode)
+	}
+}
+
+func TestRejectCredentialKeys(t *testing.T) {
+	cases := []struct {
+		name string
+		doc  map[string]any
+		bad  bool
+	}{
+		{"ordinary keys", map[string]any{"max_tokens": 4096, "max_tokens_budget": 1, "effort": "high"}, false},
+		{"blanked api key", map[string]any{"providers": []any{map[string]any{"name": "p", "api_key": ""}}}, false},
+		{"literal api key", map[string]any{"providers": []any{map[string]any{"name": "p", "api_key": "sk-1"}}}, true},
+		{"env reference", map[string]any{"providers": []any{map[string]any{"api_key": "$TYK_KEY"}}}, true},
+		{"nested password", map[string]any{"server": map[string]any{"password": "hunter2"}}, true},
+		{"mixed case", map[string]any{"Token": "abc"}, true},
+	}
+	for _, c := range cases {
+		if err := rejectCredentialKeys("", c.doc); (err != nil) != c.bad {
+			t.Errorf("%s: err = %v, want rejected=%v", c.name, err, c.bad)
+		}
+	}
+}
+
+func TestPasswordMatches(t *testing.T) {
+	a := &API{Password: "Parad0x"}
+	for got, want := range map[string]bool{"Parad0x": true, "parad0x": false, "": false, "Parad0x ": false} {
+		if a.passwordMatches(got) != want {
+			t.Errorf("passwordMatches(%q) = %v, want %v", got, !want, want)
+		}
 	}
 }
 

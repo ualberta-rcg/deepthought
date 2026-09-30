@@ -46,7 +46,9 @@ jobs:
 
       - name: Test
         run: |
-          set -uo pipefail
+          # The runner's default shell is bash -e; +e lets a failing test run
+          # reach the annotation block below.
+          set +e -uo pipefail
           cd deepthought-cli
           mkdir -p ../out
           export DEEPTHOUGHT_FIXTURE_PATH="$GITHUB_WORKSPACE/out/sidebar-fixtures.txt"

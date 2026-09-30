@@ -39,11 +39,15 @@ curl -fsSL https://raw.githubusercontent.com/ualberta-rcg/deepthought/main/insta
 `deepthought-server/**` or the workflow itself. It does a Docker build of the
 self-contained `deepthought-server/` context (multi-stage to distroless), a
 smoke run, and pushes `rkhoja/deepthought-server:server-<shortsha>` plus a
-moving `latest` tag. No tests run in this lane — the module was tested when it
-was built; publishing an image changes nothing that is deployed.
+moving `latest` tag. A test job runs first (vet and every test, with a
+throwaway MySQL 8.4 service so the store tests execute); the image is built
+only when it passes. The image tag is stamped into the binary, so `/healthz`
+reports `server-<shortsha>`. Publishing an image changes nothing that is
+deployed.
 
 Configuration is environment-only: `DEEPTHOUGHT_SERVER_PASSWORD`,
-`DEEPTHOUGHT_MYSQL_DSN`, `--addr`, `--data`. Without a DSN the DB-backed
+`DEEPTHOUGHT_MYSQL_DSN`, `DEEPTHOUGHT_ADMIN_USERS` (who may replace the
+settings defaults; unset = nobody), `--addr`, `--data`. Without a DSN the DB-backed
 endpoints answer 503 while `/healthz`, `/readyz`, the web UI and login work.
 
 ## The test deployment (temporary)
@@ -75,12 +79,11 @@ hostname. The CLI `edge` release is built from `da462df`, the current `main`.
 
 ## Known gaps
 
-- `deepthought-server/k8s/deployment.yaml` still shows the image repository as
-  `rkhoja/deepthought:server-<sha>`; the published repository is
-  `rkhoja/deepthought-server`. The applied test manifest is correct; the
-  reference file is not. (Fixing it triggers a server image build — harmless,
-  but do it deliberately.)
-- The server reports `"version":"dev"` from `/healthz`; its Dockerfile does not
-  stamp the commit SHA the way the CLI build does.
+- Images built before 2026-09-30 report `"version":"dev"`; later ones report
+  their `server-<shortsha>` tag.
+- Probe status numbering changed on 2026-09-30 to match the CLI (`Denied=4`,
+  `Failed=5`). Chats stored earlier by the test deployment read old failed
+  probes as denied. That data is test-only; wipe the namespace's MySQL volume
+  if it matters.
 - The rolling `edge` release is the only CLI channel. There is no versioned or
   stable tag yet.

@@ -3,9 +3,9 @@ name: Build & Push Server Image
 # The server's own lane — fully separate from the CLI pipeline; triggered
 # only by deepthought-server/ changes (the module depends on the CLI in NO
 # way). Publishes to Docker Hub (default: rkhoja/deepthought-server), same
-# shape as the aleph house pattern (deploy-gateway.yml). Deployment does NO
-# testing — checkout, login, docker build (the self-contained
-# deepthought-server/ context, multi-stage to distroless), smoke, push.
+# shape as the aleph house pattern (deploy-gateway.yml). The test job runs
+# vet + all tests against a throwaway MySQL service (so the DSN-guarded store
+# tests execute); only a green test job builds, smokes and pushes the image.
 
 on:
   push:
@@ -26,8 +26,61 @@ on:
         default: 'latest'
 
 jobs:
+  test:
+    name: Test Server
+    runs-on: ubuntu-24.04
+    services:
+      mysql:
+        image: mysql:8.4
+        env:
+          MYSQL_ROOT_PASSWORD: ci-only
+          MYSQL_DATABASE: deepthought_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="mysqladmin ping -h 127.0.0.1 -pci-only"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: deepthought-server/go.mod
+          cache-dependency-path: deepthought-server/go.sum
+
+      - name: Vet
+        run: |
+          set -euo pipefail
+          cd deepthought-server
+          go vet ./...
+
+      - name: Test
+        env:
+          DEEPTHOUGHT_MYSQL_DSN: root:ci-only@tcp(127.0.0.1:3306)/deepthought_test?parseTime=false
+        run: |
+          # The runner's default shell is bash -e; +e lets a failing test run
+          # reach the annotation block below.
+          set +e -uo pipefail
+          cd deepthought-server
+          go test ./... -count=1 -v 2>&1 | tee /tmp/test.log
+          status=${PIPESTATUS[0]}
+          if [ "$status" -ne 0 ]; then
+            # Annotations are readable via the public API (summaries are not).
+            { grep -E "^--- FAIL|^    .*\.go:[0-9]+:|panic" /tmp/test.log | head -10; echo "---- last lines ----"; tail -8 /tmp/test.log; } | while IFS= read -r line; do
+              echo "::error::${line}"
+            done
+            exit "$status"
+          fi
+          if grep -q "DEEPTHOUGHT_MYSQL_DSN not set" /tmp/test.log; then
+            echo "::error::MySQL store tests were skipped"
+            exit 1
+          fi
+
   build-and-push:
     name: Build & Push Server
+    needs: test
     runs-on: ubuntu-24.04
 
     steps:
@@ -97,6 +150,7 @@ jobs:
         run: |
           set -euo pipefail
           docker build \
+            --build-arg DEEPTHOUGHT_VERSION="${{ steps.tags.outputs.IMAGE_TAG }}" \
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.IMAGE_TAG }}" \
             -t "${{ steps.repo.outputs.IMAGE_REPO }}:${{ steps.tags.outputs.STABLE_TAG }}" \
             deepthought-server

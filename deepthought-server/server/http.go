@@ -5,6 +5,8 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"crypto/subtle"
 	"database/sql"
 	"embed"
 	"encoding/json"
@@ -12,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"io/fs"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -39,6 +42,25 @@ type API struct {
 	// (user settings, chats) with a 503.
 	DB    *sql.DB
 	Users *store.UserStore
+	// Admins may replace the server settings defaults
+	// ($DEEPTHOUGHT_ADMIN_USERS, comma-separated login names). Empty means
+	// nobody can: the defaults layer is then read-only over the API.
+	Admins map[string]bool
+}
+
+// passwordMatches compares in constant time (hashing first so the length of
+// the configured password is not observable either).
+func (a *API) passwordMatches(got string) bool {
+	want := sha256.Sum256([]byte(a.Password))
+	have := sha256.Sum256([]byte(got))
+	return subtle.ConstantTimeCompare(want[:], have[:]) == 1
+}
+
+// internalError logs the real cause and answers a generic 500, so database
+// and filesystem details never reach clients.
+func internalError(w http.ResponseWriter, r *http.Request, err error) {
+	log.Printf("%s %s: %v", r.Method, r.URL.Path, err)
+	writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "internal server error"})
 }
 
 // NewMux builds the full route table.
@@ -118,20 +140,20 @@ func (a *API) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request"})
 		return
 	}
-	if req.User == "" || req.Password != a.Password {
+	if req.User == "" || !a.passwordMatches(req.Password) {
 		writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "invalid user or password"})
 		return
 	}
 	token := a.Sessions.Login(req.User)
 	if token == "" {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "session issue failed"})
+		internalError(w, r, errors.New("session token generation failed"))
 		return
 	}
 	// Record the login (first login creates the user row — the roving
 	// settings and chats key off this identity).
 	if a.Users != nil {
 		if err := a.Users.UpsertLogin(sanitizeUserID(req.User), req.User); err != nil {
-			writeJSON(w, http.StatusInternalServerError, map[string]any{"error": "user record: " + err.Error()})
+			internalError(w, r, fmt.Errorf("user record: %w", err))
 			return
 		}
 	}
@@ -153,7 +175,7 @@ func (a *API) getUserSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, got)
@@ -179,13 +201,17 @@ func (a *API) putUserSettings(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "body must be {settings, revision}"})
 		return
 	}
+	if err := rejectCredentialKeys("", req.Settings); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
 	rev, err := a.Users.SetSettings(sanitizeUserID(SessionUser(r)), req.Settings, req.Revision)
 	if errors.Is(err, store.ErrSettingsRevision) {
 		writeJSON(w, http.StatusConflict, map[string]any{"error": "settings changed on the server; pull before push"})
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "revision": rev})
@@ -200,7 +226,7 @@ func (a *API) listChats(w http.ResponseWriter, r *http.Request) {
 	}
 	sums, err := store.ListCollectives()
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, sums)
@@ -219,7 +245,7 @@ func (a *API) getChat(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, coll)
@@ -228,7 +254,7 @@ func (a *API) getChat(w http.ResponseWriter, r *http.Request) {
 // putChat upserts a full collective graph (per-turn coarse sync; the
 // app-generated IDs make this idempotent).
 func (a *API) putChat(w http.ResponseWriter, r *http.Request) {
-	store, err := a.userStore(r)
+	chats, err := a.userStore(r)
 	if err != nil {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 		return
@@ -250,8 +276,12 @@ func (a *API) putChat(w http.ResponseWriter, r *http.Request) {
 	if coll.ID == "" {
 		coll.ID = r.PathValue("id")
 	}
-	if err := store.SaveCollective(&coll); err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+	if err := chats.SaveCollective(&coll); err != nil {
+		if errors.Is(err, store.ErrForeignID) {
+			writeJSON(w, http.StatusConflict, map[string]any{"error": "chat contains ids owned by another account"})
+			return
+		}
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "id": coll.ID})
@@ -271,14 +301,19 @@ func (a *API) crons(w http.ResponseWriter, r *http.Request) {
 func (a *API) getDefaults(w http.ResponseWriter, r *http.Request) {
 	defaults, err := LoadDefaults(a.DataDir)
 	if err != nil {
-		writeJSON(w, http.StatusInternalServerError, map[string]any{"error": err.Error()})
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, defaults)
 }
 
-// putDefaults replaces the server settings layer (credential keys rejected).
+// putDefaults replaces the server settings layer (admins only; credential
+// values rejected).
 func (a *API) putDefaults(w http.ResponseWriter, r *http.Request) {
+	if !a.Admins[SessionUser(r)] {
+		writeJSON(w, http.StatusForbidden, map[string]any{"error": "only server admins can change the settings defaults"})
+		return
+	}
 	body, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
 	if err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request"})
@@ -289,8 +324,12 @@ func (a *API) putDefaults(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "body must be a JSON object"})
 		return
 	}
-	if err := SaveDefaults(a.DataDir, defaults); err != nil {
+	if err := rejectCredentialKeys("", defaults); err != nil {
 		writeJSON(w, http.StatusBadRequest, map[string]any{"error": err.Error()})
+		return
+	}
+	if err := SaveDefaults(a.DataDir, defaults); err != nil {
+		internalError(w, r, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"status": "saved"})

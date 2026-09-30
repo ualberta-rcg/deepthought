@@ -125,6 +125,8 @@ type ResultView struct {
 	Summaries SummarySet
 }
 
+// ProbeStatus is serialized as its integer value, so the order below must be
+// identical to history.ProbeStatus in the CLI (see testdata/golden_collective.json).
 type ProbeStatus int
 
 // String names the probe lifecycle state (matches the client's labels).
@@ -132,12 +134,14 @@ func (s ProbeStatus) String() string {
 	switch s {
 	case ProbePending:
 		return "pending"
-	case ProbeApproved:
-		return "approved"
+	case ProbeAllowed:
+		return "allowed"
 	case ProbeRunning:
 		return "running"
 	case ProbeCompleted:
 		return "completed"
+	case ProbeDenied:
+		return "denied"
 	case ProbeFailed:
 		return "failed"
 	}
@@ -146,9 +150,10 @@ func (s ProbeStatus) String() string {
 
 const (
 	ProbePending ProbeStatus = iota
-	ProbeApproved
+	ProbeAllowed
 	ProbeRunning
 	ProbeCompleted
+	ProbeDenied
 	ProbeFailed
 )
 
@@ -243,6 +248,7 @@ type Collective struct {
 	SystemPrompt string
 	Title        string
 	MaxCycles    int
+	Cycles       int
 	Incursions   []*Incursion
 }
 
