@@ -60,3 +60,12 @@ short every card shrinks to its minimum first, then cards drop in a fixed
 order: Slurm, then jobs, then host. Session and Alerts stay. All data comes
 from the background pollers; rendering never probes. Focusing the sidebar is
 not implemented yet.
+
+## Status
+
+Every section is a kit card (`Section.Card`): title and summary in the top
+border, rows with one cell of padding, the plain-language note wrapped to the
+card, and the data source (`→ sinfo · squeue`) as the footnote. At an inner
+width of 116+ (a 120-column terminal) the cards flow into two columns, each
+card going to the shorter column. The page scrolls as one viewport; the clock
+lives in the title so ticks never move the scroll.

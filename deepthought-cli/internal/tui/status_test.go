@@ -4,7 +4,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/charmbracelet/x/ansi"
+
 	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tui/kit"
 )
 
 // statusPage renders a StatusModel on a tall terminal so every section fits
@@ -58,6 +61,45 @@ func TestStatusAdaptiveSections(t *testing.T) {
 	for _, absent := range []string{"Fairshare", "Filesystem capacity"} {
 		if strings.Contains(slimView, absent) {
 			t.Errorf("slim slurm page should not show %q:\n%s", absent, slimView)
+		}
+	}
+}
+
+func TestStatusCardsFitAndFlowIntoColumns(t *testing.T) {
+	snap := testSnapshot()
+	env := EnvInfo{Slurm: true, Host: "login1", User: "rahimk"}
+	for _, w := range []int{60, 80, 120, 160} {
+		m := NewStatusModel(StatusInputs{Store: &fakeStore{}, Env: env}).SetCluster(snap).Resize(w, 200)
+		view := m.View()
+		twoCols := false
+		for _, ln := range strings.Split(view, "\n") {
+			if got := ansi.StringWidth(ln); got > w {
+				t.Fatalf("width %d: line is %d cells: %q", w, got, ansi.Strip(ln))
+			}
+			if strings.Count(ansi.Strip(ln), "╭") == 2 {
+				twoCols = true
+			}
+		}
+		if want := w-4 >= statusTwoColumnW; twoCols != want {
+			t.Errorf("width %d: two columns = %v, want %v", w, twoCols, want)
+		}
+		for _, card := range []string{"Session", "Host", "Your jobs", "Fairshare"} {
+			if !strings.Contains(view, " "+card+" ") {
+				t.Errorf("width %d: missing card %q", w, card)
+			}
+		}
+	}
+}
+
+func TestStatusASCII(t *testing.T) {
+	kit.SetASCII(true)
+	defer kit.SetASCII(false)
+	snap := testSnapshot()
+	m := NewStatusModel(StatusInputs{Store: &fakeStore{}, Env: EnvInfo{Slurm: true, Host: "login1"}}).SetCluster(snap).Resize(100, 200)
+	body := ansi.Strip(m.vp.View())
+	for _, glyph := range []string{"╭", "│", "✓", "✗", "→"} {
+		if strings.Contains(body, glyph) {
+			t.Errorf("ASCII status body contains %q", glyph)
 		}
 	}
 }

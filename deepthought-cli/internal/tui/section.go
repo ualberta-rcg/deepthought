@@ -2,8 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"strings"
 
 	"charm.land/lipgloss/v2"
+	"github.com/charmbracelet/x/ansi"
+
+	"deepthought-cli/internal/tui/kit"
 )
 
 // Section is one block on the Status page: a header, an aligned body, an optional
@@ -37,6 +41,27 @@ func (s Section) Render() []string {
 	return out
 }
 
+// Card renders the section as a kit panel exactly w wide: title and summary
+// in the border, body rows with one cell of padding, the note wrapped to the
+// card, and the source as the footnote.
+func (s Section) Card(w int) string {
+	inner := max(1, w-3)
+	body := make([]string, 0, len(s.Rows)+2)
+	for _, r := range s.Rows {
+		body = append(body, " "+strings.TrimPrefix(r, "  "))
+	}
+	if s.Note != "" {
+		for _, ln := range strings.Split(ansi.Wordwrap(strings.TrimSpace(s.Note), inner, ""), "\n") {
+			body = append(body, " "+dimNote(ln))
+		}
+	}
+	foot := ""
+	if s.Source != "" {
+		foot = " " + kit.G().Arrow + " " + s.Source
+	}
+	return kit.Panel{Title: s.Title, Status: s.Extra, Body: body, Footnote: foot}.Render(w, 0)
+}
+
 // statusLabelW is the fixed width the plain sections' label column is padded to,
 // so the value after each "label  value" row lines up (e.g. model/effort/health).
 const statusLabelW = 9
@@ -45,9 +70,9 @@ const statusLabelW = 9
 // "✓ reachable" or red "✗ <reason>".
 func healthChip(ok bool, reason string) string {
 	if ok {
-		return lipgloss.NewStyle().Foreground(colSuccess).Render("✓ reachable")
+		return lipgloss.NewStyle().Foreground(colSuccess).Render(kit.G().Check + " reachable")
 	}
-	return lipgloss.NewStyle().Foreground(colDanger).Render("✗ " + orDefault(reason, "unavailable"))
+	return lipgloss.NewStyle().Foreground(colDanger).Render(kit.G().Cross + " " + orDefault(reason, "unavailable"))
 }
 
 // stateChip renders a provider's cached reachability: ok → green, degraded →
@@ -67,9 +92,9 @@ func stateChip(state string) string {
 // row: green when present, red when not.
 func detChip(b bool) string {
 	if b {
-		return lipgloss.NewStyle().Foreground(colSuccess).Render("✓")
+		return lipgloss.NewStyle().Foreground(colSuccess).Render(kit.G().Check)
 	}
-	return lipgloss.NewStyle().Foreground(colDanger).Render("✗")
+	return lipgloss.NewStyle().Foreground(colDanger).Render(kit.G().Cross)
 }
 
 // contextMeter renders the Usage section's context-usage meter: a bar + "NN%

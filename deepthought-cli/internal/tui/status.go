@@ -15,6 +15,7 @@ import (
 	"deepthought-cli/internal/history"
 	"deepthought-cli/internal/host"
 	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tui/kit"
 	"deepthought-cli/internal/unimatrix"
 )
 
@@ -155,20 +156,42 @@ func (m StatusModel) SetSessionEstimate(estIn, estOut int) StatusModel {
 	return m
 }
 
+// statusTwoColumnW is the inner width at which the cards flow into two columns.
+const statusTwoColumnW = 116
+
 // rebuild renders the page body into the viewport. It runs only when page
 // data changes (never per frame), and SetContent keeps the scroll offset.
+// Wide terminals get two columns; each card goes to the shorter one.
 func (m *StatusModel) rebuild() {
-	var rows []string
+	w := m.vp.Width()
+	if w < 20 {
+		return
+	}
+	colW, cols := w, 1
+	if w >= statusTwoColumnW {
+		colW, cols = (w-1)/2, 2
+	}
+	columns := make([][]string, cols)
+	heights := make([]int, cols)
 	for _, sec := range statusSections() {
 		if !sec.show(*m) {
 			continue
 		}
-		if len(rows) > 0 {
-			rows = append(rows, "")
+		card := sec.section(*m).Card(colW)
+		c := 0
+		if cols == 2 && heights[1] < heights[0] {
+			c = 1
 		}
-		rows = append(rows, trimTrailingBlanks(sec.rows(*m))...)
+		columns[c] = append(columns[c], card)
+		heights[c] += lipgloss.Height(card)
 	}
-	m.vp.SetContent(lipgloss.JoinVertical(lipgloss.Left, rows...))
+	if cols == 1 {
+		m.vp.SetContent(lipgloss.JoinVertical(lipgloss.Left, columns[0]...))
+		return
+	}
+	left := lipgloss.JoinVertical(lipgloss.Left, columns[0]...)
+	right := lipgloss.JoinVertical(lipgloss.Left, columns[1]...)
+	m.vp.SetContent(lipgloss.JoinHorizontal(lipgloss.Top, lipgloss.NewStyle().Width(colW+1).Render(left), right))
 }
 
 func (m StatusModel) Update(msg tea.Msg) (StatusModel, tea.Cmd) {
@@ -195,11 +218,10 @@ type RefreshClusterMsg struct{}
 
 // statusSection is one detection-gated block on the Status page. The page is the
 // ordered set of these — add a new section by appending one entry to
-// statusSections; the page grows, no new screen. Each rows func renders its own
-// header + body.
+// statusSections; the page grows, no new screen. Each renders as one card.
 type statusSection struct {
-	show func(StatusModel) bool
-	rows func(StatusModel) []string
+	show    func(StatusModel) bool
+	section func(StatusModel) Section
 }
 
 func always(m StatusModel) bool  { return true }
@@ -217,8 +239,8 @@ func statusSections() []statusSection {
 		{slurmUp, StatusModel.slurmJobsRows},
 		{func(m StatusModel) bool { return slurmUp(m) && len(m.cluster.FairshareRows) > 0 }, StatusModel.slurmFairshareRows},
 		{func(m StatusModel) bool { return len(m.cluster.StorageRows) > 0 }, StatusModel.slurmDiskRows},
-		{func(m StatusModel) bool { return len(m.cluster.Storage) > 0 }, func(m StatusModel) []string {
-			return Section{Title: "Personal quota report", Rows: m.cluster.Storage, Source: "diskusage_report (cached up to 15 minutes)"}.Render()
+		{func(m StatusModel) bool { return len(m.cluster.Storage) > 0 }, func(m StatusModel) Section {
+			return Section{Title: "Personal quota report", Rows: m.cluster.Storage, Source: "diskusage_report (cached up to 15 minutes)"}
 		}},
 	}
 }
@@ -227,12 +249,12 @@ func (m StatusModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
-	keybar := KeyBar([]KeyHint{
-		{Key: "↑/↓", Label: "scroll"},
-		{Key: "PgUp/PgDn", Label: "page"},
-		{Key: "r", Label: "refresh"},
-		{Key: "esc", Label: "back"},
-	})
+	keybar := kit.KeyBar([]kit.Key{
+		{Key: "↑↓", Help: "scroll"},
+		{Key: "PgUp/PgDn", Help: "page"},
+		{Key: kit.Mnemonics.Refresh, Help: "refresh"},
+		{Key: "esc", Help: "back"},
+	}, m.width-4)
 	title := screenTitle("Status")
 	if !m.clock.IsZero() {
 		title += styleSettingsFoot.Render("  " + m.clock.Format("2006-01-02 15:04:05 MST"))
@@ -242,12 +264,12 @@ func (m StatusModel) View() string {
 
 // --- section renderers ------------------------------------------------------
 
-func (m StatusModel) sessionRows() []string {
+func (m StatusModel) sessionRows() Section {
 	label, provider, caps := "—", "", ""
 	if m.store == nil {
 		return Section{Title: "Session", Rows: []string{
 			kv("model", "—"), kv("mode", orDefault(m.status.Mode, "—")),
-		}}.Render()
+		}}
 	}
 	snap := m.store.Snapshot()
 	if mm, ok := activeModel(snap); ok {
@@ -266,12 +288,12 @@ func (m StatusModel) sessionRows() []string {
 			kv("server", orDefault(m.env.Server, "standalone")),
 			kv("version", orDefault(m.env.Version, "development build")),
 		},
-	}.Render()
+	}
 }
 
 // hostRows: the machine you're on — the host descriptor rendered (this box
 // may not be a login node; it's just the host).
-func (m StatusModel) hostRows() []string {
+func (m StatusModel) hostRows() Section {
 	e := m.env
 	rows := []string{
 		kv("host", orDefault(e.ShortName, orDefault(e.Host, "?"))),
@@ -301,16 +323,16 @@ func (m StatusModel) hostRows() []string {
 			detChip(e.CVMFS), detChip(e.Module), detChip(e.Slurm))),
 	)
 	rows = append(rows, observationRows(e)...)
-	return Section{Title: "Host", Rows: rows}.Render()
+	return Section{Title: "Host", Rows: rows}
 }
 
-func (m StatusModel) providersRows() []string {
+func (m StatusModel) providersRows() Section {
 	var body []string
 	if m.providers != nil {
 		for _, p := range m.providers() {
-			key := "✗"
+			key := kit.G().Cross
 			if p.KeySet {
-				key = "✓"
+				key = kit.G().Check
 			}
 			dot := styleSettingsFoot.Render("·")
 			body = append(body, fmt.Sprintf("  %s %s %s key%s %s tags[%s]",
@@ -320,10 +342,10 @@ func (m StatusModel) providersRows() []string {
 	if len(body) == 0 {
 		body = []string{emptyRow("providers")}
 	}
-	return Section{Title: "Providers", Rows: body}.Render()
+	return Section{Title: "Providers", Rows: body}
 }
 
-func (m StatusModel) modelsRows() []string {
+func (m StatusModel) modelsRows() Section {
 	var body []string
 	if m.store != nil {
 		usage := m.usageMap()
@@ -342,12 +364,12 @@ func (m StatusModel) modelsRows() []string {
 	if len(body) == 0 {
 		body = []string{emptyRow("models")}
 	}
-	return Section{Title: "Models", Rows: body}.Render()
+	return Section{Title: "Models", Rows: body}
 }
 
 // usageRows: this-session token use (with a context-usage meter) + per-model
 // lifetime totals (ex-F8 Stats).
-func (m StatusModel) usageRows() []string {
+func (m StatusModel) usageRows() Section {
 	body := []string{
 		kv("context", contextMeter(m.lastContext, m.activeContextWindow())),
 		kv("input", estimatedTokens(m.sessionIn, m.sessionEstIn)),
@@ -374,24 +396,24 @@ func (m StatusModel) usageRows() []string {
 					formatTokens(c.InputTokens), formatTokens(c.OutputTokens)))))
 		}
 	}
-	return Section{Title: "Usage", Extra: "this session", Rows: body}.Render()
+	return Section{Title: "Usage", Extra: "this session", Rows: body}
 }
 
-func (m StatusModel) toolsRows() []string {
+func (m StatusModel) toolsRows() Section {
 	body := []string{"  " + styleSettingsVal.Render(strings.Join(m.tools, " · "))}
 	if len(m.tools) == 0 {
 		body = []string{emptyRow("tools")}
 	}
-	return Section{Title: "Tools", Rows: body}.Render()
+	return Section{Title: "Tools", Rows: body}
 }
 
 // The Slurm sections (ex-F10 Cluster screen) — shown only when Slurm is detected
 // and the snapshot has gathered. They reuse the vulcan-status-style block
 // renderers in cluster.go.
-func (m StatusModel) slurmClusterRows() []string   { return renderClusterBlock(m.cluster) }
-func (m StatusModel) slurmJobsRows() []string      { return renderJobsBlock(m.cluster) }
-func (m StatusModel) slurmFairshareRows() []string { return renderFairshareBlock(m.cluster) }
-func (m StatusModel) slurmDiskRows() []string      { return renderStorageBlock(m.cluster) }
+func (m StatusModel) slurmClusterRows() Section   { return clusterSection(m.cluster) }
+func (m StatusModel) slurmJobsRows() Section      { return jobsSection(m.cluster) }
+func (m StatusModel) slurmFairshareRows() Section { return fairshareSection(m.cluster) }
+func (m StatusModel) slurmDiskRows() Section      { return storageSection(m.cluster) }
 
 // --- helpers ----------------------------------------------------------------
 
@@ -411,15 +433,6 @@ func estSessionCost(in, out int) string {
 		return fmt.Sprintf("~$%.4f", usd)
 	}
 	return fmt.Sprintf("~$%.2f", usd)
-}
-
-// trimTrailingBlanks removes trailing empty rows (block renderers add one for
-// their own spacing; the page adds its own separator between sections).
-func trimTrailingBlanks(rows []string) []string {
-	for len(rows) > 0 && rows[len(rows)-1] == "" {
-		rows = rows[:len(rows)-1]
-	}
-	return rows
 }
 
 // activeModel resolves the running (agentic, falling back to chat) model from a

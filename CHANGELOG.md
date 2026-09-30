@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-09-30 · deepthought-cli — Status page on the kit
+- Status sections render as kit cards (`Section.Card`): title + summary in the border, padded rows, the note wrapped inside the card, the source as a `→` footnote. At 120+ columns the cards flow into two columns (each card to the shorter column). The key bar is `kit.KeyBar` (packed, `…` when cut) and the ✓/✗ chips come from `kit.G()`, so `--ascii` covers the whole page.
+- The cluster renderers now build `Section` values (`clusterSection`, `jobsSection`, `fairshareSection`, `storageSection`); the old `render*Block` names remain as thin wrappers.
+- Files: `internal/tui/{status.go, section.go, cluster.go, status_test.go, section_test.go}`, `docs/TUI.md`.
+- Verification: gofmt and `git diff --check` locally; new fixtures at 60/80/120/160 columns (no line wider than the terminal, two columns exactly at ≥120, every card present) and ASCII (no box, check, cross or arrow glyphs). Compile and tests run in GitHub Actions.
+
 ## 2026-09-30 · deepthought-cli — server keys and sessions lists, bind-to-existing, actionable no-key error
 - Server synchronization gains **Provider keys on server** (masked: name · URL, kind, fingerprint tail, updated time; select to delete the server copy after a confirm) and **Sessions on this account** (this client marked, others revocable). Both carry the shared-password note and treat 404/501 as "not supported".
 - Discovery review offers **Use this key for X** when a configured provider has the same base URL (trailing slash ignored) and wire, binding the found key instead of adding "X 2".

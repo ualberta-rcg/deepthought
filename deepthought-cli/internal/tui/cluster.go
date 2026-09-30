@@ -6,6 +6,7 @@ import (
 	"charm.land/lipgloss/v2"
 
 	"deepthought-cli/internal/slurm"
+	"deepthought-cli/internal/tui/kit"
 )
 
 // clusterBarW is the bar width for the Cluster sections (tuned for a ≥80-col
@@ -14,11 +15,11 @@ import (
 // Slurm being detected. They read the cached snapshot, so nothing blocks.
 const clusterBarW = 18
 
-// renderClusterBlock: overall cluster load — nodes/queue, CPUs, memory, GPUs
+// clusterSection: overall cluster load — nodes/queue, CPUs, memory, GPUs
 // (incl. avail·usable).
-func renderClusterBlock(c slurm.ClusterSnapshot) []string {
+func clusterSection(c slurm.ClusterSnapshot) Section {
 	if c.Err != nil && c.NodesTotal == 0 {
-		return Section{Title: "Cluster", Rows: []string{styleError.Render("  ✗ " + c.Err.Error())}}.Render()
+		return Section{Title: "Cluster", Rows: []string{styleError.Render("  " + kit.G().Cross + " " + c.Err.Error())}}
 	}
 	total := c.NodesTotal
 	up := c.NodesUp
@@ -72,11 +73,11 @@ func renderClusterBlock(c slurm.ClusterSnapshot) []string {
 		Rows:   body,
 		Note:   "Cluster allocations, not measured utilization or a guarantee that a job can start.",
 		Source: "sinfo · squeue (aggregate states only)",
-	}.Render()
+	}
 }
 
-// renderJobsBlock: the user's own running/pending jobs, with hold reasons.
-func renderJobsBlock(c slurm.ClusterSnapshot) []string {
+// jobsSection: the user's own running/pending jobs, with hold reasons.
+func jobsSection(c slurm.ClusterSnapshot) Section {
 	nr, np := 0, 0
 	for _, j := range c.YourJobs {
 		switch j.State {
@@ -114,15 +115,15 @@ func renderJobsBlock(c slurm.ClusterSnapshot) []string {
 		Extra:  fmt.Sprintf("%d running · %d pending", nr, np),
 		Rows:   body,
 		Source: "squeue --me",
-	}.Render()
+	}
 }
 
-// renderFairshareBlock: per-account fairshare standing + LevelFS.
-func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
+// fairshareSection: per-account fairshare standing + LevelFS.
+func fairshareSection(c slurm.ClusterSnapshot) Section {
 	body := []string{}
 	if len(c.FairshareRows) == 0 {
 		body = append(body, "  "+emptyRow("fairshare data"))
-		return Section{Title: "Fairshare", Rows: body}.Render()
+		return Section{Title: "Fairshare", Rows: body}
 	}
 	for _, r := range c.FairshareRows {
 		line := fmt.Sprintf("  %s  %s  %.2f",
@@ -138,13 +139,13 @@ func renderFairshareBlock(c slurm.ClusterSnapshot) []string {
 		Rows:   body,
 		Note:   "Fairshare is one scheduling factor, not a queue position or predicted start time.",
 		Source: "sshare",
-	}.Render()
+	}
 }
 
-// renderStorageBlock: how full the user's directories are (home/scratch/projects).
-func renderStorageBlock(c slurm.ClusterSnapshot) []string {
+// storageSection: how full the user's directories are (home/scratch/projects).
+func storageSection(c slurm.ClusterSnapshot) Section {
 	if len(c.StorageRows) == 0 {
-		return Section{Title: "Filesystem capacity", Rows: []string{"  " + emptyRow("storage data")}}.Render()
+		return Section{Title: "Filesystem capacity", Rows: []string{"  " + emptyRow("storage data")}}
 	}
 	body := []string{}
 	for _, r := range c.StorageRows {
@@ -156,8 +157,13 @@ func renderStorageBlock(c slurm.ClusterSnapshot) []string {
 		Rows:   body,
 		Note:   "Mount-wide capacity, not your quota. Scratch is not backed up; idle files rotate out.",
 		Source: "df",
-	}.Render()
+	}
 }
+
+func renderClusterBlock(c slurm.ClusterSnapshot) []string   { return clusterSection(c).Render() }
+func renderJobsBlock(c slurm.ClusterSnapshot) []string      { return jobsSection(c).Render() }
+func renderFairshareBlock(c slurm.ClusterSnapshot) []string { return fairshareSection(c).Render() }
+func renderStorageBlock(c slurm.ClusterSnapshot) []string   { return storageSection(c).Render() }
 
 // frac01 clamps num/den to a 0–1 fraction (0 when den is 0).
 func frac01(num, den float64) float64 {

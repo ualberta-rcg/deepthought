@@ -90,7 +90,7 @@ func TestUsageContextMeter(t *testing.T) {
 	}
 	m := NewStatusModel(StatusInputs{Store: &fakeStore{saved: &file}})
 	m = m.SetSession(0, 0, 128000, 0, 0)
-	got := strings.Join(m.usageRows(), "\n")
+	got := strings.Join(m.usageRows().Render(), "\n")
 	if !strings.Contains(got, "▓") || !strings.Contains(got, "310k") {
 		t.Errorf("Usage context meter missing bar/window: %q", got)
 	}
