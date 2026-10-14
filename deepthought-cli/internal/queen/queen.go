@@ -92,7 +92,7 @@ var (
 	OpAuto = OpMode{
 		Name: "auto",
 		Map: map[Category]DecisionName{
-			CatRead: DecAllow, CatWrite: DecAllow, CatRun: DecAllow, CatTool: DecAllow, CatSudo: DecAllow,
+			CatRead: DecAllow, CatWrite: DecAllow, CatRun: DecAllow, CatTool: DecAllow, CatSudo: DecAsk,
 		},
 	}
 )
