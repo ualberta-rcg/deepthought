@@ -122,6 +122,7 @@ func (inc *Incursion) AddTransmission(text string, raw []babel.ToolCall) (*Trans
 				ParentID:     tx.ID,
 				Index:        len(tx.Probes),
 				CreatedAt:    time.Now(),
+				Extra:        tc.ExtraContent,
 			},
 			WireID:       tc.ID,
 			Name:         tc.Function.Name,

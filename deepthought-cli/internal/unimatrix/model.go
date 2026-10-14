@@ -102,13 +102,18 @@ func (m Model) Agentic() bool { return m.Can(CapChat) && m.Can(CapTools) }
 // EffectiveReasoningStyle returns the explicit style or infers a conservative
 // style from the wire model ID.
 func (m Model) EffectiveReasoningStyle() string {
-	if m.ReasoningStyle != "" {
+	if m.ReasoningStyle != "" && (m.ReasoningStyle != "none" || !m.Can(CapReasoning)) {
 		return m.ReasoningStyle
 	}
-	id := strings.ToLower(m.ID)
+	id := strings.ToLower(m.RequestID())
+	if id == "" {
+		id = strings.ToLower(m.ID)
+	}
 	switch {
 	case strings.Contains(id, "gpt-oss"):
 		return "gptoss"
+	case strings.Contains(id, "gemini"):
+		return "gemini"
 	case strings.Contains(id, "qwen"), strings.Contains(id, "qwq"):
 		return "qwen"
 	case strings.Contains(id, "gemma-4"):

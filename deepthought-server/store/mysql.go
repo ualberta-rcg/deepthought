@@ -58,6 +58,7 @@ func OpenMySQL(dsn string) (*sql.DB, error) {
 			return nil, fmt.Errorf("mysql schema: %w", err)
 		}
 	}
+	ensureUserColumns(db)
 	if err := db.Ping(); err != nil {
 		_ = db.Close()
 		return nil, err
@@ -74,6 +75,8 @@ var mysqlSchema = []string{
 	`CREATE TABLE IF NOT EXISTS users (
 	  id VARCHAR(64) NOT NULL PRIMARY KEY,
 	  name VARCHAR(128) NOT NULL,
+	  email VARCHAR(255) NOT NULL DEFAULT '',
+	  oidc_sub VARCHAR(255) NOT NULL DEFAULT '',
 	  created_at VARCHAR(40) NOT NULL,
 	  last_login_at VARCHAR(40) NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
@@ -531,15 +534,47 @@ type UserStore struct{ db *sql.DB }
 
 func NewUserStore(db *sql.DB) *UserStore { return &UserStore{db: db} }
 
+// UserRecord holds the stored identity for one user.
+type UserRecord struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Email       string `json:"email,omitempty"`
+	OIDCSub     string `json:"oidc_sub,omitempty"`
+	CreatedAt   string `json:"created_at"`
+	LastLoginAt string `json:"last_login_at"`
+}
+
+func ensureUserColumns(db *sql.DB) {
+	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN oidc_sub VARCHAR(255) NOT NULL DEFAULT ''`)
+}
+
 // UpsertLogin records a user (first login creates) and stamps last_login_at.
 func (u *UserStore) UpsertLogin(userID, name string) error {
+	return u.UpsertLoginWithIdentity(userID, name, "", "")
+}
+
+// UpsertLoginWithIdentity records a user and optionally updates their OIDC email/subject.
+func (u *UserStore) UpsertLoginWithIdentity(userID, name, email, oidcSub string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := u.db.Exec(`
-INSERT INTO users(id,name,created_at,last_login_at) VALUES(?,?,?,?)
+INSERT INTO users(id,name,email,oidc_sub,created_at,last_login_at) VALUES(?,?,?,?,?,?)
 AS new
-ON DUPLICATE KEY UPDATE name=new.name, last_login_at=new.last_login_at`,
-		userID, name, now, now)
+ON DUPLICATE KEY UPDATE
+ name=new.name,
+ email=IF(new.email != '', new.email, users.email),
+ oidc_sub=IF(new.oidc_sub != '', new.oidc_sub, users.oidc_sub),
+ last_login_at=new.last_login_at`,
+		userID, name, email, oidcSub, now, now)
 	return err
+}
+
+// GetUser fetches a user's stored identity record.
+func (u *UserStore) GetUser(userID string) (UserRecord, error) {
+	var r UserRecord
+	err := u.db.QueryRow(`SELECT id, name, email, oidc_sub, created_at, last_login_at FROM users WHERE id=?`, userID).
+		Scan(&r.ID, &r.Name, &r.Email, &r.OIDCSub, &r.CreatedAt, &r.LastLoginAt)
+	return r, err
 }
 
 // UserSettings is one user's roving settings document with its revision.

@@ -23,6 +23,7 @@ import (
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/credential"
 	"deepthought-cli/internal/history"
+	hostpkg "deepthought-cli/internal/host"
 	"deepthought-cli/internal/keybindings"
 	"deepthought-cli/internal/queen"
 	"deepthought-cli/internal/slurm"
@@ -243,6 +244,7 @@ func gatherEnv() tui.EnvInfo {
 		Shell:  os.Getenv("SHELL"),
 		Host:   host,
 		User:   user,
+		Email:  hostpkg.OODEmail(),
 		TZ:     tz,
 
 		ShortName: short,

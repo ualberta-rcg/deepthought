@@ -1734,7 +1734,7 @@ func modelFieldDefs(ref string, provNames []string) []fieldDef {
 				f.Models[i].Context = n
 				return nil
 			}},
-		{"reasoning_style", fEnum, false, []string{"none", "", "gptoss", "qwen", "gemma4", "deepseek", "anthropic"},
+		{"reasoning_style", fEnum, false, []string{"none", "", "gemini", "gptoss", "qwen", "gemma4", "deepseek", "anthropic"},
 			func(f *config.File) string {
 				if i := find(f); i >= 0 {
 					return f.Models[i].ReasoningStyle

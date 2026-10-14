@@ -85,3 +85,23 @@ func TestFailureTaxonomy(t *testing.T) {
 		t.Fatalf("class=%s", class)
 	}
 }
+
+func TestParseFairshareRowsFourAndFiveColumnFormats(t *testing.T) {
+	raw := strings.Join([]string{
+		"  aip-rahimk|rahimk|0.567300|1.000000",
+		"  rrg-other-ad|rahimk|0.097723|0.500000",
+		"  debug|rahimk|0.820000|inf",
+		"|legacy-acct|rahimk|0.450000|1.500000|",
+	}, "\n")
+	rows := parseFairshareRows(raw, "rahimk")
+	if len(rows) != 4 {
+		t.Fatalf("got %d rows, want 4: %+v", len(rows), rows)
+	}
+	if rows[0].Account != "aip-rahimk" || rows[0].Fairshare != 0.5673 || rows[0].LevelFS != "1.000000" {
+		t.Fatalf("row[0] = %+v", rows[0])
+	}
+	best, ok := BestAccount(rows)
+	if !ok || best.Account != "debug" || best.Fairshare != 0.82 {
+		t.Fatalf("BestAccount = %+v, ok=%v", best, ok)
+	}
+}

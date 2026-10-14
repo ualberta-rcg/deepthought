@@ -156,6 +156,7 @@ func (p *Probe) ToBabel() babel.ToolCall {
 			Name:      p.Name,
 			Arguments: p.ArgumentsRaw,
 		},
+		ExtraContent: p.Extra,
 	}
 }
 

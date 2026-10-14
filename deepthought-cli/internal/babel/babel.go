@@ -37,10 +37,13 @@ type Message struct {
 
 // ToolCall is one function call emitted by the model. On the request side it appears
 // in an assistant message; on the stream side it is reassembled from delta fragments.
+// ExtraContent preserves provider-specific metadata (e.g. Google's
+// extra_content.google.thought_signature required on subsequent Gemini tool turns).
 type ToolCall struct {
-	ID       string       `json:"id"` // server-assigned id, e.g. "call_..."
-	Type     string       `json:"type"`
-	Function FunctionCall `json:"function"`
+	ID           string          `json:"id"` // server-assigned id, e.g. "call_..."
+	Type         string          `json:"type"`
+	Function     FunctionCall    `json:"function"`
+	ExtraContent json.RawMessage `json:"extra_content,omitempty"`
 }
 
 // FunctionCall carries the tool name and its arguments as a JSON string (the model
@@ -185,7 +188,7 @@ func wireBody(req ChatRequest, stream bool) wireRequest {
 		MaxTokens:   req.MaxTokens,
 		Temperature: req.Temperature,
 		Stream:      stream,
-		Tools:       req.Tools,
+		Tools:       sanitizeTools(req.Tools),
 	}
 	if stream {
 		// Ask the gateway to include token usage on the final SSE chunk. Servers
@@ -196,6 +199,45 @@ func wireBody(req ChatRequest, stream bool) wireRequest {
 	}
 	applyEffort(&w, req)
 	return w
+}
+
+// sanitizeTools removes nil or empty "required" entries from tool parameter
+// schemas so strict OpenAI-compatible gateways (e.g. Gemini's /v1beta/openai)
+// never reject `"required": null` with 400 INVALID_ARGUMENT.
+func sanitizeTools(in []ToolDef) []ToolDef {
+	if len(in) == 0 {
+		return nil
+	}
+	out := make([]ToolDef, len(in))
+	for i, td := range in {
+		out[i] = td
+		if td.Function.Parameters == nil {
+			continue
+		}
+		reqVal, hasReq := td.Function.Parameters["required"]
+		if !hasReq {
+			continue
+		}
+		drop := reqVal == nil
+		if !drop {
+			switch v := reqVal.(type) {
+			case []string:
+				drop = len(v) == 0
+			case []any:
+				drop = len(v) == 0
+			}
+		}
+		if drop {
+			cp := make(map[string]any, len(td.Function.Parameters))
+			for k, v := range td.Function.Parameters {
+				if k != "required" {
+					cp[k] = v
+				}
+			}
+			out[i].Function.Parameters = cp
+		}
+	}
+	return out
 }
 
 func applyEffort(w *wireRequest, req ChatRequest) {
@@ -226,6 +268,10 @@ func applyEffort(w *wireRequest, req ChatRequest) {
 	switch style {
 	case "gptoss":
 		w.ReasoningEffort = grade()
+	case "gemini", "openai":
+		if effort != EffortOff {
+			w.ReasoningEffort = grade()
+		}
 	case "qwen":
 		if effort == EffortOff {
 			kw(false)
@@ -460,10 +506,11 @@ type streamChunk struct {
 			Reasoning        string `json:"reasoning"`
 			ReasoningContent string `json:"reasoning_content"`
 			ToolCalls        []struct {
-				Index    int    `json:"index"`
-				ID       string `json:"id"`
-				Type     string `json:"type"`
-				Function struct {
+				Index        int             `json:"index"`
+				ID           string          `json:"id"`
+				Type         string          `json:"type"`
+				ExtraContent json.RawMessage `json:"extra_content,omitempty"`
+				Function     struct {
 					Name      string `json:"name"`
 					Arguments string `json:"arguments"`
 				} `json:"function"`
@@ -589,16 +636,37 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 			usage = ch.Usage.usage()
 		}
 		for _, tc := range d.ToolCalls {
-			slot, ok := byIndex[tc.Index]
+			idx := tc.Index
+			if tc.ID != "" {
+				// Some gateways (e.g. Google's Gemini OpenAI SSE stream) omit `index`
+				// on parallel tool_call chunks, causing every chunk to unmarshal with
+				// Index == 0 and a distinct ID. Match an existing slot by ID or allocate
+				// a fresh slot when Index is already occupied by a different call ID.
+				for existingIdx, existingSlot := range byIndex {
+					if existingSlot.call.ID == tc.ID {
+						idx = existingIdx
+						break
+					}
+				}
+				if existing, occupied := byIndex[idx]; occupied && existing.call.ID != "" && existing.call.ID != tc.ID {
+					for byIndex[idx] != nil {
+						idx++
+					}
+				}
+			}
+			slot, ok := byIndex[idx]
 			if !ok {
 				slot = &accCall{}
-				byIndex[tc.Index] = slot
+				byIndex[idx] = slot
 			}
 			if tc.ID != "" {
 				slot.call.ID = tc.ID
 			}
 			if tc.Type != "" {
 				slot.call.Type = tc.Type
+			}
+			if len(tc.ExtraContent) > 0 {
+				slot.call.ExtraContent = append(json.RawMessage(nil), tc.ExtraContent...)
 			}
 			if tc.Function.Name != "" {
 				slot.call.Function.Name = tc.Function.Name
@@ -622,7 +690,11 @@ func (c *Client) ChatStream(ctx context.Context, req ChatRequest, fn StreamFn) (
 
 func effortRejected(raw []byte) bool {
 	s := strings.ToLower(string(raw))
-	return strings.Contains(s, "reasoning") || strings.Contains(s, "thinking") || strings.Contains(s, "effort") || strings.Contains(s, "chat_template_kwargs")
+	return strings.Contains(s, "reasoning") ||
+		strings.Contains(s, "thinking") ||
+		strings.Contains(s, "effort") ||
+		strings.Contains(s, "chat_template_kwargs") ||
+		strings.Contains(s, "thinking_token_budget")
 }
 
 func extractThinkTags(content string) (text, reasoning string) {

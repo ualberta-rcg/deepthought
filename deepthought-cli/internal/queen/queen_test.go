@@ -92,3 +92,23 @@ func TestGateCloneIsolatesTaskGrants(t *testing.T) {
 		t.Errorf("cloned gate still holds parent task grant: got %v, want Ask", d)
 	}
 }
+
+func TestAutoModeAllowsNonDestructiveCompoundBash(t *testing.T) {
+	g := NewGateFromConfig("auto", Rules{}, nil)
+	for _, cmd := range []string{
+		"squeue -u $USER | head -n 5 && sshare -P",
+		"echo hello > /tmp/dt_test.txt; cat /tmp/dt_test.txt",
+	} {
+		if d := g.Decide(context.Background(), tools.NewBash(), map[string]any{"command": cmd}); d != Allow {
+			t.Errorf("auto mode compound bash %q = %v, want Allow", cmd, d)
+		}
+	}
+	// Compound command containing sudo must still Ask in auto mode.
+	if d := g.Decide(context.Background(), tools.NewBash(), map[string]any{"command": "echo hi && sudo whoami"}); d != Ask {
+		t.Errorf("auto mode compound sudo = %v, want Ask", d)
+	}
+	// Readable rule string for simple command without broadening scope.
+	if got := ruleString("bash", map[string]any{"command": "git status"}); got != "Bash(git status)" {
+		t.Errorf("ruleString(git status) = %q, want Bash(git status)", got)
+	}
+}

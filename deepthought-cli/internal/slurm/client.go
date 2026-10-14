@@ -72,14 +72,18 @@ func NewClient(runner Runner) *Client {
 }
 
 type Job struct {
-	Comment  string `json:"comment,omitempty"`
-	ID       string `json:"id"`
-	Name     string `json:"name,omitempty"`
-	State    string `json:"state,omitempty"`
-	Reason   string `json:"reason,omitempty"`
-	NodeList string `json:"node_list,omitempty"`
-	ExitCode string `json:"exit_code,omitempty"`
-	Elapsed  string `json:"elapsed,omitempty"`
+	Comment       string `json:"comment,omitempty"`
+	ID            string `json:"id"`
+	Name          string `json:"name,omitempty"`
+	State         string `json:"state,omitempty"`
+	Reason        string `json:"reason,omitempty"`
+	NodeList      string `json:"node_list,omitempty"`
+	ExitCode      string `json:"exit_code,omitempty"`
+	Elapsed       string `json:"elapsed,omitempty"`
+	MaxRSS        string `json:"max_rss,omitempty"`
+	ReqMem        string `json:"req_mem,omitempty"`
+	CPUEfficiency string `json:"cpu_efficiency,omitempty"`
+	EfficiencyTip string `json:"efficiency_tip,omitempty"`
 }
 
 func (c *Client) Queue(ctx context.Context, jobID string) ([]Job, error) {
@@ -129,18 +133,45 @@ func parseJobs(raw []byte) ([]Job, error) {
 	}
 	out := make([]Job, 0, len(payload.Jobs))
 	for _, value := range payload.Jobs {
-		out = append(out, Job{
-			Comment:  valueString(value, "comment"),
-			ID:       valueString(value, "job_id", "jobid", "id"),
-			Name:     valueString(value, "name", "job_name"),
-			State:    valueString(value, "job_state", "state"),
-			Reason:   valueString(value, "state_reason", "reason"),
-			NodeList: valueString(value, "nodes", "node_list"),
-			ExitCode: valueString(value, "exit_code"),
-			Elapsed:  valueString(value, "time", "elapsed"),
-		})
+		j := Job{
+			Comment:       valueString(value, "comment"),
+			ID:            valueString(value, "job_id", "jobid", "id"),
+			Name:          valueString(value, "name", "job_name"),
+			State:         valueString(value, "job_state", "state"),
+			Reason:        valueString(value, "state_reason", "reason"),
+			NodeList:      valueString(value, "nodes", "node_list"),
+			ExitCode:      valueString(value, "exit_code"),
+			Elapsed:       valueString(value, "time", "elapsed"),
+			MaxRSS:        valueString(value, "max_rss", "maxrss"),
+			ReqMem:        valueString(value, "req_mem", "reqmem", "required_memory"),
+			CPUEfficiency: valueString(value, "cpu_efficiency"),
+		}
+		j.EfficiencyTip = diagnoseJobEfficiency(j, value)
+		out = append(out, j)
 	}
 	return out, nil
+}
+
+func diagnoseJobEfficiency(j Job, raw map[string]any) string {
+	state := strings.ToUpper(j.State)
+	if strings.Contains(state, "OUT_OF_MEMORY") {
+		if j.MaxRSS != "" || j.ReqMem != "" {
+			return fmt.Sprintf("Out of memory (max_rss=%s req_mem=%s): increase --mem by 50-100%% or reduce batch size.", j.MaxRSS, j.ReqMem)
+		}
+		return "Out of memory: increase --mem or inspect step MaxRSS."
+	}
+	if strings.Contains(state, "TIMEOUT") {
+		return "Walltime exceeded: resume from checkpoint with a longer --time request."
+	}
+	if timeMap, ok := raw["time"].(map[string]any); ok {
+		elapsed, _ := strconv.ParseFloat(valueString(timeMap, "elapsed"), 64)
+		limit, _ := strconv.ParseFloat(valueString(timeMap, "limit"), 64)
+		// limit in sacct JSON is often minutes when set; if limit > 0 and elapsed > 0:
+		if limit > 0 && elapsed > 0 && elapsed < limit*60*0.15 && strings.Contains(state, "COMPLETED") {
+			return "Finished in <15% of requested walltime; shorter --time improves backfill priority."
+		}
+	}
+	return ""
 }
 
 func valueString(values map[string]any, keys ...string) string {
@@ -364,40 +395,43 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 	s := ClusterSnapshot{FetchedAt: time.Now()}
 	runner := ExecRunner{}
 
-	// Each node contributes once even when it belongs to multiple partitions.
-	if raw, err := runner.Run(ctx, "sinfo", "--Node", "-h", "-o", "%N|%C|%t"); err == nil {
-		seen := map[string]bool{}
-		for _, line := range strings.Split(string(raw), "\n") {
-			p := strings.Split(strings.TrimSpace(line), "|")
-			if len(p) != 3 || seen[p[0]] {
-				continue
-			}
-			seen[p[0]] = true
-			s.NodesTotal++
-			if isNodeUp(p[2]) {
-				s.NodesUp++
-			}
-			cpu := strings.Split(p[1], "/")
-			if len(cpu) == 4 {
-				s.CPUAlloc += atoi(cpu[0])
-				s.CPUIdle += atoi(cpu[1])
-				s.CPUTotal += atoi(cpu[3])
+	motdFast := readVulcanMotdCluster(&s, "/run/vulcan-motd/cluster")
+	if !motdFast {
+		// Each node contributes once even when it belongs to multiple partitions.
+		if raw, err := runner.Run(ctx, "sinfo", "--Node", "-h", "-o", "%N|%C|%t"); err == nil {
+			seen := map[string]bool{}
+			for _, line := range strings.Split(string(raw), "\n") {
+				p := strings.Split(strings.TrimSpace(line), "|")
+				if len(p) != 3 || seen[p[0]] {
+					continue
+				}
+				seen[p[0]] = true
+				s.NodesTotal++
+				if isNodeUp(p[2]) {
+					s.NodesUp++
+				}
+				cpu := strings.Split(p[1], "/")
+				if len(cpu) == 4 {
+					s.CPUAlloc += atoi(cpu[0])
+					s.CPUIdle += atoi(cpu[1])
+					s.CPUTotal += atoi(cpu[3])
+				}
 			}
 		}
-	}
 
-	// Partitions: "%P|%a|%D|%t" → name|avail|nodes|state.
-	if raw, err := runner.Run(ctx, "sinfo", "-h", "-o", "%P|%a|%D|%t"); err == nil {
-		for _, line := range strings.Split(string(raw), "\n") {
-			line = strings.TrimSpace(line)
-			if line == "" {
-				continue
+		// Partitions: "%P|%a|%D|%t" → name|avail|nodes|state.
+		if raw, err := runner.Run(ctx, "sinfo", "-h", "-o", "%P|%a|%D|%t"); err == nil {
+			for _, line := range strings.Split(string(raw), "\n") {
+				line = strings.TrimSpace(line)
+				if line == "" {
+					continue
+				}
+				p := strings.Split(line, "|")
+				if len(p) < 4 {
+					continue
+				}
+				s.Partitions = append(s.Partitions, PartitionRow{Name: strings.TrimSuffix(p[0], "*"), Avail: p[1], Nodes: atoi(p[2]), State: p[3]})
 			}
-			p := strings.Split(line, "|")
-			if len(p) < 4 {
-				continue
-			}
-			s.Partitions = append(s.Partitions, PartitionRow{Name: strings.TrimSuffix(p[0], "*"), Avail: p[1], Nodes: atoi(p[2]), State: p[3]})
 		}
 	}
 
@@ -438,23 +472,33 @@ func snapshot(ctx context.Context) ClusterSnapshot {
 		}
 	}
 
-	// GPUs + memory. Prefer long format with GresUsed (Alliance reports
-	// "gpu:l40s:1(IDX:1)" there); fall back to %G|%m|%e / %G|%m.
-	s.gatherGPUsAndMem(ctx, runner)
-	s.gatherOverview(ctx, runner)
+	if !motdFast {
+		// GPUs + memory. Prefer long format with GresUsed (Alliance reports
+		// "gpu:l40s:1(IDX:1)" there); fall back to %G|%m|%e / %G|%m.
+		s.gatherGPUsAndMem(ctx, runner)
+		s.gatherOverview(ctx, runner)
 
-	// GPU "usable" (host feasibility): a free GPU only counts if its node also
-	// has the CPU and memory to back it. Computed per node from scontrol.
-	s.GPUUsable = gatherGPUUsable(ctx, runner)
+		// GPU "usable" (host feasibility): a free GPU only counts if its node also
+		// has the CPU and memory to back it. Computed per node from scontrol.
+		s.GPUUsable = gatherGPUUsable(ctx, runner)
+	}
 
 	// Fairshare on the user's default account, plus per-account rows.
-	if user := os.Getenv("USER"); user != "" && time.Since(snapshotCache.accountAt) >= 15*time.Minute {
+	if user := os.Getenv("USER"); user != "" && (time.Since(snapshotCache.accountAt) >= 15*time.Minute || len(snapshotCache.value.FairshareRows) == 0) {
 		snapshotCache.accountAt = time.Now()
+		s.FairshareRows = gatherFairshareRows(ctx, runner, user)
 		if acct := defaultAccount(ctx, runner, user); acct != "" {
 			s.DefaultAccount = acct
 			s.Fairshare = fairshare(ctx, runner, acct)
 		}
-		s.FairshareRows = gatherFairshareRows(ctx, runner, user)
+		if best, ok := BestAccount(s.FairshareRows); ok {
+			if s.DefaultAccount == "" {
+				s.DefaultAccount = best.Account
+			}
+			if s.Fairshare == 0 {
+				s.Fairshare = best.Fairshare
+			}
+		}
 	} else {
 		s.DefaultAccount = snapshotCache.value.DefaultAccount
 		s.Fairshare = snapshotCache.value.Fairshare
@@ -789,25 +833,127 @@ func gatherFairshareRows(ctx context.Context, runner Runner, user string) []Fair
 	if err != nil {
 		return nil
 	}
+	return parseFairshareRows(string(raw), user)
+}
+
+func parseFairshareRows(raw, user string) []FairshareRow {
 	var rows []FairshareRow
-	for _, line := range strings.Split(string(raw), "\n") {
-		// Pipe-delimited: |account|user|fairshare|levelfs| (account may carry
-		// leading spaces for hierarchy).
+	for _, line := range strings.Split(raw, "\n") {
+		if strings.TrimSpace(line) == "" {
+			continue
+		}
+		// Standard `sshare -P -o Account,User,Fairshare,LevelFS` emits 4 fields:
+		// `  aip-rahimk|rahimk|0.567300|1.000000`. Some legacy fixtures include a
+		// leading pipe (`|account|user|fairshare|levelfs|`). Support both.
 		f := strings.Split(line, "|")
-		if len(f) < 5 {
+		if len(f) >= 5 && strings.TrimSpace(f[0]) == "" {
+			f = f[1:]
+		}
+		if len(f) < 4 {
 			continue
 		}
-		if strings.TrimSpace(f[2]) != user {
+		acct := strings.TrimSpace(f[0])
+		rowUser := strings.TrimSpace(f[1])
+		if acct == "" || (user != "" && rowUser != user) {
 			continue
 		}
-		acct := strings.TrimSpace(f[1])
-		if acct == "" {
+		fs, err := strconv.ParseFloat(strings.TrimSpace(f[2]), 64)
+		if err != nil {
 			continue
 		}
-		fs, _ := strconv.ParseFloat(strings.TrimSpace(f[3]), 64)
-		rows = append(rows, FairshareRow{Account: acct, Fairshare: fs, LevelFS: strings.TrimSpace(f[4])})
+		rows = append(rows, FairshareRow{
+			Account:   acct,
+			Fairshare: fs,
+			LevelFS:   strings.TrimSpace(f[3]),
+		})
 	}
 	return rows
+}
+
+func levelFSNumeric(v string) float64 {
+	v = strings.TrimSpace(v)
+	if strings.EqualFold(v, "inf") {
+		return 1e9
+	}
+	f, err := strconv.ParseFloat(v, 64)
+	if err != nil {
+		return 0
+	}
+	return f
+}
+
+// BestAccount returns the user's highest-priority Slurm account by Fairshare
+// factor (breaking ties by LevelFS).
+func BestAccount(rows []FairshareRow) (FairshareRow, bool) {
+	if len(rows) == 0 {
+		return FairshareRow{}, false
+	}
+	best := rows[0]
+	for _, r := range rows[1:] {
+		if r.Fairshare > best.Fairshare {
+			best = r
+			continue
+		}
+		if r.Fairshare == best.Fairshare && levelFSNumeric(r.LevelFS) > levelFSNumeric(best.LevelFS) {
+			best = r
+		}
+	}
+	return best, true
+}
+
+// readVulcanMotdCluster reads the pre-computed cluster snapshot maintained by
+// vulcan-status (/run/vulcan-motd/cluster) when present and fresh (<15m old).
+func readVulcanMotdCluster(s *ClusterSnapshot, path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || time.Since(info.ModTime()) > 15*time.Minute {
+		return false
+	}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		return false
+	}
+	kv := map[string]int{}
+	for _, line := range strings.Split(string(raw), "\n") {
+		k, v, ok := strings.Cut(strings.TrimSpace(line), "=")
+		if !ok {
+			continue
+		}
+		if n, err := strconv.Atoi(strings.TrimSpace(v)); err == nil {
+			kv[strings.TrimSpace(k)] = n
+		}
+	}
+	if kv["cpu_total"] <= 0 {
+		return false
+	}
+	s.NodesUp = kv["nodes_up"]
+	s.NodesTotal = kv["nodes_up"] + kv["nodes_down"]
+	s.CPUAlloc = kv["cpu_alloc"]
+	s.CPUTotal = kv["cpu_total"]
+	if s.CPUTotal >= s.CPUAlloc {
+		s.CPUIdle = s.CPUTotal - s.CPUAlloc
+	}
+	if kv["mem_total_mb"] > 0 {
+		s.MemTotalGB = kv["mem_total_mb"] / 1024
+		s.MemAllocGB = kv["mem_alloc_mb"] / 1024
+		s.MemoryAllocKnown = true
+	}
+	if kv["gpu_total"] > 0 {
+		s.GPUs = kv["gpu_total"]
+		s.GPUsUsed = kv["gpu_alloc"]
+		s.GPUUsable = kv["gpu_usable"]
+		s.GPUAllocKnown = true
+		if s.GPUType == "" {
+			s.GPUType = "l40s"
+		}
+	}
+	s.ClusterRunning = kv["queue_r"]
+	s.ClusterPending = kv["queue_pd"]
+	s.QueueKnown = true
+	s.ClusterName = os.Getenv("SLURM_CLUSTER_NAME")
+	if s.ClusterName == "" {
+		s.ClusterName = "vulcan"
+	}
+	return true
 }
 
 // gatherGPUUsable computes how many GPUs could actually be scheduled right now:

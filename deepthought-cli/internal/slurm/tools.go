@@ -29,28 +29,84 @@ func (*submitTool) Description() string {
 }
 func (*submitTool) ReadOnly() bool  { return false }
 func (*submitTool) AlwaysAsk() bool { return true }
+
+// ConditionalAsk allows slurm_submit to run automatically in Queen "auto" mode
+// when preflight validation succeeds and the target account's fairshare is not
+// throttled (>= FSBehind 0.20 when sshare rows are available). In "safe" or
+// "safe-auto" mode, or when fairshare is throttled / preflight fails, it returns
+// true so Queen prompts for user approval.
+func (t *submitTool) ConditionalAsk(ctx context.Context, opMode string, args map[string]any) bool {
+	if opMode != "auto" || t.client == nil {
+		return true
+	}
+	req := t.requestFromArgs(ctx, args)
+	if _, _, err := t.client.Preflight(ctx, req); err != nil {
+		return true
+	}
+	user := os.Getenv("USER")
+	rows := gatherFairshareRows(ctx, t.client.Runner, user)
+	for _, r := range rows {
+		if r.Account == req.Account && r.Fairshare > 0 && r.Fairshare < FSBehind {
+			return true
+		}
+	}
+	return false
+}
+
 func (*submitTool) Parameters() map[string]any {
 	return objectSchema(map[string]any{
 		"submission_id": stringSchema("Stable unique ID for this attempt; reuse it after a timeout to reconcile instead of submitting twice"),
 		"cpus":          map[string]any{"type": "integer", "minimum": 1},
 		"script":        stringSchema("Absolute path to a self-contained batch script"),
-		"account":       stringSchema("Discovered Slurm account"),
+		"account":       stringSchema("Discovered Slurm account (optional; defaults to highest-fairshare account)"),
 		"time":          stringSchema("Walltime; site skills define routing policy"),
 		"memory":        stringSchema("Memory request, for example 32G"),
 		"gres":          stringSchema("Exact discovered GRES string"),
-	}, "script", "submission_id", "cpus", "account", "time", "memory")
+	}, "script", "submission_id", "cpus", "time", "memory")
 }
-func (t *submitTool) Run(ctx context.Context, args map[string]any) tools.Result {
+
+func (t *submitTool) requestFromArgs(ctx context.Context, args map[string]any) SubmitRequest {
 	cpus, _ := numArg(args["cpus"])
-	id, err := t.client.Submit(ctx, SubmitRequest{
-		SubmissionID: stringArg(args, "submission_id"), CPUs: cpus,
-		Script: stringArg(args, "script"), Account: stringArg(args, "account"),
-		Time: stringArg(args, "time"), Memory: stringArg(args, "memory"), GRES: stringArg(args, "gres"),
-	})
+	acct := stringArg(args, "account")
+	if acct == "" && t.client != nil {
+		acct = t.client.ResolveAccount(ctx, "")
+	}
+	return SubmitRequest{
+		SubmissionID: stringArg(args, "submission_id"),
+		CPUs:         cpus,
+		Script:       stringArg(args, "script"),
+		Account:      acct,
+		Time:         stringArg(args, "time"),
+		Memory:       stringArg(args, "memory"),
+		GRES:         stringArg(args, "gres"),
+	}
+}
+
+func (t *submitTool) Run(ctx context.Context, args map[string]any) tools.Result {
+	req := t.requestFromArgs(ctx, args)
+	id, err := t.client.Submit(ctx, req)
 	if err != nil {
 		return failure("slurm_submit", err)
 	}
-	return tools.Result{Content: `{"job_id":` + strconv.Quote(id) + `}`, Summary: "slurm submit · " + id}
+	out := map[string]any{
+		"job_id":  id,
+		"account": req.Account,
+	}
+	if t.client != nil {
+		for _, row := range gatherFairshareRows(ctx, t.client.Runner, os.Getenv("USER")) {
+			if row.Account == req.Account {
+				tier, _ := FairshareTier(row.Fairshare)
+				out["fairshare"] = row.Fairshare
+				out["fairshare_tier"] = tier
+				if row.LevelFS != "" {
+					out["levelfs"] = row.LevelFS
+				}
+				break
+			}
+		}
+	}
+	raw, _ := json.Marshal(out)
+	return tools.Result{Content: string(raw), Summary: "slurm submit · " + id}
 }
 
 type statusTool struct{ client *Client }
@@ -177,10 +233,15 @@ func objectSchema(properties map[string]any, required ...string) map[string]any 
 	if properties == nil {
 		properties = map[string]any{}
 	}
-	return map[string]any{
-		"type": "object", "properties": properties, "required": required,
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
 		"additionalProperties": false,
 	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
 }
 func stringSchema(description string) map[string]any {
 	return map[string]any{"type": "string", "description": description}

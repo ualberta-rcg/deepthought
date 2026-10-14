@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/url"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -101,12 +102,19 @@ type titleGeneratedMsg struct {
 	err   error
 }
 
+type btwResultMsg struct {
+	question string
+	answer   string
+	err      error
+}
+
 // dispatchState tracks an in-flight tool-dispatch sequence: the assistant
 // transmission that introduced the calls and the index of the call currently
 // being processed.
 type dispatchState struct {
 	transmission *history.Transmission
 	idx          int
+	inFlight     int
 }
 
 // pendingApproval is set while a Queen "ask" is on screen awaiting a y/n.
@@ -396,6 +404,13 @@ func (m ChatModel) Update(msg tea.Msg) (ChatModel, tea.Cmd) {
 		_ = m.store.SaveObject(m.coll)
 		_ = m.store.Flush()
 		return m, nil
+	case btwResultMsg:
+		if msg.err != nil {
+			m.systemLine("btw error: " + msg.err.Error())
+		} else {
+			m.systemLine("btw (" + msg.question + "): " + msg.answer)
+		}
+		return m, nil
 	case toolResultMsg:
 		return m.handleToolResult(msg)
 	case inlineBashResultMsg:
@@ -633,7 +648,12 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 	val := typed
 	if fields := strings.Fields(val); len(fields) > 0 && strings.HasPrefix(fields[0], "/") {
 		if command, ok := commandRegistry.Lookup(fields[0]); ok {
-			val = "/" + command.Name
+			rest := strings.TrimSpace(val[len(fields[0]):])
+			if rest != "" {
+				val = "/" + command.Name + " " + rest
+			} else {
+				val = "/" + command.Name
+			}
 		}
 	}
 	// Record what the user actually typed for up/down recall (bash-style).
@@ -741,10 +761,54 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 			if _, model, err := m.src.RoleClient(unimatrix.RoleAgentic); err != nil {
 				m.systemLine("Model configuration: " + err.Error())
 			} else {
-				m.systemLine("Agentic model: " + model.ID)
+				m.systemLine(fmt.Sprintf("Agentic model: %s · reasoning_style=%s · context=%d",
+					model.ID, model.EffectiveReasoningStyle(), model.Context))
 			}
 		}
+		var checks []string
+		if m.env.Email != "" {
+			checks = append(checks, "ood_email="+m.env.Email)
+		}
+		if home, err := os.UserHomeDir(); err == nil {
+			if _, err := os.Stat(filepath.Join(home, ".aleph_tyk.env")); err == nil {
+				checks = append(checks, "aleph_tyk.env=present")
+			}
+		}
+		if _, err := os.Stat("/run/vulcan-motd/cluster"); err == nil {
+			checks = append(checks, "vulcan-motd=cached")
+		}
+		if len(checks) > 0 {
+			m.systemLine("Environment checks: " + strings.Join(checks, " · "))
+		}
 		return m, nil
+	case val == "/cost" || strings.HasPrefix(val, "/cost "):
+		m.systemLine(fmt.Sprintf("Session tokens: %d in · %d out · %d total (%d cycles, %d msgs, last context %d)",
+			m.sessionIn, m.sessionOut, m.sessionIn+m.sessionOut, m.sessionCycles, m.sessionMsgs, m.lastContext))
+		byModel := map[string][2]int{}
+		for _, inc := range m.coll.Incursions {
+			for _, tx := range inc.Transmissions {
+				mod := "unknown"
+				if tx.Producer != nil && tx.Producer.ModelID != "" {
+					mod = tx.Producer.ModelID
+				}
+				cur := byModel[mod]
+				cur[0] += tx.Cost.InputTokens
+				cur[1] += tx.Cost.OutputTokens
+				byModel[mod] = cur
+			}
+		}
+		for mod, c := range byModel {
+			m.systemLine(fmt.Sprintf("  %s: %d in · %d out", mod, c[0], c[1]))
+		}
+		return m, nil
+	case val == "/btw" || strings.HasPrefix(val, "/btw "):
+		q := strings.TrimSpace(strings.TrimPrefix(val, "/btw"))
+		if q == "" {
+			m.systemLine("usage: /btw <question> — asks a side question without modifying chat history")
+			return m, nil
+		}
+		m.systemLine("btw ▸ " + q)
+		return m, m.own(m.runBtwCmd(q))
 	case strings.HasPrefix(val, "/export "):
 		if exporter, ok := m.store.(interface{ Export(string) error }); ok {
 			if err := exporter.Export(strings.TrimSpace(strings.TrimPrefix(val, "/export "))); err != nil {
@@ -794,6 +858,7 @@ func (m ChatModel) beginChat(text string) (ChatModel, tea.Cmd) {
 		m.systemLine("Cannot save chat: " + err.Error())
 		return m, nil
 	}
+	text = m.expandFileMentions(text)
 	m.generation++
 	m.ctx, m.cancel = context.WithCancel(m.parent())
 	inc := m.coll.StartIncursion(text)
@@ -803,6 +868,96 @@ func (m ChatModel) beginChat(text string) (ChatModel, tea.Cmd) {
 		return m, nil
 	}
 	return m.armStream()
+}
+
+// expandFileMentions resolves @path tokens in the prompt against the workspace
+// root, appending bounded file snippets while skipping sensitive or outside paths.
+func (m ChatModel) expandFileMentions(text string) string {
+	if !strings.Contains(text, "@") {
+		return text
+	}
+	root := m.env.Cwd
+	if root == "" {
+		root, _ = os.Getwd()
+	}
+	if root == "" {
+		return text
+	}
+	root = filepath.Clean(root)
+	var snippets []string
+	seen := map[string]bool{}
+	for _, tok := range strings.Fields(text) {
+		if !strings.HasPrefix(tok, "@") || len(tok) < 2 {
+			continue
+		}
+		rel := strings.TrimRight(tok[1:], ",.;:!?)\"'")
+		if rel == "" || seen[rel] || filepath.IsAbs(rel) || strings.Contains(rel, "..") {
+			continue
+		}
+		full := filepath.Clean(filepath.Join(root, rel))
+		if full != root && !strings.HasPrefix(full, root+string(filepath.Separator)) {
+			continue
+		}
+		if tools.SensitivePath(full) {
+			continue
+		}
+		info, err := os.Stat(full)
+		if err != nil || !info.Mode().IsRegular() || info.Size() > 1<<20 {
+			continue
+		}
+		raw, err := os.ReadFile(full)
+		if err != nil {
+			continue
+		}
+		seen[rel] = true
+		body := credential.Redact(string(raw))
+		if len(body) > 32768 {
+			body = body[:32768] + "\n...[truncated]..."
+		}
+		snippets = append(snippets, fmt.Sprintf("<attached_file path=%q>\n%s\n</attached_file>", rel, body))
+		if len(snippets) >= 4 {
+			break
+		}
+	}
+	if len(snippets) == 0 {
+		return text
+	}
+	return text + "\n\n" + strings.Join(snippets, "\n\n")
+}
+
+// runBtwCmd executes a side question against the current conversation context
+// without mutating the collective or invoking tools.
+func (m ChatModel) runBtwCmd(question string) tea.Cmd {
+	src := m.src
+	if src == nil {
+		return func() tea.Msg { return btwResultMsg{question: question, err: fmt.Errorf("no model configured")} }
+	}
+	msgs := append([]babel.Message(nil), m.requestMessages()...)
+	msgs = append(msgs, babel.Message{
+		Role:    "user",
+		Content: "[Side question (/btw) — answer concisely in plain text without calling tools]: " + question,
+	})
+	return func() tea.Msg {
+		client, model, err := src.RoleClient(unimatrix.RoleChat)
+		if err != nil {
+			client, model, err = src.RoleClient(unimatrix.RoleAgentic)
+		}
+		if err != nil {
+			return btwResultMsg{question: question, err: err}
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 45*time.Second)
+		defer cancel()
+		rep, err := client.Chat(ctx, babel.ChatRequest{
+			Model:       model.RequestID(),
+			Messages:    msgs,
+			MaxTokens:   512,
+			Temperature: 0.3,
+		})
+		if err != nil {
+			return btwResultMsg{question: question, err: err}
+		}
+		return btwResultMsg{question: question, answer: strings.TrimSpace(rep.Text)}
+	}
 }
 
 // interrupt cancels the in-flight stream and breaks the tool loop: drops the
@@ -974,6 +1129,7 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 	if m.ctx == nil {
 		m.ctx, m.cancel = context.WithCancel(m.parent())
 	}
+	m.autoCompactIfNeeded(model.Context)
 	req := m.newRequest(model)
 	if resolver, ok := m.src.(interface {
 		ResolveRequest(string, history.Sensitivity, int) (*babel.Client, unimatrix.Model, error)
@@ -1021,6 +1177,35 @@ func (m ChatModel) armStream() (ChatModel, tea.Cmd) {
 }
 
 func (m ChatModel) Manifest() assimilation.Manifest { return m.manifest }
+
+// autoCompactIfNeeded demotes older unpinned tool results to StateDigest when
+// estimated context usage exceeds 75% of the model's context window, preserving
+// full outputs in the store for on-demand expand(id).
+func (m *ChatModel) autoCompactIfNeeded(window int) {
+	if m.coll == nil || window <= 0 || len(m.coll.Incursions) < 2 {
+		return
+	}
+	est := estimateUsage(m.coll.MessagesByState(), "", "").PromptTokens
+	if est <= (window*3)/4 {
+		return
+	}
+	for i := 0; i < len(m.coll.Incursions)-1; i++ {
+		inc := m.coll.Incursions[i]
+		for _, tx := range inc.Transmissions {
+			for _, p := range tx.Probes {
+				if p.Pinned || p.State != history.StateFull || len(p.Result.Content) < 2048 {
+					continue
+				}
+				p.Result.Summaries.Condensed = history.Condense(p.Result.Content, 16, 1536) +
+					"\n[Auto-compacted; expand history ID " + p.ID + " for full output.]"
+				p.State = history.StateDigest
+				if m.store != nil {
+					_ = m.store.SaveObject(p)
+				}
+			}
+		}
+	}
+}
 
 func (m *ChatModel) failTurn(err error) {
 	if m.cancel != nil {
@@ -1416,6 +1601,9 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 	if m.dispatch == nil {
 		return m, nil
 	}
+	if m.dispatch.inFlight > 0 {
+		return m, nil
+	}
 	if m.dispatch.idx >= len(m.dispatch.transmission.Probes) {
 		// All calls in this assistant transmission resolved → feed results back, re-stream.
 		m.dispatch = nil
@@ -1455,6 +1643,7 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 	if !ok {
 		// Unknown tool: feed the error back as a tool result so the model can recover.
 		m.appendTurn(styleError.Render("▸ unknown tool: " + probe.Name))
+		m.dispatch.inFlight = 1
 		return m, m.own(deniedResultCmd(probe, "no such tool: "+probe.Name))
 	}
 
@@ -1462,9 +1651,11 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 	m.appendTurn(styleTool.Render("▸ " + probe.Name + ": " + summarizeArgs(probe.Name, args)))
 
 	if probe.ArgumentsError != "" {
+		m.dispatch.inFlight = 1
 		return m, m.own(deniedResultCmd(probe, "invalid arguments JSON: "+probe.ArgumentsError))
 	}
 	if err := tools.Validate(tool, args); err != nil {
+		m.dispatch.inFlight = 1
 		return m, m.own(deniedResultCmd(probe, err.Error()))
 	}
 	if preview, ok := tool.(interface {
@@ -1476,17 +1667,43 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 		}
 		diff, err := preview.Preview(ctx, args)
 		if err != nil {
+			m.dispatch.inFlight = 1
 			return m, m.own(deniedResultCmd(probe, err.Error()))
 		}
 		m.appendTurn(styleTool.Render(diff))
 	}
 
-	switch m.gate.Decide(context.Background(), tool, args) {
+	ctx := m.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	switch m.gate.Decide(ctx, tool, args) {
 	case queen.Allow:
 		probe.Decision = queen.Allow
 		probe.Status = history.ProbeRunning // allowed → dispatch immediately
 		probe.StartedAt = now()
-		return m, m.runToolCmd(tool, args, probe)
+		cmds := []tea.Cmd{m.runToolCmd(tool, args, probe)}
+		m.dispatch.inFlight = 1
+		// Parallelize contiguous read-only, Queen-allowed tools (up to 6 total).
+		if tool.ReadOnly() {
+			for nextIdx := m.dispatch.idx + 1; nextIdx < len(m.dispatch.transmission.Probes) && m.dispatch.inFlight < 6; nextIdx++ {
+				np := m.dispatch.transmission.Probes[nextIdx]
+				nt, nok := m.reg.Lookup(np.Name)
+				if !nok || !nt.ReadOnly() || np.ArgumentsError != "" || tools.Validate(nt, np.Arguments) != nil {
+					break
+				}
+				if m.gate.Decide(ctx, nt, np.Arguments) != queen.Allow {
+					break
+				}
+				np.Decision = queen.Allow
+				np.Status = history.ProbeRunning
+				np.StartedAt = now()
+				m.appendTurn(styleTool.Render("▸ " + np.Name + ": " + summarizeArgs(np.Name, np.Arguments)))
+				cmds = append(cmds, m.runToolCmd(nt, np.Arguments, np))
+				m.dispatch.inFlight++
+			}
+		}
+		return m, tea.Batch(cmds...)
 	case queen.Deny:
 		probe.Decision = queen.Deny
 		probe.Status = history.ProbeDenied // agrees with Decision (terminal for this probe)
@@ -1499,9 +1716,11 @@ func (m ChatModel) processCurrentTool() (ChatModel, tea.Cmd) {
 			}
 		}
 		probe.DecisionReason = reason
+		m.dispatch.inFlight = 1
 		return m, m.own(deniedResultCmd(probe, reason))
 	default: // Ask
 		probe.Decision = queen.Ask
+		m.dispatch.inFlight = 1
 		m.awaiting = &pendingApproval{probe: probe, tool: tool, args: args}
 		m.appendTurn(styleToolAsk.Render("  ⚠ allow " + probe.Name + " with these exact arguments? [y] once  [a] task  [A] always  [n]/[d]"))
 		return m, nil
@@ -1559,6 +1778,12 @@ func (m ChatModel) handleToolResult(r toolResultMsg) (ChatModel, tea.Cmd) {
 
 	if m.dispatch != nil {
 		m.dispatch.idx++
+		if m.dispatch.inFlight > 0 {
+			m.dispatch.inFlight--
+		}
+		if m.dispatch.inFlight > 0 {
+			return m, nil
+		}
 	}
 	return m.processCurrentTool()
 }

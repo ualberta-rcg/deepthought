@@ -304,6 +304,9 @@ func (g *Gate) GrantAlways(toolName string, args map[string]any) {
 	key := ruleKey(toolName, args)
 	g.alwaysAllow[key] = true
 	rule := ruleString(toolName, args)
+	if rule != "" && !exactRule(g.Rules.Allow, rule) {
+		g.Rules.Allow = append(g.Rules.Allow, rule)
+	}
 	if g.OnPersist != nil && rule != "" {
 		fn := g.OnPersist
 		g.mu.Unlock()
@@ -319,6 +322,9 @@ func (g *Gate) DenyAlways(toolName string, args map[string]any) {
 	key := ruleKey(toolName, args)
 	g.alwaysDeny[key] = true
 	rule := ruleString(toolName, args)
+	if rule != "" && !exactRule(g.Rules.Deny, rule) {
+		g.Rules.Deny = append(g.Rules.Deny, rule)
+	}
 	if g.OnPersist != nil && rule != "" {
 		fn := g.OnPersist
 		g.mu.Unlock()
@@ -328,7 +334,7 @@ func (g *Gate) DenyAlways(toolName string, args map[string]any) {
 }
 
 // Decide returns the decision for a tool call.
-func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) Decision {
+func (g *Gate) Decide(ctx context.Context, tool tools.Tool, args map[string]any) Decision {
 	if tool == nil {
 		return Deny
 	}
@@ -352,7 +358,13 @@ func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) D
 	if g.alwaysDeny[key] || matchRules(g.Rules.Deny, tool.Name(), args) {
 		return Deny
 	}
-	if policy, ok := tool.(interface{ AlwaysAsk() bool }); ok && policy.AlwaysAsk() {
+	if cond, ok := tool.(interface {
+		ConditionalAsk(ctx context.Context, opMode string, args map[string]any) bool
+	}); ok {
+		if cond.ConditionalAsk(ctx, g.Op.Name, args) {
+			return Ask
+		}
+	} else if policy, ok := tool.(interface{ AlwaysAsk() bool }); ok && policy.AlwaysAsk() {
 		return Ask
 	}
 	if g.alwaysAllow[key] || g.taskAllow[key] {
@@ -367,10 +379,11 @@ func (g *Gate) Decide(_ context.Context, tool tools.Tool, args map[string]any) D
 	if matchRules(g.Rules.Ask, tool.Name(), args) {
 		return Ask
 	}
-	if tool.Name() == "bash" && !simpleShell(primaryArg(tool.Name(), args)) && !exactRule(g.Rules.Allow, key) {
-		return Ask
-	}
-	if matchRules(g.Rules.Allow, tool.Name(), args) {
+	if tool.Name() == "bash" && !simpleShell(primaryArg(tool.Name(), args)) {
+		if exactAllowRule(g.Rules.Allow, tool.Name(), args, key) {
+			return Allow
+		}
+	} else if matchRules(g.Rules.Allow, tool.Name(), args) {
 		return Allow
 	}
 
@@ -413,7 +426,7 @@ func classify(tool tools.Tool, args map[string]any) Category {
 	if name == "bash" {
 		cmd, _ := args["command"].(string)
 		cmd = strings.TrimSpace(cmd)
-		if strings.HasPrefix(cmd, "sudo ") || cmd == "sudo" {
+		if strings.HasPrefix(cmd, "sudo ") || cmd == "sudo" || containsSudoCall(cmd) {
 			return CatSudo
 		}
 		return CatRun
@@ -428,8 +441,22 @@ func ruleKey(toolName string, args map[string]any) string {
 	return "Call:" + toolName + ":" + hex.EncodeToString(hash[:])
 }
 
-// ruleString builds a persistable reference-style rule, e.g. Bash(git *) or Read(~/**).
+// ruleString builds a persistable exact rule for simple commands/reads (e.g.
+// Bash(git status) or Read(/path/to/file)) without broadening scope via wildcards,
+// falling back to ruleKey for compound commands or other tools.
 func ruleString(toolName string, args map[string]any) string {
+	switch toolName {
+	case "bash":
+		cmd := primaryArg("bash", args)
+		if cmd != "" && simpleShell(cmd) && !strings.ContainsAny(cmd, "()*?\n\r") {
+			return "Bash(" + cmd + ")"
+		}
+	case "read":
+		p := primaryArg("read", args)
+		if p != "" && !strings.ContainsAny(p, "()*?\n\r") {
+			return "Read(" + p + ")"
+		}
+	}
 	return ruleKey(toolName, args)
 }
 
@@ -440,6 +467,38 @@ func exactRule(rules []string, key string) bool {
 		}
 	}
 	return false
+}
+
+func exactAllowRule(rules []string, toolName string, args map[string]any, key string) bool {
+	arg := primaryArg(toolName, args)
+	for _, r := range rules {
+		if r == key {
+			return true
+		}
+		name, pattern := parseRule(strings.TrimSpace(r))
+		if strings.EqualFold(name, toolName) && pattern != "" && !strings.ContainsAny(pattern, "*?") && pattern == arg {
+			return true
+		}
+	}
+	return false
+}
+
+func containsSudoCall(command string) bool {
+	f, err := syntax.NewParser(syntax.Variant(syntax.LangBash)).Parse(strings.NewReader(command), "")
+	if err != nil {
+		return false
+	}
+	found := false
+	syntax.Walk(f, func(node syntax.Node) bool {
+		if c, ok := node.(*syntax.CallExpr); ok && len(c.Args) > 0 {
+			if c.Args[0].Lit() == "sudo" {
+				found = true
+				return false
+			}
+		}
+		return !found
+	})
+	return found
 }
 
 func simpleShell(command string) bool {

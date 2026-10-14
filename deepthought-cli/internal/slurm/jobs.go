@@ -35,7 +35,28 @@ var submissionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,48}$`)
 var resourcePattern = regexp.MustCompile(`^[1-9][0-9]*(?:[KMGTP]?)$`)
 var walltimePattern = regexp.MustCompile(`^(?:[0-9]+-)?[0-9]+(?::[0-9]{1,2}){0,2}$`)
 
+// ResolveAccount returns explicit if non-empty, else the highest-fairshare
+// non-throttled account from sshare, else the user's DefaultAccount from sacctmgr.
+func (c *Client) ResolveAccount(ctx context.Context, explicit string) string {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" {
+		return explicit
+	}
+	user := os.Getenv("USER")
+	rows := gatherFairshareRows(ctx, c.Runner, user)
+	if best, ok := BestAccount(rows); ok {
+		return best.Account
+	}
+	if def := defaultAccount(ctx, c.Runner, user); def != "" {
+		return def
+	}
+	return ""
+}
+
 func (c *Client) Preflight(ctx context.Context, r SubmitRequest) ([]byte, string, error) {
+	if r.Account == "" {
+		r.Account = c.ResolveAccount(ctx, "")
+	}
 	if !submissionIDPattern.MatchString(r.SubmissionID) {
 		return nil, "", fmt.Errorf("submission_id must be 1–48 letters, numbers, underscores or hyphens")
 	}
@@ -125,6 +146,9 @@ func (c *Client) Submit(ctx context.Context, r SubmitRequest) (string, error) {
 	defer c.mu.Unlock()
 	if c.Store == nil {
 		return "", fmt.Errorf("submission requires a persistent journal")
+	}
+	if r.Account == "" {
+		r.Account = c.ResolveAccount(ctx, "")
 	}
 	raw, scriptHash, err := c.Preflight(ctx, r)
 	if err != nil {

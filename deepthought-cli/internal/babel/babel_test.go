@@ -324,6 +324,11 @@ func TestEffortTranslationByModelFamily(t *testing.T) {
 			req:   ChatRequest{Effort: EffortHigh, ReasoningStyle: "gemma4"},
 			wants: []string{`"enable_thinking":true`, `"reasoning_effort":"high"`},
 		},
+		{
+			name:  "gemini",
+			req:   ChatRequest{Effort: EffortHigh, ReasoningStyle: "gemini"},
+			wants: []string{`"reasoning_effort":"high"`},
+		},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -336,7 +341,62 @@ func TestEffortTranslationByModelFamily(t *testing.T) {
 					t.Errorf("body %s missing %s", raw, want)
 				}
 			}
+			if tc.name == "gemini" && strings.Contains(string(raw), "chat_template_kwargs") {
+				t.Errorf("gemini body must not include chat_template_kwargs: %s", raw)
+			}
 		})
+	}
+}
+
+func TestWireBodySanitizesNilRequiredInToolSchema(t *testing.T) {
+	var nilReq []string
+	td := NewToolDef("slurm_status", "status", map[string]any{
+		"type":       "object",
+		"properties": map[string]any{},
+		"required":   nilReq,
+	})
+	raw, err := json.Marshal(wireBody(ChatRequest{Model: "gemini", Tools: []ToolDef{td}}, true))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), `"required":null`) {
+		t.Fatalf("wireBody emitted required:null: %s", raw)
+	}
+}
+
+func TestChatStreamGeminiParallelToolCallsAndThoughtSignature(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"id":"call_1","type":"function","extra_content":{"google":{"thought_signature":"sig_abc"}},"function":{"name":"slurm_allocations","arguments":"{}"}}]}}]}`,
+		``,
+		`data: {"choices":[{"delta":{"role":"assistant","tool_calls":[{"id":"call_2","type":"function","function":{"name":"slurm_status","arguments":"{}"}}]}}]}`,
+		``,
+		`data: {"choices":[{"delta":{},"finish_reason":"tool_calls"}]}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, body)
+	}))
+	defer srv.Close()
+
+	c := NewClient(srv.URL, "tok")
+	rep, err := c.ChatStream(context.Background(), ChatRequest{Model: "models/gemini-4-argon", Messages: []Message{{Role: "user", Content: "hi"}}}, func(StreamDelta) {})
+	if err != nil {
+		t.Fatalf("ChatStream: %v", err)
+	}
+	if len(rep.ToolCalls) != 2 {
+		t.Fatalf("got %d tool calls, want 2: %+v", len(rep.ToolCalls), rep.ToolCalls)
+	}
+	if rep.ToolCalls[0].ID != "call_1" || rep.ToolCalls[0].Function.Name != "slurm_allocations" || rep.ToolCalls[0].Function.Arguments != "{}" {
+		t.Fatalf("first tool call = %+v", rep.ToolCalls[0])
+	}
+	if !strings.Contains(string(rep.ToolCalls[0].ExtraContent), `"thought_signature":"sig_abc"`) {
+		t.Fatalf("missing extra_content thought_signature on first tool call: %s", rep.ToolCalls[0].ExtraContent)
+	}
+	if rep.ToolCalls[1].ID != "call_2" || rep.ToolCalls[1].Function.Name != "slurm_status" || rep.ToolCalls[1].Function.Arguments != "{}" {
+		t.Fatalf("second tool call = %+v", rep.ToolCalls[1])
 	}
 }
 

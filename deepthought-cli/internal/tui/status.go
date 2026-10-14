@@ -35,7 +35,8 @@ type ProviderRow struct {
 type EnvInfo struct {
 	Observation          host.Record
 	CVMFS, Module, Slurm bool
-	Shell, User, TZ      string
+	Shell, User, Email   string
+	TZ                   string
 
 	// Host facts (pure-stdlib probes; see gatherEnv).
 	Host      string // hostname as reported
@@ -315,8 +316,12 @@ func (m StatusModel) hostRows() Section {
 		}
 		rows = append(rows, kv("cpus", spec))
 	}
+	userVal := orDefault(e.User, "?")
+	if email := orDefault(e.Email, e.Observation.Email); email != "" && email != "—" {
+		userVal += " (" + email + ")"
+	}
 	rows = append(rows,
-		kv("user", orDefault(e.User, "?")),
+		kv("user", userVal),
 		kv("shell", orDefault(e.Shell, "?")),
 		kv("tz", orDefault(e.TZ, "?")),
 		styleSettingsFoot.Render(fmt.Sprintf("  cvmfs %s · module %s · slurm %s",

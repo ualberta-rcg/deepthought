@@ -61,6 +61,26 @@ func sidebarMeter(label string, value, total float64, known bool, suffix string,
 	return fmt.Sprintf("%-4s %s %s", label, bar, suffix)
 }
 
+// sidebarFairshareMeter renders a fairshare bar where 1.0 is best (green) and
+// <0.20 is throttled (red) — the inverse of resource utilization meters.
+func sidebarFairshareMeter(label string, value float64, suffix string, w int) string {
+	if math.IsNaN(value) {
+		return fmt.Sprintf("%-4s --", label)
+	}
+	g := kit.G()
+	fraction := math.Max(0, math.Min(1, value))
+	n := max(4, min(12, w-22))
+	filled := int(math.Round(fraction * float64(n)))
+	col := colSuccess
+	if fraction < slurm.FSBehind {
+		col = colDanger
+	} else if fraction < slurm.FSNominal {
+		col = colWarning
+	}
+	bar := lipgloss.NewStyle().Foreground(col).Render(strings.Repeat(g.BarFull, filled) + strings.Repeat(g.BarEmpty, n-filled))
+	return fmt.Sprintf("%-4s %s %s", label, bar, suffix)
+}
+
 func sidebarAge(t, now time.Time, limit time.Duration) string {
 	if t.IsZero() {
 		return "unknown"
@@ -208,7 +228,8 @@ func (d SidebarData) clusterCard(inner int, now time.Time) sidebarCard {
 		body = append(body, "Fairshare unavailable")
 	}
 	for _, f := range c.FairshareRows {
-		body = append(body, sidebarMeter("Fair", f.Fairshare, 1, true, fmt.Sprintf("%.2f %s", f.Fairshare, f.Account), inner))
+		tier, _ := slurm.FairshareTier(f.Fairshare)
+		body = append(body, sidebarFairshareMeter("Fair", f.Fairshare, fmt.Sprintf("%.2f %s · %s", f.Fairshare, f.Account, tier), inner))
 	}
 	foot := "updated " + sidebarAge(c.FetchedAt, now, 15*time.Minute)
 	if c.Err != nil {

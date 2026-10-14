@@ -41,6 +41,8 @@ func Builtins() *Registry {
 		{"help", "show commands and keys", Local},
 		{"menu", "open navigation without function keys", Local},
 		{"doctor", "check local configuration and context", Local},
+		{"cost", "show session and per-model token usage", Local},
+		{"btw", "ask a side question without modifying chat history", Local},
 		{"compact", "shorten older tool output while preserving originals", Local},
 		{"pin", "preserve a probe in context by history ID", Local},
 		{"unpin", "remove a probe context pin", Local},

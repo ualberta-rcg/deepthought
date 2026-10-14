@@ -91,8 +91,9 @@ func (s *Session) RunTurn(ctx context.Context, prompt string, stream babel.Strea
 		if len(reply.ToolCalls) == 0 {
 			return reply, nil
 		}
-		for _, call := range reply.ToolCalls {
-			result := s.runTool(ctx, call)
+		results := s.runToolBatch(ctx, reply.ToolCalls)
+		for i, call := range reply.ToolCalls {
+			result := results[i]
 			s.messages = append(s.messages, babel.Message{
 				Role: "tool", ToolCallID: call.ID, Content: result.Content,
 			})
@@ -103,6 +104,51 @@ func (s *Session) RunTurn(ctx context.Context, prompt string, stream babel.Strea
 		}
 	}
 	return babel.Reply{}, fmt.Errorf("unimatrix: tool loop exceeded %d cycles", s.MaxCycles)
+}
+
+const maxParallelReadOnlyTools = 6
+
+func (s *Session) runToolBatch(ctx context.Context, calls []babel.ToolCall) []tools.Result {
+	results := make([]tools.Result, len(calls))
+	for i := 0; i < len(calls); {
+		if s.canRunParallelReadOnly(ctx, calls[i]) {
+			end := i + 1
+			for end < len(calls) && (end-i) < maxParallelReadOnlyTools && s.canRunParallelReadOnly(ctx, calls[end]) {
+				end++
+			}
+			if end-i > 1 {
+				var wg sync.WaitGroup
+				for j := i; j < end; j++ {
+					wg.Add(1)
+					go func(idx int, call babel.ToolCall) {
+						defer wg.Done()
+						results[idx] = s.runTool(ctx, call)
+					}(j, calls[j])
+				}
+				wg.Wait()
+				i = end
+				continue
+			}
+		}
+		results[i] = s.runTool(ctx, calls[i])
+		i++
+	}
+	return results
+}
+
+func (s *Session) canRunParallelReadOnly(ctx context.Context, call babel.ToolCall) bool {
+	if s.Registry == nil || s.Gate == nil {
+		return false
+	}
+	tool, ok := s.Registry.Lookup(call.Function.Name)
+	if !ok || !tool.ReadOnly() {
+		return false
+	}
+	args := map[string]any{}
+	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+		return false
+	}
+	return s.Gate.Decide(ctx, tool, args) == queen.Allow
 }
 
 func (s *Session) runTool(ctx context.Context, call babel.ToolCall) tools.Result {

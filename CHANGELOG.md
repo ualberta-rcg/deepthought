@@ -1,5 +1,28 @@
 # DeepThought — Change Log
 
+## 2026-10-14 · deepthought-cli, deepthought-server — Gemini provider fixes, DRAC OIDC config, fairshare/vulcan-status parity, Queen auto mode, harness features & HPC records sync
+- **Gemini OpenAI-compatible wire fixes (`deepthought-cli`)**:
+  - `slurm.objectSchema` and `babel.sanitizeTools` omit nil/empty `required` arrays in tool parameter schemas so Google's `generativelanguage.googleapis.com/v1beta/openai` endpoint does not reject tool-enabled requests with `400 Bad Request`.
+  - Added `"gemini"` reasoning style (`EffectiveReasoningStyle` inspects both model ID and `RequestID` and infers even when `ReasoningStyle` defaulted to `"none"`), sending `reasoning_effort` (`low`/`medium`/`high`) without vLLM-specific `chat_template_kwargs` or `thinking_token_budget`.
+  - Preserved `ToolCall.ExtraContent` (`extra_content.google.thought_signature`) across streaming chunks and `history.Probe` persistence (`Vinculum.Extra`) so multi-turn Gemini 3/4 tool calls succeed.
+  - Fixed `babel.ChatStream` parallel tool-call chunk assembly when a gateway emits multiple distinct tool-call `id`s at `index: 0`.
+- **DRAC OIDC & file-based server config (`deepthought-server`, `deepthought-cli`)**:
+  - Added `server/config.go` (`--config` / `DEEPTHOUGHT_SERVER_CONFIG` / `<dataDir>/server.json`) and `configs/server.example.json` pre-populated with Alliance/DRAC IdP (`https://idp.alliancecan.ca`) settings and OOD-style email post-login hook (`scripts/oidc_post_login.sh`, writing `~/ondemand/oidc_email.txt`). Defaults keep `auth.mode = "password"` and `auth.oidc.enabled = false` so current password login remains active until explicitly enabled.
+  - Added stdlib OIDC discovery, JWKS RSA/ECDSA verification, Authorization Code + PKCE (`/api/v1/auth/oidc/login`, `/api/v1/auth/oidc/callback`, `/oidc`), CLI device login (`/api/v1/auth/device/start`, `/api/v1/auth/device/poll`), trusted reverse-proxy claim headers (`OIDC_CLAIM_preferred_username`, `OIDC_CLAIM_email`), `/api/v1/auth/config`, and `/api/v1/auth/me`.
+  - Added `email` and `oidc_sub` columns to MySQL `users` table (idempotent `ensureUserColumns` migration).
+  - CLI `host.OODEmail()` discovers `$OIDC_CLAIM_email` or `~/ondemand/oidc_email.txt` and surfaces it on the Status (`F12`) page and `/doctor`.
+- **Slurm fairshare & `vulcan-status` parity (`deepthought-cli`)**:
+  - Fixed `parseFairshareRows` to support standard 4-column `sshare -P` output (`Account|User|EffectvUsage|LevelFS`) as well as 5-column leading-pipe fixtures, added `BestAccount`, and added `/run/vulcan-motd/cluster` fast-path reading when fresh (<15m).
+  - Fixed inverted fairshare bar coloring in `sidebar.go` (`>=0.40` green, `0.20..0.40` yellow, `<0.20` red) and displayed `FairshareTier`, `LevelFSTier`, and usable GPUs (`GPUUsable`) on the Status (`F12`) page.
+- **Queen `auto` mode & Slurm account/fairshare gating (`deepthought-cli`)**:
+  - Fixed `Gate.Decide` so non-`simpleShell` compound commands only bypass non-exact prefix allow-rules (`Bash(git *)`) rather than short-circuiting before `g.Op.Map[cat]`, allowing non-destructive compound `bash` pipelines in `OpAuto` while still requiring approval for `sudo` or destructive commands.
+  - Added readable exact allow-rules (`Bash(<cmd>)`, `Read(<path>)`) for simple commands and `ConditionalAsk` on `slurm_submit` so `auto` mode auto-resolves the best fairshare account and allows healthy submissions while still prompting when fairshare is throttled (`<0.20`) or in `safe`/`safe-auto` modes.
+- **Harness features & HPC records sync (`deepthought-cli`, `deepthought-server`)**:
+  - Parallelized contiguous read-only, Queen-allowed tool calls (up to 6 concurrent), added 75%-window auto-compaction to `StateDigest`, added `/btw`, `/cost`, `@file` context expansion, enhanced `/doctor`, and added `sacct` job efficiency diagnostics (`diagnoseJobEfficiency`).
+  - Wired `GET/PUT /api/v1/jobs[/{id}]` and `GET/PUT /api/v1/experiments[/{id}]` to the MySQL `records` table and added CLI sync on turn completion and login.
+- Files: `deepthought-cli/internal/{babel,slurm,queen,tui,unimatrix,commands,history,host,app}/...`, `deepthought-cli/docs/SERVER.md`, `deepthought-server/{main.go,configs/server.example.json,scripts/oidc_post_login.sh,server/*,store/*}`.
+- Verification: `gofmt`, `git diff --check`, and full GitHub Actions CI (`build-cli.yml` + `build-server.yml`) + live deployment to `.43` (`deepthought` namespace).
+
 ## 2026-09-30 · deepthought-cli — server contract docs, logout on disconnect, no file-only settings path
 - `deepthought-cli/docs/SERVER.md` rewritten from the old skeleton notes to the live contract: where the server lives (`deepthought-server/`, own module), configuration, auth (hashed persisted sessions, sliding expiry, one automatic re-login on 401 then stop), the shared-password trust assumption, every endpoint with its request/response shape, credential identity/fingerprint/sealing, and what the client does with each. `LOCAL-OPERATIONS.md` gains the key sync, account views and no-key behaviour.
 - Disconnect now revokes the session on the server (`POST /api/v1/auth/logout`, best effort, never renewed) so it drops out of the account's session list.

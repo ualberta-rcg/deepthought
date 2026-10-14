@@ -190,6 +190,37 @@ func (s *ServerSession) PushChat(coll *history.Collective) error {
 	}
 	return s.do("PUT", "/api/v1/chats/"+coll.ID, body, nil)
 }
+func (s *ServerSession) PushJob(id string, raw json.RawMessage) error {
+	return s.do("PUT", "/api/v1/jobs/"+id, raw, nil)
+}
+func (s *ServerSession) PushExperiment(id string, raw json.RawMessage) error {
+	return s.do("PUT", "/api/v1/experiments/"+id, raw, nil)
+}
+func pushHPCRecords(source history.ChatStoreSource, sess *ServerSession) {
+	if source == nil || sess == nil {
+		return
+	}
+	recStore, ok := source().(interface {
+		Records(kind string) ([]history.Record, error)
+	})
+	if !ok {
+		return
+	}
+	if jobs, err := recStore.Records("submission"); err == nil {
+		for _, j := range jobs {
+			if j.ID != "" && len(j.Data) > 0 {
+				_ = sess.PushJob(j.ID, j.Data)
+			}
+		}
+	}
+	if plans, err := recStore.Records("workflow"); err == nil {
+		for _, p := range plans {
+			if p.ID != "" && len(p.Data) > 0 {
+				_ = sess.PushExperiment(p.ID, p.Data)
+			}
+		}
+	}
+}
 func serverLoginCmd(live *Settings) tea.Cmd {
 	return func() tea.Msg {
 		f := live.Snapshot()
@@ -236,6 +267,7 @@ func pendingChatKey(sess *ServerSession, id string) string {
 func pushChatCmd(source history.ChatStoreSource, sess *ServerSession, store *config.LocalStore, id string) tea.Cmd {
 	return func() tea.Msg {
 		err := pushOneChat(source, sess, store, id)
+		pushHPCRecords(source, sess)
 		if err != nil {
 			return serverSyncResultMsg{Err: "Chat not synced (will retry): " + credential.Redact(err.Error()), Expired: errors.Is(err, ErrSessionExpired)}
 		}
@@ -293,6 +325,7 @@ func flushPendingChats(source history.ChatStoreSource, sess *ServerSession, stor
 
 func flushPendingChatsCmd(source history.ChatStoreSource, sess *ServerSession, store *config.LocalStore) tea.Cmd {
 	return func() tea.Msg {
+		pushHPCRecords(source, sess)
 		if err := flushPendingChats(source, sess, store); err != nil {
 			return serverSyncResultMsg{Err: "Earlier chats not synced (will retry): " + credential.Redact(err.Error()), Expired: errors.Is(err, ErrSessionExpired)}
 		}

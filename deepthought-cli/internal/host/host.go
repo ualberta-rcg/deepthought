@@ -41,18 +41,18 @@ type GPU struct {
 	MemoryKnown, UtilKnown                     bool
 }
 type Record struct {
-	ID, ClientID, ClusterID, Name, User, OS, Arch, Kind, IdentitySource string
-	CPUs                                                                int
-	MemoryTotal, MemoryUsed                                             uint64
-	CPULimit, MemoryLimit, GPU                                          string
-	CPUPercent                                                          float64
-	CPUKnown                                                            bool
-	MemoryKnown                                                         bool
-	GPUs                                                                []GPU
-	Allocation                                                          Allocation
-	Services                                                            []Service
-	Storage                                                             []Storage
-	CollectedAt, LastSeen                                               time.Time
+	ID, ClientID, ClusterID, Name, User, Email, OS, Arch, Kind, IdentitySource string
+	CPUs                                                                       int
+	MemoryTotal, MemoryUsed                                                    uint64
+	CPULimit, MemoryLimit, GPU                                                 string
+	CPUPercent                                                                 float64
+	CPUKnown                                                                   bool
+	MemoryKnown                                                                bool
+	GPUs                                                                       []GPU
+	Allocation                                                                 Allocation
+	Services                                                                   []Service
+	Storage                                                                    []Storage
+	CollectedAt, LastSeen                                                      time.Time
 }
 
 var cache struct {
@@ -70,6 +70,21 @@ func SmallFile(path string) string {
 	defer f.Close()
 	b, _ := io.ReadAll(io.LimitReader(f, 16384))
 	return strings.TrimSpace(string(b))
+}
+
+// OODEmail reads the DRAC Open OnDemand OIDC email persisted by
+// /opt/ood/scripts/ood_pun_oidc_email.sh at ~/ondemand/oidc_email.txt (or
+// $OIDC_CLAIM_email when running under an OIDC-enabled environment).
+func OODEmail() string {
+	if v := clean(strings.TrimSpace(os.Getenv("OIDC_CLAIM_email"))); v != "" {
+		return v
+	}
+	if home, err := os.UserHomeDir(); err == nil && home != "" {
+		if v := clean(SmallFile(filepath.Join(home, "ondemand", "oidc_email.txt"))); v != "" {
+			return v
+		}
+	}
+	return ""
 }
 func clean(s string) string {
 	return strings.Map(func(r rune) rune {
@@ -99,7 +114,7 @@ func Collect(ctx context.Context, store Store) Record {
 	}
 	id, source := ID()
 	name, _ := os.Hostname()
-	r := Record{ID: id, Name: clean(name), User: clean(os.Getenv("USER")), Arch: runtime.GOARCH, Kind: "unknown", IdentitySource: source, CPUs: runtime.NumCPU(), CollectedAt: time.Now(), LastSeen: time.Now()}
+	r := Record{ID: id, Name: clean(name), User: clean(os.Getenv("USER")), Email: OODEmail(), Arch: runtime.GOARCH, Kind: "unknown", IdentitySource: source, CPUs: runtime.NumCPU(), CollectedAt: time.Now(), LastSeen: time.Now()}
 	if store != nil {
 		var old Record
 		if store.ReadRecord("host", id, &old) == nil {

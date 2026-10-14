@@ -57,8 +57,12 @@ func clusterSection(c slurm.ClusterSnapshot) Section {
 			typ = " " + c.GPUType
 		}
 		if c.GPUAllocKnown {
-			body = append(body, fmt.Sprintf("  gpus   %s  %d%% allocated (%d/%d%s · %d unallocated)",
-				healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail))
+			usableNote := ""
+			if c.GPUUsable > 0 {
+				usableNote = fmt.Sprintf(" · %d usable", c.GPUUsable)
+			}
+			body = append(body, fmt.Sprintf("  gpus   %s  %d%% allocated (%d/%d%s · %d unallocated%s)",
+				healthBar(gpuF, clusterBarW), fracPct(gpuF), c.GPUsUsed, c.GPUs, typ, avail, usableNote))
 		} else {
 			body = append(body, fmt.Sprintf("  gpus   allocation unavailable · %d%s capacity", c.GPUs, typ))
 		}
@@ -126,11 +130,22 @@ func fairshareSection(c slurm.ClusterSnapshot) Section {
 		return Section{Title: "Fairshare", Rows: body}
 	}
 	for _, r := range c.FairshareRows {
-		line := fmt.Sprintf("  %s  %s  %.2f",
+		tier, _ := slurm.FairshareTier(r.Fairshare)
+		barCol := barOK
+		if r.Fairshare < slurm.FSBehind {
+			barCol = barErr
+		} else if r.Fairshare < slurm.FSNominal {
+			barCol = barWarn
+		}
+		line := fmt.Sprintf("  %s  %s  %.2f (%s)",
 			truncatePad(r.Account, 14),
-			barFill(fracPct(frac01(r.Fairshare, 1)), 12, barOK, false), r.Fairshare)
+			barFill(fracPct(frac01(r.Fairshare, 1)), 12, barCol, false), r.Fairshare, tier)
 		if r.LevelFS != "" {
-			line += "  " + dimNote("LevelFS "+r.LevelFS)
+			lfsNote := "LevelFS " + r.LevelFS
+			if lfsTier := slurm.LevelFSTier(r.LevelFS); lfsTier != "" {
+				lfsNote += " [" + lfsTier + "]"
+			}
+			line += "  " + dimNote(lfsNote)
 		}
 		body = append(body, line)
 	}

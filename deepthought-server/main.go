@@ -25,6 +25,7 @@ import (
 var (
 	addrFlag     = flag.String("addr", "127.0.0.1:8080", "listen address (the container overrides to 0.0.0.0:8080)")
 	dataFlag     = flag.String("data", "", "data directory (default: the DeepThought data dir)")
+	configFlag   = flag.String("config", "", "server JSON config file (default: $DEEPTHOUGHT_SERVER_CONFIG or <data>/server.json)")
 	passwordFlag = flag.String("password-file", "", "file containing the shared login password (overrides $DEEPTHOUGHT_SERVER_PASSWORD)")
 )
 
@@ -45,17 +46,33 @@ func main() {
 	if err := dserver.EnsureDirs(dataDir); err != nil {
 		log.Fatalf("data dirs: %v", err)
 	}
-	password := loadPassword()
+	cfg, err := dserver.LoadServerConfig(*configFlag, dataDir)
+	if err != nil {
+		log.Fatalf("server config: %v", err)
+	}
+	if cfg.DataDir != "" {
+		dataDir = cfg.DataDir
+	}
+	_ = dserver.WriteExampleServerConfig(dataDir)
+
+	password := loadPassword(cfg)
+	ttl := time.Duration(cfg.SessionTTLHours) * time.Hour
+	if ttl <= 0 {
+		ttl = 24 * time.Hour
+	}
 
 	api := &dserver.API{
 		Start:    time.Now(),
 		DataDir:  dataDir,
 		Password: password,
-		Sessions: dserver.NewSessionStore(24 * time.Hour),
+		Sessions: dserver.NewSessionStore(ttl),
 		Version:  version(),
-		Admins:   adminUsers(os.Getenv("DEEPTHOUGHT_ADMIN_USERS")),
+		Admins:   adminUsers(cfg.AdminUsers, os.Getenv("DEEPTHOUGHT_ADMIN_USERS")),
+		Config:   cfg,
+		OIDC:     dserver.NewOIDCProvider(cfg.Auth.OIDC),
 	}
-	if dsn := os.Getenv("DEEPTHOUGHT_MYSQL_DSN"); dsn != "" {
+	dsn := cfg.MySQLDSN
+	if dsn != "" {
 		db, users, err := dserver.OpenDB(dsn)
 		if err != nil {
 			log.Fatalf("%v", err)
@@ -69,7 +86,7 @@ func main() {
 	} else {
 		log.Print("database: not configured (user settings + chats endpoints 503 — set DEEPTHOUGHT_MYSQL_DSN)")
 	}
-	if key := os.Getenv("DEEPTHOUGHT_VAULT_KEY"); key != "" {
+	if key := cfg.VaultKey; key != "" {
 		vault, err := dserver.NewVault(key)
 		if err != nil {
 			log.Fatalf("DEEPTHOUGHT_VAULT_KEY: %v", err)
@@ -79,8 +96,12 @@ func main() {
 	} else {
 		log.Print("credential vault: not configured (only $ENV credential references can be synced — set DEEPTHOUGHT_VAULT_KEY)")
 	}
+	listenAddr := *addrFlag
+	if listenAddr == "127.0.0.1:8080" && cfg.ListenAddr != "" {
+		listenAddr = cfg.ListenAddr
+	}
 	httpSrv := &http.Server{
-		Addr:              *addrFlag,
+		Addr:              listenAddr,
 		Handler:           logRequests(dserver.NewMux(api)),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -93,7 +114,7 @@ func main() {
 	errCh := make(chan error, 1)
 	go func() {
 		log.Printf("deepthought-server listening on %s (data: %s, auth: %s)",
-			*addrFlag, dataDir, authState(password))
+			listenAddr, dataDir, authState(cfg, password))
 		errCh <- httpSrv.ListenAndServe()
 	}()
 
@@ -125,22 +146,37 @@ func init() {
 	}()
 }
 
-func loadPassword() string {
-	if *passwordFlag != "" {
-		b, err := os.ReadFile(*passwordFlag)
+func loadPassword(cfg dserver.ServerConfig) string {
+	pwFile := *passwordFlag
+	if pwFile == "" {
+		pwFile = cfg.Auth.PasswordFile
+	}
+	if pwFile != "" {
+		b, err := os.ReadFile(pwFile)
 		if err != nil {
 			log.Fatalf("password file: %v", err)
 		}
 		return strings.TrimSpace(string(b))
 	}
+	if cfg.Auth.Password != "" {
+		return cfg.Auth.Password
+	}
 	return os.Getenv("DEEPTHOUGHT_SERVER_PASSWORD")
 }
 
-func authState(password string) string {
-	if password == "" {
-		return "OFF (all /api endpoints 503 — set DEEPTHOUGHT_SERVER_PASSWORD or --password-file)"
+func authState(cfg dserver.ServerConfig, password string) string {
+	pwOn := cfg.Auth.PasswordEnabled(password)
+	oidcOn := cfg.Auth.OIDCEnabled()
+	switch {
+	case pwOn && oidcOn:
+		return fmt.Sprintf("hybrid (shared password + OIDC %s)", cfg.Auth.OIDC.Issuer)
+	case oidcOn:
+		return fmt.Sprintf("OIDC (%s)", cfg.Auth.OIDC.Issuer)
+	case pwOn:
+		return "shared password + session tokens (OIDC configured, inactive)"
+	default:
+		return "OFF (all /api endpoints 503 — set DEEPTHOUGHT_SERVER_PASSWORD or enable OIDC in server.json)"
 	}
-	return "shared password + session tokens"
 }
 
 func logRequests(next http.Handler) http.Handler {
@@ -164,9 +200,14 @@ func version() string {
 	return "dev"
 }
 
-// adminUsers parses a comma-separated login-name list.
-func adminUsers(list string) map[string]bool {
+// adminUsers parses configured and comma-separated login-name lists.
+func adminUsers(cfgAdmins []string, list string) map[string]bool {
 	out := map[string]bool{}
+	for _, name := range cfgAdmins {
+		if name = strings.TrimSpace(name); name != "" {
+			out[name] = true
+		}
+	}
 	for _, name := range strings.Split(list, ",") {
 		if name = strings.TrimSpace(name); name != "" {
 			out[name] = true

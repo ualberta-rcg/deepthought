@@ -109,7 +109,7 @@ func TestPlaceholders501(t *testing.T) {
 	_, ts := testAPI("pw", t.TempDir())
 	defer ts.Close()
 	token := loginSession(t, ts, "ada", "pw")
-	for _, path := range []string{"/api/v1/jobs", "/api/v1/experiments"} {
+	for _, path := range []string{"/api/v1/crons"} {
 		resp, err := authedGet(ts, path, token)
 		if err != nil || resp.StatusCode != 501 {
 			t.Errorf("%s = %v %v, want 501", path, err, resp)
@@ -117,13 +117,13 @@ func TestPlaceholders501(t *testing.T) {
 	}
 }
 
-// /api/v1/chats is real now: without a database configured it answers 503
-// (like the rest of the DB-backed surface), not a placeholder 501.
+// /api/v1/chats, /api/v1/jobs, and /api/v1/experiments are DB-backed now:
+// without a database configured they answer 503, not a placeholder 501.
 func TestDBEndpoints503WithoutDSN(t *testing.T) {
 	_, ts := testAPI("pw", t.TempDir())
 	defer ts.Close()
 	token := loginSession(t, ts, "ada", "pw")
-	for _, path := range []string{"/api/v1/chats", "/api/v1/user/settings"} {
+	for _, path := range []string{"/api/v1/chats", "/api/v1/user/settings", "/api/v1/jobs", "/api/v1/experiments"} {
 		resp, err := authedGet(ts, path, token)
 		if err != nil || resp.StatusCode != 503 {
 			t.Errorf("%s = %v %v, want 503", path, err, resp)

@@ -57,8 +57,12 @@ planned fix and stay deferred until the password is shared more widely.
 | `GET /api/v1/chats/{id}` | one chat graph |
 | `PUT /api/v1/chats/{id}` | upsert a chat graph; ids owned by another account are `409` |
 | `GET/PUT /api/v1/settings/defaults` | the server defaults layer; PUT is admin-only and rejects credential keys |
-| `GET /api/v1/version`, `GET /api/v1/crons`, `POST /api/v1/admin/reload` | build info, the cron registry, config/skills reload |
-| `GET /api/v1/jobs`, `GET /api/v1/experiments` | `501` placeholders |
+| `GET /api/v1/version`, `GET /api/v1/crons`, `POST /api/v1/admin/reload` | build info, the cron registry (`501` placeholder), config/skills reload |
+| `GET /api/v1/jobs`, `PUT /api/v1/jobs/{id}` | user-scoped Slurm job records (`records` table, kind `slurm-job`) |
+| `GET /api/v1/experiments`, `PUT /api/v1/experiments/{id}` | user-scoped scientific workflow records (`records` table, kind `workflow`) |
+| `GET /api/v1/auth/config`, `GET /api/v1/auth/me` | active auth modes (`password` / `oidc` / `both`) + caller identity (`user`, `email`, `admin`) |
+| `GET /api/v1/auth/oidc/login`, `GET /api/v1/auth/oidc/callback` | DRAC OIDC Authorization Code + PKCE flow (disabled by default until enabled in `server.json`) |
+| `POST /api/v1/auth/device/start`, `POST /api/v1/auth/device/poll` | CLI browser-assisted OIDC device login flow |
 
 A credential id is `CredentialID(name, base_url, wire)`: the first 32 hex
 digits of SHA-256 over the lower-cased name, the URL without a trailing slash

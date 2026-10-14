@@ -51,6 +51,10 @@ type API struct {
 	// Vault seals secret credentials ($DEEPTHOUGHT_VAULT_KEY); nil means
 	// only $ENV references can be stored.
 	Vault *Vault
+	// Config holds the loaded server configuration (auth mode, OIDC settings, etc.).
+	Config ServerConfig
+	// OIDC is the OpenID Connect Relying Party state (active only when Config.Auth.OIDC.Enabled is true).
+	OIDC *OIDCProvider
 }
 
 // passwordMatches compares in constant time (hashing first so the length of
@@ -70,11 +74,25 @@ func internalError(w http.ResponseWriter, r *http.Request, err error) {
 
 // NewMux builds the full route table.
 func NewMux(a *API) *http.ServeMux {
+	if a.Config.Auth.Mode == "" {
+		a.Config = DefaultServerConfig()
+	}
+	if a.OIDC == nil {
+		a.OIDC = NewOIDCProvider(a.Config.Auth.OIDC)
+	}
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", a.health)
 	mux.HandleFunc("GET /readyz", a.health)
+	mux.HandleFunc("GET /api/v1/auth/config", a.authConfigHandler)
+	mux.HandleFunc("GET /api/v1/auth/me", a.auth(a.authMeHandler))
 	mux.HandleFunc("POST /api/v1/auth/login", a.login)
 	mux.HandleFunc("POST /api/v1/auth/logout", a.auth(a.logout))
+	mux.HandleFunc("GET /api/v1/auth/oidc/login", a.oidcLogin)
+	mux.HandleFunc("GET /oidc/login", a.oidcLogin)
+	mux.HandleFunc("GET /api/v1/auth/oidc/callback", a.oidcCallback)
+	mux.HandleFunc("GET /oidc", a.oidcCallback)
+	mux.HandleFunc("POST /api/v1/auth/device/start", a.deviceStartHandler)
+	mux.HandleFunc("POST /api/v1/auth/device/poll", a.devicePollHandler)
 	mux.HandleFunc("GET /api/v1/user/sessions", a.auth(a.listSessions))
 	mux.HandleFunc("DELETE /api/v1/user/sessions/{id}", a.auth(a.revokeSession))
 	mux.HandleFunc("GET /api/v1/user/credentials", a.auth(a.listCredentials))
@@ -90,8 +108,10 @@ func NewMux(a *API) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/chats", a.auth(a.listChats))
 	mux.HandleFunc("GET /api/v1/chats/{id}", a.auth(a.getChat))
 	mux.HandleFunc("PUT /api/v1/chats/{id}", a.auth(a.putChat))
-	mux.HandleFunc("GET /api/v1/jobs", a.placeholder("jobs"))
-	mux.HandleFunc("GET /api/v1/experiments", a.placeholder("experiments"))
+	mux.HandleFunc("GET /api/v1/jobs", a.auth(a.listJobs))
+	mux.HandleFunc("PUT /api/v1/jobs/{id}", a.auth(a.putJob))
+	mux.HandleFunc("GET /api/v1/experiments", a.auth(a.listExperiments))
+	mux.HandleFunc("PUT /api/v1/experiments/{id}", a.auth(a.putExperiment))
 	mux.HandleFunc("POST /api/v1/admin/reload", a.auth(a.reload))
 	a.serveUI(mux)
 	return mux
@@ -133,7 +153,13 @@ func (a *API) version(w http.ResponseWriter, r *http.Request) {
 // login exchanges the shared password for a session token. The username is
 // supplied by the client and becomes the session identity (single-user phase).
 func (a *API) login(w http.ResponseWriter, r *http.Request) {
-	if a.Password == "" {
+	if !a.passwordActive() {
+		if a.oidcActive() {
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": "password login is disabled; sign in with OIDC at /api/v1/auth/oidc/login",
+			})
+			return
+		}
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 			"error": "server auth not configured (set DEEPTHOUGHT_SERVER_PASSWORD)",
 		})
@@ -357,13 +383,72 @@ func (a *API) reload(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func (a *API) placeholder(name string) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		writeJSON(w, http.StatusNotImplemented, map[string]any{
-			"error":  "not implemented yet",
-			"future": fmt.Sprintf("GET /api/v1/%s is part of the roadmap (docs/SERVER.md)", name),
+func (a *API) listJobs(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "slurm-job", "jobs")
+}
+
+func (a *API) putJob(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "slurm-job")
+}
+
+func (a *API) listExperiments(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "workflow", "experiments")
+}
+
+func (a *API) putExperiment(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "workflow")
+}
+
+func (a *API) listRecordsByKind(w http.ResponseWriter, r *http.Request, kind, responseKey string) {
+	st := a.chatStore(w, r)
+	if st == nil {
+		return
+	}
+	rows, err := st.Records(kind)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	items := make([]map[string]any, 0, len(rows))
+	for _, row := range rows {
+		var parsed any
+		if err := json.Unmarshal(row.Data, &parsed); err != nil {
+			parsed = string(row.Data)
+		}
+		items = append(items, map[string]any{
+			"id":      row.ID,
+			"updated": row.Updated.UTC().Format(time.RFC3339),
+			"record":  parsed,
 		})
 	}
+	writeJSON(w, http.StatusOK, map[string]any{responseKey: items})
+}
+
+func (a *API) putRecordByKind(w http.ResponseWriter, r *http.Request, kind string) {
+	st := a.chatStore(w, r)
+	if st == nil {
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" || len(id) > 128 {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "valid id required"})
+		return
+	}
+	body, err := io.ReadAll(io.LimitReader(r.Body, 4<<20))
+	if err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "bad request"})
+		return
+	}
+	var payload any
+	if err := json.Unmarshal(body, &payload); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "body must be valid JSON"})
+		return
+	}
+	if err := st.PutRecord(kind, id, payload); err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"status": "saved", "id": id, "kind": kind})
 }
 
 // auth enforces the session token and injects the session (user identity)
@@ -372,13 +457,35 @@ func (a *API) placeholder(name string) http.HandlerFunc {
 // → 503, never silently open.
 func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		if a.Password == "" {
+		if !a.anyAuthConfigured() {
 			writeJSON(w, http.StatusServiceUnavailable, map[string]any{
 				"error": "server auth not configured (set DEEPTHOUGHT_SERVER_PASSWORD)",
 			})
 			return
 		}
 		got := bearer(r)
+		if got == "" && a.oidcActive() && a.Config.Auth.OIDC.TrustProxyHeaders {
+			userHdr := a.Config.Auth.OIDC.ProxyUserHeader
+			if userHdr == "" {
+				userHdr = "OIDC_CLAIM_preferred_username"
+			}
+			if proxyUser := strings.TrimSpace(r.Header.Get(userHdr)); proxyUser != "" {
+				emailHdr := a.Config.Auth.OIDC.ProxyEmailHeader
+				if emailHdr == "" {
+					emailHdr = "OIDC_CLAIM_email"
+				}
+				proxyEmail := strings.TrimSpace(r.Header.Get(emailHdr))
+				if a.Users != nil {
+					_ = a.Users.UpsertLoginWithIdentity(sanitizeUserID(proxyUser), proxyUser, proxyEmail, "")
+				}
+				if proxyEmail != "" {
+					a.runPostLoginHook(proxyUser, proxyEmail, map[string]any{"email": proxyEmail, "preferred_username": proxyUser})
+				}
+				sess := Session{User: proxyUser, Expires: time.Now().Add(time.Hour)}
+				next(w, r.WithContext(context.WithValue(r.Context(), sessionKey{}, sess)))
+				return
+			}
+		}
 		if got == "" {
 			w.Header().Set("WWW-Authenticate", `Bearer realm="deepthought"`)
 			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized"})
