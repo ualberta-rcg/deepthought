@@ -133,7 +133,7 @@ func fairshareSection(c slurm.ClusterSnapshot) Section {
 		tier, _ := slurm.FairshareTier(r.Fairshare)
 		barCol := barOK
 		if r.Fairshare < slurm.FSBehind {
-			barCol = barErr
+			barCol = barCrit
 		} else if r.Fairshare < slurm.FSNominal {
 			barCol = barWarn
 		}

@@ -400,8 +400,9 @@ func (a *API) putExperiment(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *API) listRecordsByKind(w http.ResponseWriter, r *http.Request, kind, responseKey string) {
-	st := a.chatStore(w, r)
-	if st == nil {
+	st, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 		return
 	}
 	rows, err := st.Records(kind)
@@ -425,8 +426,9 @@ func (a *API) listRecordsByKind(w http.ResponseWriter, r *http.Request, kind, re
 }
 
 func (a *API) putRecordByKind(w http.ResponseWriter, r *http.Request, kind string) {
-	st := a.chatStore(w, r)
-	if st == nil {
+	st, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
 		return
 	}
 	id := strings.TrimSpace(r.PathValue("id"))
