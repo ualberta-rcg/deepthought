@@ -57,9 +57,11 @@ type State string
 
 const (
 	StateFull      State = "FULL"
+	StateDetailed  State = "DETAILED"
 	StateDigest    State = "DIGEST"
 	StateLine      State = "LINE"
 	StateTombstone State = "TOMBSTONE"
+	StateExemplar  State = "EXEMPLAR"
 	StateElided    State = "ELIDED"
 )
 
@@ -106,16 +108,20 @@ type SummaryLevel int
 
 const (
 	SummaryFull SummaryLevel = iota
+	SummaryDetailed
 	SummaryCondensed
 	SummarySemantic
 	SummaryTombstone
+	SummaryExemplar
 )
 
 type SummarySet struct {
 	Full      string
+	Detailed  string
 	Condensed string
 	Semantic  string
 	Tombstone string
+	Exemplar  string
 }
 
 type ResultView struct {
@@ -492,7 +498,175 @@ func WrapEntity(obj Entity) (*Drone, error) {
 	drone.Cost = v.Cost
 	drone.Sensitivity = v.Sensitivity
 	drone.Body = raw
+	drone.Summaries = BuildSixTierSummarySet(obj)
 	return drone, nil
+}
+
+// ToolExecutionRecord is the structured SQL row for a probe tool execution.
+type ToolExecutionRecord struct {
+	ID              string `json:"id"`
+	SessionID       string `json:"session_id"`
+	CollectiveID    string `json:"collective_id"`
+	IncursionID     string `json:"incursion_id,omitempty"`
+	TransmissionID  string `json:"transmission_id,omitempty"`
+	SystemID        string `json:"system_id,omitempty"`
+	ClusterName     string `json:"cluster_name,omitempty"`
+	ToolName        string `json:"tool_name"`
+	ProbeType       string `json:"probe_type"`
+	Command         string `json:"command,omitempty"`
+	TargetPath      string `json:"target_path,omitempty"`
+	ArgumentsJSON   string `json:"arguments_json"`
+	ResponseText    string `json:"response_text"`
+	ResponseSummary string `json:"response_summary"`
+	IsError         bool   `json:"is_error"`
+	ExitCode        int    `json:"exit_code"`
+	DurationMS      int64  `json:"duration_ms"`
+	CWD             string `json:"cwd,omitempty"`
+	EnvJSON         string `json:"env_json,omitempty"`
+	SlurmJobID      string `json:"slurm_job_id,omitempty"`
+	ArtifactsJSON   string `json:"artifacts_json,omitempty"`
+	Status          string `json:"status"`
+	Decision        string `json:"decision"`
+	StartedAt       string `json:"started_at,omitempty"`
+	FinishedAt      string `json:"finished_at,omitempty"`
+	CreatedAt       string `json:"created_at"`
+}
+
+// SummaryRow is one persisted row in the `summaries` table.
+type SummaryRow struct {
+	InteractionID string `json:"interaction_id"`
+	State         string `json:"state"`
+	Summarizer    string `json:"summarizer"`
+	Text          string `json:"text"`
+	Tokens        int    `json:"tokens"`
+	CreatedAt     string `json:"created_at"`
+}
+
+// BuildSixTierSummarySet constructs a complete 6-tier SummarySet for any graph Entity.
+func BuildSixTierSummarySet(obj Entity) SummarySet {
+	if obj == nil {
+		return SummarySet{}
+	}
+	condense := func(s string, maxLines, maxChars int) string {
+		if s == "" {
+			return ""
+		}
+		if len(s) > maxChars {
+			return s[:maxChars] + "..."
+		}
+		return s
+	}
+	firstLine := func(s string, maxChars int) string {
+		for i := 0; i < len(s); i++ {
+			if s[i] == '\n' {
+				s = s[:i]
+				break
+			}
+		}
+		if len(s) > maxChars {
+			return s[:maxChars] + "..."
+		}
+		return s
+	}
+	switch e := obj.(type) {
+	case *Probe:
+		s := e.Result.Summaries
+		full := s.Full
+		if full == "" {
+			full = e.Result.Content
+		}
+		if full == "" {
+			full = e.ArgumentsRaw
+		}
+		s.Full = full
+		if s.Detailed == "" {
+			s.Detailed = condense(full, 80, 6000)
+		}
+		if s.Condensed == "" {
+			s.Condensed = condense(full, 20, 2000)
+		}
+		if s.Semantic == "" {
+			if e.Result.Summary != "" {
+				s.Semantic = fmt.Sprintf("%s → %s: %s", e.Name, e.Status.String(), e.Result.Summary)
+			} else {
+				s.Semantic = fmt.Sprintf("%s → %s: %s", e.Name, e.Status.String(), firstLine(full, 160))
+			}
+		}
+		if s.Tombstone == "" {
+			s.Tombstone = fmt.Sprintf("[probe %s summarized]", e.ID)
+		}
+		if s.Exemplar == "" {
+			s.Exemplar = fmt.Sprintf("[Worked Example · %s · %s]\nArgs: %s\nVerified Output:\n%s",
+				e.Name, e.Status.String(), condense(e.ArgumentsRaw, 5, 400), condense(full, 16, 1200))
+		}
+		return s
+	case *Incursion:
+		s := e.Summaries
+		if s.Full == "" {
+			s.Full = e.Prompt
+		}
+		if s.Detailed == "" {
+			s.Detailed = condense(s.Full, 80, 6000)
+		}
+		if s.Condensed == "" {
+			s.Condensed = condense(s.Full, 20, 2000)
+		}
+		if s.Semantic == "" {
+			s.Semantic = firstLine(s.Full, 240)
+		}
+		if s.Tombstone == "" {
+			s.Tombstone = fmt.Sprintf("[incursion %s summarized]", e.ID)
+		}
+		if s.Exemplar == "" {
+			s.Exemplar = firstLine(s.Full, 400)
+		}
+		return s
+	case *Transmission:
+		full := e.Text
+		return SummarySet{
+			Full:      full,
+			Detailed:  condense(full, 80, 6000),
+			Condensed: condense(full, 20, 2000),
+			Semantic:  firstLine(full, 240),
+			Tombstone: fmt.Sprintf("[transmission %s summarized]", e.ID),
+			Exemplar:  condense(full, 30, 1200),
+		}
+	case *Pattern:
+		full := e.Content
+		return SummarySet{
+			Full:      full,
+			Detailed:  full,
+			Condensed: condense(full, 10, 800),
+			Semantic:  firstLine(full, 240),
+			Tombstone: fmt.Sprintf("[pattern %s summarized]", e.ID),
+			Exemplar:  full,
+		}
+	case *Synapse:
+		full := e.Content
+		return SummarySet{
+			Full:      full,
+			Detailed:  condense(full, 60, 4000),
+			Condensed: condense(full, 15, 1200),
+			Semantic:  firstLine(full, 240),
+			Tombstone: fmt.Sprintf("[synapse %s summarized]", e.ID),
+			Exemplar:  condense(full, 20, 800),
+		}
+	case *Collective:
+		full := e.Title
+		if full == "" {
+			full = e.SystemPrompt
+		}
+		return SummarySet{
+			Full:      full,
+			Detailed:  condense(full, 40, 2000),
+			Condensed: condense(full, 10, 600),
+			Semantic:  firstLine(full, 200),
+			Tombstone: fmt.Sprintf("[collective %s summarized]", e.ID),
+			Exemplar:  firstLine(full, 200),
+		}
+	default:
+		return SummarySet{Tombstone: fmt.Sprintf("[%s %s summarized]", obj.ObjectKind(), obj.ObjectID())}
+	}
 }
 
 func outcomeFromEntity(obj Entity) Outcome {

@@ -20,9 +20,12 @@ an unlimited sample history. These records do not synchronize to DeepThought
 Server. Hosts & Services shows remembered hosts and last-seen timestamps.
 
 Services distinguish a command being installed, configuration being detected,
-and successful access being observed. Slurm, CVMFS, Lmod, and Globus are separate
-records; a Globus CLI installation does not prove authentication or connectivity.
-No service login is attempted by inventory collection.
+and successful access being observed. Slurm, CVMFS, Lmod, Globus, Apptainer/Singularity,
+Docker, Podman, Kubernetes (`kubectl`), AWS CLI, Google Cloud (`gcloud`), Azure CLI,
+OpenStack, Rclone, Conda, Spack, and PBS (`qstat`) are probed into the host capability
+profile (`host.Record`), keyed by a stable `SystemID` (machine-id + hostname hash)
+and cluster/site classification. Connected clients push their `host-node` record
+to `/api/v1/hosts/{id}` and heartbeat via `/api/v1/fleet/heartbeat`.
 
 ## Observation scope
 

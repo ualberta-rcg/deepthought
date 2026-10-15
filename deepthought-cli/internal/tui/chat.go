@@ -832,6 +832,14 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		return m, func() tea.Msg { return WorkspaceAction{Kind: "discover"} }
 	case val == "/menu":
 		return m, func() tea.Msg { return WorkspaceAction{Kind: "menu"} }
+	case val == "/project" || strings.HasPrefix(val, "/project "):
+		return m.runQuickToolCommand("project", strings.TrimSpace(strings.TrimPrefix(val, "/project")))
+	case val == "/rag" || strings.HasPrefix(val, "/rag "):
+		return m.runQuickToolCommand("ragflow", strings.TrimSpace(strings.TrimPrefix(val, "/rag")))
+	case val == "/fleet" || strings.HasPrefix(val, "/fleet "):
+		return m.runQuickToolCommand("fleet", strings.TrimSpace(strings.TrimPrefix(val, "/fleet")))
+	case val == "/pipeline" || strings.HasPrefix(val, "/pipeline "):
+		return m.runQuickToolCommand("workflow", strings.TrimSpace(strings.TrimPrefix(val, "/pipeline")))
 	case strings.HasPrefix(val, "/"):
 		m.systemLine("unknown command: " + val + " — try /help")
 		return m, nil
@@ -1039,6 +1047,79 @@ func (m ChatModel) resumeInterrupted() (ChatModel, tea.Cmd) {
 	inc.Error = ""
 	_ = m.store.SaveObject(inc)
 	return m.armStream()
+}
+
+func (m ChatModel) runQuickToolCommand(toolName, rawArgs string) (ChatModel, tea.Cmd) {
+	if m.reg == nil {
+		m.systemLine(toolName + ": tool registry unavailable")
+		return m, nil
+	}
+	tool, ok := m.reg.Lookup(toolName)
+	if !ok {
+		m.systemLine(toolName + ": tool not registered")
+		return m, nil
+	}
+	args := map[string]any{}
+	fields := strings.Fields(rawArgs)
+	switch toolName {
+	case "project":
+		if len(fields) == 0 {
+			args["operation"] = "list"
+		} else {
+			args["operation"] = fields[0]
+			if len(fields) > 1 {
+				args["name"] = fields[1]
+				args["id"] = fields[1]
+			}
+			if len(fields) > 2 {
+				args["asset_path"] = fields[2]
+				args["description"] = strings.Join(fields[2:], " ")
+			}
+		}
+	case "ragflow":
+		if len(fields) == 0 {
+			args["operation"] = "status"
+		} else if fields[0] == "datasets" || fields[0] == "status" {
+			args["operation"] = fields[0]
+		} else {
+			args["operation"] = "retrieve"
+			args["question"] = rawArgs
+		}
+	case "fleet":
+		if len(fields) == 0 {
+			args["operation"] = "nodes"
+		} else {
+			args["operation"] = fields[0]
+			if len(fields) > 1 {
+				args["target"] = fields[1]
+				args["task_id"] = fields[1]
+				args["query"] = strings.Join(fields[1:], " ")
+			}
+			if len(fields) > 2 {
+				args["payload"] = strings.Join(fields[2:], " ")
+			}
+		}
+	case "workflow":
+		if len(fields) == 0 {
+			args["operation"] = "list_templates"
+		} else {
+			args["operation"] = fields[0]
+			if len(fields) > 1 {
+				args["id"] = fields[1]
+				args["template_id"] = fields[1]
+			}
+			if len(fields) > 2 {
+				args["name"] = strings.Join(fields[2:], " ")
+			}
+		}
+	}
+	res := tool.Run(context.Background(), args)
+	if res.IsError {
+		m.systemLine("✗ " + res.Content)
+	} else {
+		m.systemLine(res.Summary + "\n" + res.Content)
+	}
+	return m, nil
 }
 
 // Busy reports whether a model/tool turn is active.

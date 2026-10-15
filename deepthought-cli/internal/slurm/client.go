@@ -59,9 +59,13 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 }
 
 type Client struct {
-	Runner Runner
-	Store  *history.SQLiteStore
-	mu     sync.Mutex
+	Runner   Runner
+	Store    *history.SQLiteStore
+	SystemID string
+	Host     string
+	Cluster  string
+	Site     string
+	mu       sync.Mutex
 }
 
 func NewClient(runner Runner) *Client {
@@ -214,6 +218,11 @@ type SubmitRequest struct {
 	Time         string
 	Memory       string
 	GRES         string
+	Partition    string
+	SystemID     string
+	Host         string
+	Cluster      string
+	Site         string
 }
 
 func (c *Client) submitCommand(ctx context.Context, request SubmitRequest) (string, error) {
@@ -224,6 +233,9 @@ func (c *Client) submitCommand(ctx context.Context, request SubmitRequest) (stri
 	args = append(args, "--cpus-per-task", strconv.Itoa(request.CPUs), "--comment", "deepthought:"+request.SubmissionID, "--job-name", "deepthought-"+request.SubmissionID, "--chdir", filepath.Dir(request.Script), "--output", filepath.Join(filepath.Dir(request.Script), "slurm-%j.out"))
 	if request.Account != "" {
 		args = append(args, "--account", request.Account)
+	}
+	if request.Partition != "" {
+		args = append(args, "--partition", request.Partition)
 	}
 	if request.Time != "" {
 		args = append(args, "--time", request.Time)

@@ -114,21 +114,233 @@ func (e *SummaryEngine) ExtractPatterns(ctx context.Context, probe *Probe) ([]*P
 	return out, nil
 }
 
-// WriteSummarySet populates all summary levels on set from text. It is the
+// WriteSummarySet populates all 6 summary levels on set from text. It is the
 // explicit entry point external summarization passes should use.
 func (e *SummaryEngine) WriteSummarySet(ctx context.Context, set *SummarySet, text string) error {
 	if set == nil {
 		return nil
 	}
 	set.Full = text
+	set.Detailed = Condense(text, 80, 6000)
 	set.Condensed = e.Condense(text, 0, 0)
+	set.Semantic = FirstLineSummary(text, 240)
 	set.Tombstone = e.Tombstone("object", "")
+	set.Exemplar = Condense(text, 30, 1200)
 	if e != nil && e.client != nil {
-		if semantic, err := e.Semantic(ctx, text); err == nil {
+		if semantic, err := e.Semantic(ctx, text); err == nil && semantic != "" {
 			set.Semantic = semantic
 		}
 	}
 	return nil
+}
+
+// FirstLineSummary returns a single-line semantic preview up to maxChars.
+func FirstLineSummary(text string, maxChars int) string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ""
+	}
+	for _, line := range strings.Split(text, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed != "" {
+			return truncateString(trimmed, maxChars)
+		}
+	}
+	return truncateString(text, maxChars)
+}
+
+// SynthesizeSemanticLine produces a deterministic 1-line summary for a Probe.
+func SynthesizeSemanticLine(p *Probe) string {
+	if p == nil {
+		return ""
+	}
+	if p.Result.Summaries.Semantic != "" {
+		return p.Result.Summaries.Semantic
+	}
+	target := extractProbePrimaryArg(p)
+	outcome := p.Result.Summary
+	if outcome == "" {
+		outcome = FirstLineSummary(p.Result.Content, 140)
+	}
+	if target != "" && outcome != "" {
+		return fmt.Sprintf("%s(%s) → %s: %s", p.Name, truncateString(target, 80), p.Status.String(), truncateString(outcome, 140))
+	}
+	if target != "" {
+		return fmt.Sprintf("%s(%s) → %s", p.Name, truncateString(target, 80), p.Status.String())
+	}
+	if outcome != "" {
+		return fmt.Sprintf("%s → %s: %s", p.Name, p.Status.String(), truncateString(outcome, 160))
+	}
+	return fmt.Sprintf("%s → %s", p.Name, p.Status.String())
+}
+
+// SynthesizeProbeExemplar builds a worked-example snippet capturing the tool,
+// primary command/path, arguments, and verified output excerpt.
+func SynthesizeProbeExemplar(p *Probe) string {
+	if p == nil {
+		return ""
+	}
+	if p.Result.Summaries.Exemplar != "" {
+		return p.Result.Summaries.Exemplar
+	}
+	var b strings.Builder
+	b.WriteString(fmt.Sprintf("[Worked Example · %s · %s]\n", p.Name, p.Status.String()))
+	if cmd := extractProbeCommand(p); cmd != "" {
+		b.WriteString("Command: " + truncateString(cmd, 400) + "\n")
+	}
+	if path := extractProbePath(p); path != "" {
+		b.WriteString("Path: " + path + "\n")
+	}
+	if p.Result.Summary != "" {
+		b.WriteString("Summary: " + p.Result.Summary + "\n")
+	}
+	if p.Result.Content != "" {
+		b.WriteString("Verified Output:\n" + Condense(p.Result.Content, 16, 1200))
+	}
+	return strings.TrimSpace(b.String())
+}
+
+func extractProbeCommand(p *Probe) string {
+	if p == nil || p.Arguments == nil {
+		return ""
+	}
+	for _, k := range []string{"command", "script", "action", "query"} {
+		if v, ok := p.Arguments[k].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func extractProbePath(p *Probe) string {
+	if p == nil || p.Arguments == nil {
+		return ""
+	}
+	for _, k := range []string{"file_path", "path", "target_path", "script_path", "dir", "workdir"} {
+		if v, ok := p.Arguments[k].(string); ok && strings.TrimSpace(v) != "" {
+			return strings.TrimSpace(v)
+		}
+	}
+	return ""
+}
+
+func extractProbePrimaryArg(p *Probe) string {
+	if cmd := extractProbeCommand(p); cmd != "" {
+		return cmd
+	}
+	if path := extractProbePath(p); path != "" {
+		return path
+	}
+	return strings.TrimSpace(p.ArgumentsRaw)
+}
+
+// BuildSixTierSummarySet constructs a complete 6-tier SummarySet for any graph Entity.
+func BuildSixTierSummarySet(obj Entity) SummarySet {
+	if obj == nil {
+		return SummarySet{}
+	}
+	switch e := obj.(type) {
+	case *Probe:
+		s := e.Result.Summaries
+		full := s.Full
+		if full == "" {
+			full = e.Result.Content
+		}
+		if full == "" {
+			full = e.ArgumentsRaw
+		}
+		s.Full = full
+		if s.Detailed == "" {
+			header := SynthesizeSemanticLine(e)
+			body := Condense(full, 80, 6000)
+			if header != "" && body != "" {
+				s.Detailed = header + "\n" + body
+			} else if body != "" {
+				s.Detailed = body
+			} else {
+				s.Detailed = header
+			}
+		}
+		if s.Condensed == "" {
+			s.Condensed = Condense(full, DefaultCondenseMaxLines, DefaultCondenseMaxChars)
+		}
+		if s.Semantic == "" {
+			s.Semantic = SynthesizeSemanticLine(e)
+		}
+		if s.Tombstone == "" {
+			s.Tombstone = TombstoneFor("probe", e.ID)
+		}
+		if s.Exemplar == "" {
+			s.Exemplar = SynthesizeProbeExemplar(e)
+		}
+		return s
+	case *Incursion:
+		s := e.Summaries
+		if s.Full == "" {
+			s.Full = e.Prompt
+		}
+		if s.Detailed == "" {
+			s.Detailed = Condense(s.Full, 80, 6000)
+		}
+		if s.Condensed == "" {
+			s.Condensed = Condense(s.Full, DefaultCondenseMaxLines, DefaultCondenseMaxChars)
+		}
+		if s.Semantic == "" {
+			s.Semantic = FirstLineSummary(s.Full, 240)
+		}
+		if s.Tombstone == "" {
+			s.Tombstone = TombstoneFor("incursion", e.ID)
+		}
+		if s.Exemplar == "" {
+			s.Exemplar = FirstLineSummary(s.Full, 400)
+		}
+		return s
+	case *Transmission:
+		full := e.Text
+		return SummarySet{
+			Full:      full,
+			Detailed:  Condense(full, 80, 6000),
+			Condensed: Condense(full, DefaultCondenseMaxLines, DefaultCondenseMaxChars),
+			Semantic:  FirstLineSummary(full, 240),
+			Tombstone: TombstoneFor("transmission", e.ID),
+			Exemplar:  Condense(full, 30, 1200),
+		}
+	case *Pattern:
+		full := e.Content
+		return SummarySet{
+			Full:      full,
+			Detailed:  full,
+			Condensed: Condense(full, 10, 800),
+			Semantic:  FirstLineSummary(full, 240),
+			Tombstone: TombstoneFor("pattern", e.ID),
+			Exemplar:  full,
+		}
+	case *Synapse:
+		full := e.Content
+		return SummarySet{
+			Full:      full,
+			Detailed:  Condense(full, 60, 4000),
+			Condensed: Condense(full, 15, 1200),
+			Semantic:  FirstLineSummary(full, 240),
+			Tombstone: TombstoneFor("synapse", e.ID),
+			Exemplar:  Condense(full, 20, 800),
+		}
+	case *Collective:
+		full := e.Title
+		if full == "" {
+			full = e.SystemPrompt
+		}
+		return SummarySet{
+			Full:      full,
+			Detailed:  Condense(full, 40, 2000),
+			Condensed: Condense(full, 10, 600),
+			Semantic:  FirstLineSummary(full, 200),
+			Tombstone: TombstoneFor("collective", e.ID),
+			Exemplar:  FirstLineSummary(full, 200),
+		}
+	default:
+		return SummarySet{Tombstone: TombstoneFor(obj.ObjectKind(), obj.ObjectID())}
+	}
 }
 
 // runPrompt is the common non-streaming call used by all model-backed summaries.

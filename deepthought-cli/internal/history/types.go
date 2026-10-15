@@ -24,41 +24,59 @@ type SummaryLevel int
 
 const (
 	SummaryFull SummaryLevel = iota
+	SummaryDetailed
 	SummaryCondensed
 	SummarySemantic
 	SummaryTombstone
+	SummaryExemplar
 )
 
 func (l SummaryLevel) String() string {
 	switch l {
 	case SummaryFull:
 		return "full"
+	case SummaryDetailed:
+		return "detailed"
 	case SummaryCondensed:
 		return "condensed"
 	case SummarySemantic:
 		return "semantic"
 	case SummaryTombstone:
 		return "tombstone"
+	case SummaryExemplar:
+		return "exemplar"
 	default:
 		return fmt.Sprintf("SummaryLevel(%d)", l)
 	}
 }
 
-// SummarySet holds progressively lossy views of the same content. When a level
-// is requested but empty, serialization falls back toward the next richer level.
-// None of these are generated automatically during chat; external systems call
-// the SummaryEngine to populate them.
+// SummarySet holds progressively lossy (or task-specialized) 6-tier views of the
+// same content. When a level is requested but empty, serialization falls back
+// toward the next richer level.
 type SummarySet struct {
-	Full      string // original, complete text
-	Condensed string // line/char-truncated preview
-	Semantic  string // LLM-generated summary
-	Tombstone string // minimal marker, e.g. "[summarized]"
+	Full      string // tier 0: original, complete text
+	Detailed  string // tier 1: rich structural multi-paragraph / 80-line summary
+	Condensed string // tier 2: line/char-truncated preview (digest)
+	Semantic  string // tier 3: one-to-two-sentence semantic summary (line)
+	Tombstone string // tier 4: minimal marker, e.g. "[summarized]"
+	Exemplar  string // tier 5: worked-example snippet (command + args + verified result)
 }
 
 // At returns the requested summary, falling back to richer levels if it is empty.
 // Tombstone is always returned as a last resort.
 func (s SummarySet) At(level SummaryLevel) string {
 	switch level {
+	case SummaryExemplar:
+		if s.Exemplar != "" {
+			return s.Exemplar
+		}
+		if s.Detailed != "" {
+			return s.Detailed
+		}
+		if s.Condensed != "" {
+			return s.Condensed
+		}
+		return s.Full
 	case SummaryTombstone:
 		if s.Tombstone != "" {
 			return s.Tombstone
@@ -72,6 +90,11 @@ func (s SummarySet) At(level SummaryLevel) string {
 	case SummaryCondensed:
 		if s.Condensed != "" {
 			return s.Condensed
+		}
+		fallthrough
+	case SummaryDetailed:
+		if s.Detailed != "" {
+			return s.Detailed
 		}
 		fallthrough
 	default:

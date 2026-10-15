@@ -1,5 +1,27 @@
 # DeepThought — Change Log
 
+## 2026-10-14 · deepthought-cli, deepthought-server — Arcade DON'T PANIC splash, Browser-Link CLI login, SystemUUID multi-cluster registry, SQL tool_executions & 6-tier summaries, repeatable pipelines with Worked Examples, Fleet compute fabric, SQL Projects/RAGFlow, and Unicomplex Web UI
+- **Arcade `DON'T PANIC` Start Screen & No Auto-Jump (`deepthought-cli/internal/tui/splash.go`, `internal/app/model.go`)**:
+  - Restored the gradient `DON'T PANIC` ASCII wordmark banner (`★ DEEPTHOUGHT · RESEARCH COMPUTING HARNESS · UNIVERSITY OF ALBERTA / AMII ★`) with a retro-arcade cabinet frame, live `loadout` / `network` / `system` (`Cluster · Host [SystemID] · Capabilities`) / `project` HUD, and 5 game-mode choices (`[1P] SINGLE PLAYER`, `[2P] MULTIPLAYER`, `[++] AI LOADOUT`, `[>>] COMMAND DECK`, `[##] SYSTEM CABINET`).
+  - Fixed startup background `candidatesMsg` (`event.Auto`) and `server-autoconnect` (`ServerLoginResultMsg`) so the TUI never auto-jumps off the splash screen before the user chooses a mode.
+- **Cursor / Antigravity-Style Browser-Link CLI Login (`deepthought-server/server/oidc.go`, `deepthought-cli/internal/app/{server_login.go,sync_workspace.go,model.go}`)**:
+  - Enabled `/api/v1/auth/device/start` and `/api/v1/auth/device/poll` in both password and OIDC modes and added `POST /api/v1/auth/device/approve` so a browser user signed into the Web UI can approve a CLI login in one click.
+  - Selecting `2P MULTIPLAYER` or `★ Sign in via Browser Link (Recommended)` starts a device login ticket, copies the URL to clipboard via OSC 52, and polls every 2s until approved.
+- **SystemUUID & Multi-Cluster Capability Registry (`deepthought-cli/internal/host/host.go`, `internal/slurm/{client.go,jobs.go,tools.go}`, `deepthought-server/server/http.go`)**:
+  - Extended `host.Collect` to detect cluster (`SLURM_CLUSTER_NAME`, `CC_CLUSTER`, `DRAC_CLUSTER`, Alliance hostname prefixes), site (`alliance`), and 16 HPC/cloud/container toolchains (`Slurm`, `CVMFS`, `Lmod`, `Globus`, `Apptainer`, `Docker`, `Podman`, `Kubernetes`, `AWS CLI`, `Google Cloud`, `Azure CLI`, `OpenStack`, `Rclone`, `Conda`, `Spack`, `PBS`).
+  - Tagged Slurm submissions with `SystemID`, `Host`, `Cluster`, `Site`, and `Partition`, relaxed the `#SBATCH --partition` guard on non-Alliance clusters, prevented `Reconcile` from clobbering jobs belonging to other systems, and added `GET/PUT /api/v1/hosts[/{id}]`.
+- **Structured SQL `tool_executions` & 6-Tier Summaries (`deepthought-cli/internal/history/{types.go,drone.go,summary.go,demote.go,serialize.go,sqlite.go}`, `deepthought-server/{graph/graph.go,store/mysql.go,server/http.go}`)**:
+  - Expanded `SummarySet` and `State` to 6 tiers: `Full` (`FULL`), `Detailed` (`DETAILED`), `Condensed` (`DIGEST`), `Semantic` (`LINE`), `Tombstone` (`TOMBSTONE`), and `Exemplar` (`EXEMPLAR`), with `BuildSixTierSummarySet` and action-aware `MessagesForAction`.
+  - Added the structured `tool_executions` table (recording `command`, `target_path`, `arguments_json`, `response_text`, `response_summary`, `is_error`, `exit_code`, `duration_ms`, `cwd`, `env_json`, `slurm_job_id`, `artifacts_json`, `system_id`, `cluster_name`) and populated `summaries`, `links`, and `tool_executions` in both SQLite and MySQL, exposed via `GET /api/v1/tools/executions` and `GET /api/v1/summaries/{id}`.
+- **Repeatable Scientific Pipelines with Worked Examples (`deepthought-cli/internal/workflow/{workflow.go,tool.go}`)**:
+  - Added `StepExemplar` (automatically captured when `Validate` succeeds on an objective) and `PipelineTemplate` (`save_template`, `list_templates`, `instantiate_template`, `step_context`, `/pipeline`), synced via `GET/PUT /api/v1/pipelines[/{id}]` and `GET/PUT /api/v1/exemplars[/{id}]`.
+- **Fleet Compute Fabric (`deepthought-server/server/fleet.go`, `deepthought-cli/internal/fleet/fleet.go`)**:
+  - Added `/api/v1/fleet/{heartbeat,nodes,dispatch,tasks/{id},memory}` and the `fleet` tool + `/fleet` slash command so Client B (or the Web UI) can inspect online Client A nodes, view terminal frames, dispatch prompts/tools/approvals, and query cross-cluster operational memory.
+- **SQL Projects, Assets, Skills & Per-User RAGFlow (`deepthought-cli/internal/project/project.go`, `internal/ragflow/ragflow.go`)**:
+  - Added SQL-backed `project` tool (`/project`) and `ragflow` knowledge-base retrieval tool (`/rag`), plus `/api/v1/projects` and `/api/v1/skills` server endpoints.
+- **Multi-Panel Server Web UI Console (`deepthought-server/server/web/{index.html,app.js,style.css}`)**:
+  - Upgraded the embedded Web UI into a 6-tab Unicomplex console (Overview & Settings + RAGFlow, Live Fleet & Remote CLI Controller, Systems & Clusters, Projects & Skills, Repeatable Pipelines & Jobs, and SQL Tool Executions & 6-Tier Summary Inspector) plus a one-click CLI Browser-Link approval banner.
+
 ## 2026-10-14 · deepthought-cli, deepthought-server — Gemini provider fixes, DRAC OIDC config, fairshare/vulcan-status parity, Queen auto mode, harness features & HPC records sync
 - **Gemini OpenAI-compatible wire fixes (`deepthought-cli`)**:
   - `slurm.objectSchema` and `babel.sanitizeTools` omit nil/empty `required` arrays in tool parameter schemas so Google's `generativelanguage.googleapis.com/v1beta/openai` endpoint does not reject tool-enabled requests with `400 Bad Request`.

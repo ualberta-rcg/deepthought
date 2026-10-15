@@ -257,4 +257,19 @@ func TestSQLiteStoreChatRoundTrip(t *testing.T) {
 	if n != 5 { // 1 collective + 1 incursion + 2 transmissions + 1 probe
 		t.Fatalf("row count after re-save=%d want 5", n)
 	}
+
+	execs, err := store.ListToolExecutions(coll.ID, "read", 10)
+	if err != nil {
+		t.Fatalf("ListToolExecutions: %v", err)
+	}
+	if len(execs) != 1 || execs[0].TargetPath != "x" || execs[0].ResponseText != "file body" {
+		t.Fatalf("unexpected tool_executions rows: %+v", execs)
+	}
+	sums6, err := store.GetSummaries(gp.ID)
+	if err != nil {
+		t.Fatalf("GetSummaries: %v", err)
+	}
+	if len(sums6) < 6 {
+		t.Fatalf("expected 6 summary tiers in summaries table, got %d: %+v", len(sums6), sums6)
+	}
 }

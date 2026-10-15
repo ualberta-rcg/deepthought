@@ -57,6 +57,21 @@ func TestTwoObjectiveWorkflowReopenAndStaleness(t *testing.T) {
 	if p.Directive.Status != history.StatusSucceeded || len(p.Artifacts) != 2 || len(p.Directive.Objectives[0].Attempts) != 1 {
 		t.Fatalf("incomplete workflow: %+v", p)
 	}
+	if len(p.Exemplars) != 2 {
+		t.Fatalf("expected 2 captured StepExemplars on validated plan, got %d", len(p.Exemplars))
+	}
+	tpl, err := s.SaveTemplate(id, "reusable-two-stage", "Two stage benchmark")
+	if err != nil {
+		t.Fatalf("SaveTemplate: %v", err)
+	}
+	cloned, err := s.InstantiateTemplate(tpl.ID, "two stages run 2", map[string]any{"seed": 99})
+	if err != nil {
+		t.Fatalf("InstantiateTemplate: %v", err)
+	}
+	stepCtx, err := s.StepContext(cloned.Directive.ID, "")
+	if err != nil || stepCtx["worked_example"] == nil {
+		t.Fatalf("expected worked_example in StepContext, got %+v (err=%v)", stepCtx, err)
+	}
 	before := *p
 	p, err = s.Reparameter(id, map[string]any{"seed": 2})
 	if err != nil {

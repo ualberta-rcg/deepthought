@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/url"
@@ -22,6 +23,7 @@ import (
 	"deepthought-cli/internal/babel"
 	"deepthought-cli/internal/config"
 	"deepthought-cli/internal/credential"
+	"deepthought-cli/internal/fleet"
 	"deepthought-cli/internal/history"
 	hostpkg "deepthought-cli/internal/host"
 	"deepthought-cli/internal/keybindings"
@@ -105,6 +107,8 @@ type RootModel struct {
 	server               *ServerSession // non-nil after a successful splash server login
 	syncWorker           *SettingsSync
 	syncBusy, connecting bool
+	loginFromSplash      bool
+	deviceTicket         *DeviceLoginTicket
 	connectionNotice     string
 	lastMirrorRetry      time.Time
 	wasBusy              bool // last observed chat busy state (turn-end push edge)
@@ -324,7 +328,8 @@ func (m RootModel) advanceFromSplash() (RootModel, tea.Cmd) {
 // splashBoot resolves the chat role's model + provider for the splash status
 // line, and reports whether the provider has a key (ready vs. not-ready hint).
 func splashBoot(d Deps) tui.BootInfo {
-	info := tui.BootInfo{Version: d.Status.Version, Server: "Standalone — local settings only"}
+	sysID, _ := hostpkg.ID()
+	info := tui.BootInfo{Version: d.Status.Version, Server: "Standalone — local settings only", SystemID: sysID}
 	if h, err := os.Hostname(); err == nil {
 		info.Host = h
 	}
@@ -443,7 +448,7 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.candidates = event.Candidates
-		if m.deps.Live != nil && (!event.Auto || m.screen == tui.ScreenSplash) {
+		if m.deps.Live != nil && !event.Auto {
 			m.showCandidates()
 		} else {
 			m.chat = m.chat.Notice("Provider discovery complete. Ctrl+P → Discover AI providers to review.")
@@ -476,6 +481,16 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.settings = m.settings.SetEnv(m.env)
 		m.statusScr = m.statusScr.SetEnv(m.env)
 		m.chat = m.chat.SetEnv(m.env)
+		m.splash = m.splash.WithSystem(event.Record.Name, event.Record.ID, event.Record.ClusterLabel(), event.Record.CapabilitySummary())
+		if m.deps.Scheduler != nil {
+			m.deps.Scheduler.SystemID = event.Record.ID
+			m.deps.Scheduler.Host = event.Record.Name
+			m.deps.Scheduler.Cluster = event.Record.ClusterID
+			m.deps.Scheduler.Site = event.Record.Site
+		}
+		if m.server != nil && event.Record.ID != "" {
+			m.pushFleetHeartbeat(event.Record)
+		}
 		if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Hosts & Services" {
 			m.showHosts()
 		}
@@ -634,22 +649,62 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// the add-provider area.
 		return m.advanceFromSplash()
 	case tui.SplashServerLoginMsg:
-		// "Log in to server": async shared-password login; the result arrives
-		// as ServerLoginResultMsg.
+		// "2P MULTIPLAYER · Log in to server": if already connected, advance;
+		// if password is saved, log in; otherwise open Browser-Link login.
 		if m.connecting {
 			return m, nil
 		}
+		if m.server != nil {
+			return m.advanceFromSplash()
+		}
+		m.loginFromSplash = true
+		if m.deps.Live != nil {
+			f := m.deps.Live.Snapshot()
+			if f.Server != nil && f.Server.URL != "" && f.Server.User != "" && f.Server.ExpandedPassword() != "" {
+				m.connecting = true
+				m.splash = m.splash.WithNotice("Connecting to " + f.Server.URL + "…")
+				return m, serverLoginCmd(m.deps.Live)
+			}
+		}
+		m.connectionNotice = "Starting Browser Link login…"
+		m.showServerSync()
+		return m, startDeviceLoginCmd(m.deps.Live)
+	case DeviceLoginStartedMsg:
+		if msg.Err != "" {
+			m.deviceTicket = nil
+			m.connecting = false
+			m.connectionNotice = msg.Err
+			if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
+				m.showServerSync()
+			}
+			m.splash = m.splash.WithNotice("⚠ " + msg.Err)
+			return m, nil
+		}
+		m.deviceTicket = msg.Ticket
 		m.connecting = true
-		return m, serverLoginCmd(m.deps.Live)
+		m.connectionNotice = "Browser link ready · Code " + msg.Ticket.UserCode
+		if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
+			m.showServerSync()
+		}
+		m.splash = m.splash.WithNotice("Open in browser: " + msg.Ticket.FullURL + " (Code " + msg.Ticket.UserCode + ")")
+		return m, tea.Batch(tea.SetClipboard(msg.Ticket.FullURL), pollDeviceLoginCmd(m.deps.Live, msg.Ticket))
+	case DeviceLoginPollTickMsg:
+		if m.deviceTicket == nil || m.deviceTicket.DeviceCode != msg.DeviceCode {
+			return m, nil
+		}
+		return m, pollDeviceLoginCmd(m.deps.Live, m.deviceTicket)
 	case ServerLoginResultMsg:
-		if !m.connecting {
+		if !m.connecting && m.deviceTicket == nil {
 			return m, nil
 		}
 		m.connecting = false
+		m.deviceTicket = nil
+		wasFromSplash := m.loginFromSplash
+		m.loginFromSplash = false
 		if msg.Err != "" {
 			m.connectionNotice = msg.Err
 			m.chat = m.chat.Notice(msg.Err)
-			if m.screen == tui.ScreenWorkspace {
+			if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
 				m.showServerSync()
 			}
 			m.splash = m.splash.WithNotice("⚠ " + msg.Err)
@@ -664,6 +719,13 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.syncWorker.Stop()
 		}
 		m.server = msg.Session
+		if m.deps.Live != nil {
+			snap := m.deps.Live.Snapshot()
+			if snap.Server != nil {
+				snap.Server.SessionToken = msg.Session.Token
+				_ = m.deps.Live.Save(snap)
+			}
+		}
 		m.connectionNotice = ""
 		m.credChecked = false
 		m.syncWorker = m.deps.Live.SyncWorker(m.server)
@@ -671,14 +733,19 @@ func (m RootModel) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if s := m.localStore(); s != nil {
 			_ = s.WriteRecord("server-autoconnect", s.ProfileKey(), true)
 		}
-		m.splash = m.splash.WithNotice("").WithServer("Connected as " + m.server.User + " @ " + serverHost(m.server.URL))
+		if m.env.Observation.ID != "" {
+			m.pushFleetHeartbeat(m.env.Observation)
+		}
+		m.splash = m.splash.WithNotice("✓ Connected as " + m.server.User + " @ " + serverHost(m.server.URL)).WithServer("Connected as " + m.server.User + " @ " + serverHost(m.server.URL))
 		m.setServerLine("server " + m.server.User + " @ " + serverHost(m.server.URL))
 		m.sidebar.Alerts = nil
 		// Settings use the serialized worker; chat transfers have their own notice.
-		if m.screen == tui.ScreenSplash {
+		if m.screen == tui.ScreenSplash && wasFromSplash {
 			m.screen = tui.ScreenChat
+			m.showServerSync()
+		} else if m.screen == tui.ScreenWorkspace && m.workspace.Title == "Server synchronization" {
+			m.showServerSync()
 		}
-		m.showServerSync()
 		return m, tea.Batch(settingsSyncCmd(m.syncWorker), flushPendingChatsCmd(m.deps.ChatSource, m.server, m.localStore()))
 	case settingsSyncResultMsg:
 		if msg.Worker != m.syncWorker {
@@ -1428,4 +1495,122 @@ func cronDataDir() string {
 		return dir
 	}
 	return os.Getenv("HOME") + "/.deepthought"
+}
+
+func (m RootModel) pushFleetHeartbeat(rec hostpkg.Record) {
+	sess := m.server
+	if sess == nil {
+		return
+	}
+	live := m.deps.Live
+	reg := m.deps.Registry
+	busy := m.chat.Busy()
+	var modelID, mode string
+	if live != nil {
+		modelID = live.RoleModel(config.RoleAgentic)
+		mode = live.OperationMode()
+	}
+	frame := ansi.Strip(m.chat.View())
+	if len(frame) > 4000 {
+		frame = frame[len(frame)-4000:]
+	}
+	go func() {
+		if raw, err := json.Marshal(rec); err == nil {
+			_ = sess.PushHost(rec.ID, raw)
+		}
+		if live == nil {
+			return
+		}
+		fc := &fleet.Client{
+			ConfigSource: live.Snapshot,
+			HostSource:   func() hostpkg.Record { return rec },
+		}
+		svcs := make(map[string]string, len(rec.Services))
+		for _, s := range rec.Services {
+			svcs[s.Kind] = s.Availability
+		}
+		node := fleet.Node{
+			ClientID:      rec.ID,
+			SystemID:      rec.ID,
+			Hostname:      rec.Name,
+			Cluster:       rec.ClusterLabel(),
+			Site:          rec.Site,
+			OS:            rec.OS,
+			Arch:          rec.Arch,
+			CPUs:          rec.CPUs,
+			MemGB:         int(rec.MemoryTotal >> 30),
+			Capabilities:  rec.CapabilitySummary(),
+			Services:      svcs,
+			Mode:          mode,
+			ActiveModel:   modelID,
+			Busy:          busy,
+			TerminalFrame: frame,
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
+		tasks, err := fc.Heartbeat(ctx, node, nil)
+		if err != nil || len(tasks) == 0 {
+			return
+		}
+		var completed []fleet.CompletedTask
+		for _, t := range tasks {
+			switch t.Kind {
+			case "bash":
+				cmdStr := strings.TrimSpace(t.Payload)
+				if cmdStr == "" {
+					if v, ok := t.Arguments["command"].(string); ok {
+						cmdStr = strings.TrimSpace(v)
+					}
+				}
+				if cmdStr == "" {
+					completed = append(completed, fleet.CompletedTask{ID: t.ID, Status: "failed", Error: "empty command"})
+					continue
+				}
+				cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+				out, runErr := exec.CommandContext(cctx, "bash", "-lc", cmdStr).CombinedOutput()
+				ccancel()
+				ct := fleet.CompletedTask{ID: t.ID, Status: "completed", Output: strings.TrimSpace(string(out))}
+				if runErr != nil {
+					ct.Status = "failed"
+					ct.Error = runErr.Error()
+				}
+				completed = append(completed, ct)
+			case "tool":
+				if reg == nil {
+					completed = append(completed, fleet.CompletedTask{ID: t.ID, Status: "failed", Error: "tool registry unavailable"})
+					continue
+				}
+				tl, ok := reg.Get(t.ToolName)
+				if !ok {
+					completed = append(completed, fleet.CompletedTask{ID: t.ID, Status: "failed", Error: "unknown tool: " + t.ToolName})
+					continue
+				}
+				rawArgs, _ := json.Marshal(t.Arguments)
+				cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
+				res, runErr := tl.Execute(cctx, rawArgs)
+				ccancel()
+				ct := fleet.CompletedTask{ID: t.ID, Status: "completed", Output: res.Output}
+				if runErr != nil || res.IsError {
+					ct.Status = "failed"
+					if runErr != nil {
+						ct.Error = runErr.Error()
+					} else {
+						ct.Error = res.Output
+					}
+				}
+				completed = append(completed, ct)
+			default:
+				completed = append(completed, fleet.CompletedTask{
+					ID:     t.ID,
+					Status: "completed",
+					Output: fmt.Sprintf("received %s (%s) on %s [%s]", t.Kind, t.Payload, rec.Name, rec.ID),
+				})
+			}
+		}
+		if len(completed) > 0 {
+			ctx2, cancel2 := context.WithTimeout(context.Background(), 8*time.Second)
+			defer cancel2()
+			_, _ = fc.Heartbeat(ctx2, node, completed)
+		}
+	}()
 }

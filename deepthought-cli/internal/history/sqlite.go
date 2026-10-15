@@ -115,7 +115,38 @@ CREATE TABLE IF NOT EXISTS body_versions (
 );
 CREATE TABLE IF NOT EXISTS drone_metadata (
  interaction_id TEXT PRIMARY KEY, summaries TEXT NOT NULL, links TEXT NOT NULL
-);`)
+);
+CREATE TABLE IF NOT EXISTS tool_executions (
+  id TEXT NOT NULL PRIMARY KEY,
+  session_id TEXT NOT NULL DEFAULT '',
+  collective_id TEXT NOT NULL DEFAULT '',
+  incursion_id TEXT NOT NULL DEFAULT '',
+  transmission_id TEXT NOT NULL DEFAULT '',
+  system_id TEXT NOT NULL DEFAULT '',
+  cluster_name TEXT NOT NULL DEFAULT '',
+  tool_name TEXT NOT NULL DEFAULT '',
+  probe_type TEXT NOT NULL DEFAULT '',
+  command TEXT NOT NULL DEFAULT '',
+  target_path TEXT NOT NULL DEFAULT '',
+  arguments_json TEXT NOT NULL DEFAULT '{}',
+  response_text TEXT NOT NULL DEFAULT '',
+  response_summary TEXT NOT NULL DEFAULT '',
+  is_error INTEGER NOT NULL DEFAULT 0,
+  exit_code INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  cwd TEXT NOT NULL DEFAULT '',
+  env_json TEXT NOT NULL DEFAULT '{}',
+  slurm_job_id TEXT NOT NULL DEFAULT '',
+  artifacts_json TEXT NOT NULL DEFAULT '[]',
+  status TEXT NOT NULL DEFAULT '',
+  decision TEXT NOT NULL DEFAULT '',
+  started_at TEXT,
+  finished_at TEXT,
+  created_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_tool_exec_coll ON tool_executions(collective_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_tool_exec_tool ON tool_executions(tool_name, created_at);
+CREATE INDEX IF NOT EXISTS idx_tool_exec_job ON tool_executions(slurm_job_id);`)
 	return err
 }
 
@@ -266,6 +297,7 @@ func legacyEntityDrone(obj Entity) (*Drone, error) {
 	}
 	drone.Cost = v.Cost
 	drone.Sensitivity = v.Sensitivity
+	drone.Summaries = BuildSixTierSummarySet(obj)
 	return drone, nil
 }
 
@@ -407,6 +439,66 @@ INSERT INTO links(src,dst,type,ordinal,meta) VALUES(?,?,?,?,?)
 ON CONFLICT(src,dst,type) DO UPDATE SET ordinal=excluded.ordinal,meta=excluded.meta`,
 			drone.ID, link.TargetID, link.Relation, ordinal, string(meta)); err != nil {
 			return err
+		}
+	}
+	nowStamp := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, tier := range []struct {
+		state string
+		text  string
+	}{
+		{"FULL", drone.Summaries.Full},
+		{"DETAILED", drone.Summaries.Detailed},
+		{"DIGEST", drone.Summaries.Condensed},
+		{"LINE", drone.Summaries.Semantic},
+		{"TOMBSTONE", drone.Summaries.Tombstone},
+		{"EXEMPLAR", drone.Summaries.Exemplar},
+	} {
+		if tier.text == "" {
+			continue
+		}
+		tokEst := (len(tier.text) + 3) / 4
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO summaries(interaction_id,state,summarizer,text,tokens,created_at)
+VALUES(?,?,?,?,?,?)
+ON CONFLICT(interaction_id,state,summarizer) DO UPDATE SET text=excluded.text, tokens=excluded.tokens`,
+			drone.ID, tier.state, "deterministic", tier.text, tokEst, nowStamp); err != nil {
+			return err
+		}
+	}
+	if drone.Kind == "probe" {
+		rawProbe := legacy
+		if len(rawProbe) == 0 {
+			rawProbe = drone.Body
+		}
+		var p Probe
+		if json.Unmarshal(rawProbe, &p) == nil && p.ID != "" {
+			rec := extractToolExecutionFromProbe(&p, collectiveID)
+			isErrInt := 0
+			if rec.IsError {
+				isErrInt = 1
+			}
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO tool_executions(
+  id,session_id,collective_id,incursion_id,transmission_id,system_id,cluster_name,
+  tool_name,probe_type,command,target_path,arguments_json,response_text,response_summary,
+  is_error,exit_code,duration_ms,cwd,env_json,slurm_job_id,artifacts_json,
+  status,decision,started_at,finished_at,created_at
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(id) DO UPDATE SET
+  tool_name=excluded.tool_name, probe_type=excluded.probe_type, command=excluded.command,
+  target_path=excluded.target_path, arguments_json=excluded.arguments_json,
+  response_text=excluded.response_text, response_summary=excluded.response_summary,
+  is_error=excluded.is_error, exit_code=excluded.exit_code, duration_ms=excluded.duration_ms,
+  cwd=excluded.cwd, env_json=excluded.env_json, slurm_job_id=excluded.slurm_job_id,
+  artifacts_json=excluded.artifacts_json, status=excluded.status, decision=excluded.decision,
+  started_at=excluded.started_at, finished_at=excluded.finished_at`,
+				rec.ID, rec.SessionID, rec.CollectiveID, rec.IncursionID, rec.TransmissionID,
+				rec.SystemID, rec.ClusterName, rec.ToolName, rec.ProbeType, rec.Command, rec.TargetPath,
+				rec.ArgumentsJSON, rec.ResponseText, rec.ResponseSummary, isErrInt, rec.ExitCode,
+				rec.DurationMS, rec.CWD, rec.EnvJSON, rec.SlurmJobID, rec.ArtifactsJSON,
+				rec.Status, rec.Decision, rec.StartedAt, rec.FinishedAt, rec.CreatedAt); err != nil {
+				return err
+			}
 		}
 	}
 	return tx.Commit()
@@ -618,4 +710,184 @@ func formatTimePtr(t *time.Time) any {
 		return nil
 	}
 	return formatTime(*t)
+}
+
+// ToolExecutionRecord is the structured SQL row for a probe tool execution.
+type ToolExecutionRecord struct {
+	ID              string `json:"id"`
+	SessionID       string `json:"session_id"`
+	CollectiveID    string `json:"collective_id"`
+	IncursionID     string `json:"incursion_id,omitempty"`
+	TransmissionID  string `json:"transmission_id,omitempty"`
+	SystemID        string `json:"system_id,omitempty"`
+	ClusterName     string `json:"cluster_name,omitempty"`
+	ToolName        string `json:"tool_name"`
+	ProbeType       string `json:"probe_type"`
+	Command         string `json:"command,omitempty"`
+	TargetPath      string `json:"target_path,omitempty"`
+	ArgumentsJSON   string `json:"arguments_json"`
+	ResponseText    string `json:"response_text"`
+	ResponseSummary string `json:"response_summary"`
+	IsError         bool   `json:"is_error"`
+	ExitCode        int    `json:"exit_code"`
+	DurationMS      int64  `json:"duration_ms"`
+	CWD             string `json:"cwd,omitempty"`
+	EnvJSON         string `json:"env_json,omitempty"`
+	SlurmJobID      string `json:"slurm_job_id,omitempty"`
+	ArtifactsJSON   string `json:"artifacts_json,omitempty"`
+	Status          string `json:"status"`
+	Decision        string `json:"decision"`
+	StartedAt       string `json:"started_at,omitempty"`
+	FinishedAt      string `json:"finished_at,omitempty"`
+	CreatedAt       string `json:"created_at"`
+}
+
+// SummaryRow is one persisted row in the `summaries` table.
+type SummaryRow struct {
+	InteractionID string `json:"interaction_id"`
+	State         string `json:"state"`
+	Summarizer    string `json:"summarizer"`
+	Text          string `json:"text"`
+	Tokens        int    `json:"tokens"`
+	CreatedAt     string `json:"created_at"`
+}
+
+func extractToolExecutionFromProbe(p *Probe, collectiveID string) ToolExecutionRecord {
+	argsJSON := p.ArgumentsRaw
+	if argsJSON == "" && len(p.Arguments) > 0 {
+		raw, _ := json.Marshal(p.Arguments)
+		argsJSON = string(raw)
+	}
+	if argsJSON == "" {
+		argsJSON = "{}"
+	}
+	strArg := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := p.Arguments[k].(string); ok && v != "" {
+				return v
+			}
+			if p.Metadata != nil {
+				if v, ok := p.Metadata[k].(string); ok && v != "" {
+					return v
+				}
+			}
+		}
+		return ""
+	}
+	exitCode := 0
+	if p.Result.IsError {
+		exitCode = 1
+	}
+	if p.Metadata != nil {
+		if ec, ok := p.Metadata["exit_code"].(float64); ok {
+			exitCode = int(ec)
+		}
+	}
+	var durMS int64
+	if !p.StartedAt.IsZero() && !p.FinishedAt.IsZero() && p.FinishedAt.After(p.StartedAt) {
+		durMS = p.FinishedAt.Sub(p.StartedAt).Milliseconds()
+	}
+	created := time.Now().UTC().Format(time.RFC3339Nano)
+	if !p.CreatedAt.IsZero() {
+		created = p.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var started, finished string
+	if !p.StartedAt.IsZero() {
+		started = p.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !p.FinishedAt.IsZero() {
+		finished = p.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	summary := p.Result.Summary
+	if summary == "" {
+		summary = SynthesizeSemanticLine(p)
+	}
+	return ToolExecutionRecord{
+		ID:              p.ID,
+		SessionID:       p.SessionID,
+		CollectiveID:    collectiveID,
+		TransmissionID:  p.ParentID,
+		SystemID:        strArg("system_id"),
+		ClusterName:     strArg("cluster", "cluster_name"),
+		ToolName:        p.Name,
+		ProbeType:       p.ProbeType,
+		Command:         strArg("command", "script", "action", "query"),
+		TargetPath:      strArg("file_path", "path", "target_path", "script_path", "dir", "workdir"),
+		ArgumentsJSON:   argsJSON,
+		ResponseText:    p.Result.Content,
+		ResponseSummary: summary,
+		IsError:         p.Result.IsError,
+		ExitCode:        exitCode,
+		DurationMS:      durMS,
+		CWD:             strArg("cwd", "workdir"),
+		EnvJSON:         "{}",
+		SlurmJobID:      strArg("job_id", "slurm_job_id"),
+		ArtifactsJSON:   "[]",
+		Status:          p.Status.String(),
+		Decision:        fmt.Sprintf("%d", p.Decision),
+		StartedAt:       started,
+		FinishedAt:      finished,
+		CreatedAt:       created,
+	}
+}
+
+// ListToolExecutions returns structured tool executions from SQLite.
+func (s *SQLiteStore) ListToolExecutions(collectiveID, toolName string, limit int) ([]ToolExecutionRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := `SELECT id,session_id,collective_id,incursion_id,transmission_id,system_id,cluster_name,
+	  tool_name,probe_type,command,target_path,arguments_json,response_text,response_summary,
+	  is_error,exit_code,duration_ms,cwd,env_json,slurm_job_id,artifacts_json,
+	  status,decision,COALESCE(started_at,''),COALESCE(finished_at,''),created_at
+	FROM tool_executions WHERE 1=1`
+	var args []any
+	if collectiveID != "" {
+		q += ` AND collective_id=?`
+		args = append(args, collectiveID)
+	}
+	if toolName != "" {
+		q += ` AND tool_name=?`
+		args = append(args, toolName)
+	}
+	q += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []ToolExecutionRecord
+	for rows.Next() {
+		var r ToolExecutionRecord
+		var isErr int
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.CollectiveID, &r.IncursionID, &r.TransmissionID,
+			&r.SystemID, &r.ClusterName, &r.ToolName, &r.ProbeType, &r.Command, &r.TargetPath,
+			&r.ArgumentsJSON, &r.ResponseText, &r.ResponseSummary, &isErr, &r.ExitCode, &r.DurationMS,
+			&r.CWD, &r.EnvJSON, &r.SlurmJobID, &r.ArtifactsJSON, &r.Status, &r.Decision,
+			&r.StartedAt, &r.FinishedAt, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.IsError = isErr != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetSummaries returns all persisted summary tiers for an interaction ID.
+func (s *SQLiteStore) GetSummaries(interactionID string) ([]SummaryRow, error) {
+	rows, err := s.db.Query(`SELECT interaction_id,state,summarizer,text,tokens,created_at FROM summaries WHERE interaction_id=? ORDER BY state`, interactionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []SummaryRow
+	for rows.Next() {
+		var r SummaryRow
+		if err := rows.Scan(&r.InteractionID, &r.State, &r.Summarizer, &r.Text, &r.Tokens, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }

@@ -158,10 +158,14 @@ func (a Assembler) render(ctx context.Context, drone *history.Drone, state histo
 			return drone.Summaries.Full, nil
 		}
 		return string(drone.Body), nil
+	case history.StateDetailed:
+		return drone.Summaries.At(history.SummaryDetailed), nil
 	case history.StateDigest:
 		return drone.Summaries.At(history.SummaryCondensed), nil
 	case history.StateLine:
 		return drone.Summaries.At(history.SummarySemantic), nil
+	case history.StateExemplar:
+		return drone.Summaries.At(history.SummaryExemplar), nil
 	case history.StateTombstone:
 		if drone.Summaries.Tombstone != "" {
 			return drone.Summaries.Tombstone, nil

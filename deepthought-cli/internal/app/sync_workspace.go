@@ -12,8 +12,19 @@ import (
 
 func (m *RootModel) showServerSync() {
 	notice := "Disconnected — local settings remain saved."
-	items := []tui.WorkspaceItem{{Label: "Connect / reconnect", Kind: "connect-server"}, {Label: "Configure URL, user and password", Kind: "settings-tab", ID: "server"}}
-	if m.connecting {
+	items := []tui.WorkspaceItem{
+		{Label: "★ Sign in via Browser Link (Recommended)", Detail: "Opens browser login URL (DRAC OIDC or 1-click Web UI approval) and copies link to clipboard", Kind: "browser-login-server"},
+		{Label: "Connect / reconnect with password", Kind: "connect-server"},
+		{Label: "Configure URL, user and password", Kind: "settings-tab", ID: "server"},
+	}
+	if m.deviceTicket != nil {
+		notice = "Waiting for browser approval · Code: " + m.deviceTicket.UserCode + " (link copied to clipboard)"
+		items = append([]tui.WorkspaceItem{
+			{Label: "1. Open in Browser: " + m.deviceTicket.FullURL, Detail: "Press Enter to copy URL to clipboard again", Kind: "copy-browser-login"},
+			{Label: "2. Verification Code: " + m.deviceTicket.UserCode, Detail: "Approve in browser — CLI will connect automatically", Kind: "copy-browser-login"},
+			{Label: "Cancel Browser Link login", Kind: "cancel-browser-login"},
+		}, items...)
+	} else if m.connecting {
 		notice = "Connecting…"
 	}
 	if m.syncWorker != nil {
@@ -58,6 +69,21 @@ func (m *RootModel) showServerSync() {
 func (m RootModel) syncAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	switch a.Kind {
 	case "server-sync":
+		m.showServerSync()
+	case "browser-login-server":
+		m.connectionNotice = "Starting Browser Link login…"
+		m.showServerSync()
+		return m, startDeviceLoginCmd(m.deps.Live)
+	case "copy-browser-login":
+		if m.deviceTicket != nil {
+			m.connectionNotice = "Copied browser login URL to clipboard"
+			m.showServerSync()
+			return m, tea.SetClipboard(m.deviceTicket.FullURL)
+		}
+	case "cancel-browser-login":
+		m.deviceTicket = nil
+		m.connecting = false
+		m.connectionNotice = "Browser login cancelled"
 		m.showServerSync()
 	case "connect-server":
 		if m.connecting {

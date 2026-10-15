@@ -60,9 +60,17 @@ planned fix and stay deferred until the password is shared more widely.
 | `GET /api/v1/version`, `GET /api/v1/crons`, `POST /api/v1/admin/reload` | build info, the cron registry (`501` placeholder), config/skills reload |
 | `GET /api/v1/jobs`, `PUT /api/v1/jobs/{id}` | user-scoped Slurm job records (`records` table, kind `slurm-job`) |
 | `GET /api/v1/experiments`, `PUT /api/v1/experiments/{id}` | user-scoped scientific workflow records (`records` table, kind `workflow`) |
+| `GET /api/v1/hosts`, `PUT /api/v1/hosts/{id}` | user-scoped system UUID & multi-cluster capability inventory (`records` table, kind `host-node`) |
+| `GET /api/v1/projects`, `PUT /api/v1/projects/{id}` | SQL-backed Projects & Project Assets (`records` table, kind `project`) |
+| `GET /api/v1/skills`, `PUT /api/v1/skills/{id}` | synced skill catalog entries (`records` table, kind `skill`) |
+| `GET /api/v1/pipelines`, `PUT /api/v1/pipelines/{id}` | repeatable scientific pipeline templates (`records` table, kind `pipeline-template`) |
+| `GET /api/v1/exemplars`, `PUT /api/v1/exemplars/{id}` | per-step Worked Examples (`StepExemplar`, kind `step-exemplar`) |
+| `GET /api/v1/tools/executions` | structured SQL `tool_executions` rows (`command`, `target_path`, `arguments_json`, `response_text`, `exit_code`, `duration_ms`, `slurm_job_id`) |
+| `GET /api/v1/summaries/{id}` | 6-tier persisted `summaries` rows (`FULL`, `DETAILED`, `DIGEST`, `LINE`, `TOMBSTONE`, `EXEMPLAR`) |
+| `POST /api/v1/fleet/heartbeat`, `GET /api/v1/fleet/nodes`, `POST /api/v1/fleet/dispatch`, `GET /api/v1/fleet/tasks/{id}`, `GET /api/v1/fleet/memory` | Unicomplex fleet compute fabric (Client B ↔ Server ↔ Client A remote terminal view, prompt/tool/approval dispatch, and cross-cluster operational memory) |
 | `GET /api/v1/auth/config`, `GET /api/v1/auth/me` | active auth modes (`password` / `oidc` / `both`) + caller identity (`user`, `email`, `admin`) |
 | `GET /api/v1/auth/oidc/login`, `GET /api/v1/auth/oidc/callback` | DRAC OIDC Authorization Code + PKCE flow (disabled by default until enabled in `server.json`) |
-| `POST /api/v1/auth/device/start`, `POST /api/v1/auth/device/poll` | CLI browser-assisted OIDC device login flow |
+| `POST /api/v1/auth/device/start`, `POST /api/v1/auth/device/approve`, `POST /api/v1/auth/device/poll` | Cursor/Antigravity-style CLI Browser-Link login flow (OIDC redirect or one-click Web UI approval) |
 
 A credential id is `CredentialID(name, base_url, wire)`: the first 32 hex
 digits of SHA-256 over the lower-cased name, the URL without a trailing slash

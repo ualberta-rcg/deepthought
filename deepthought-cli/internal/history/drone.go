@@ -17,13 +17,15 @@ type State string
 
 const (
 	StateFull      State = "FULL"
+	StateDetailed  State = "DETAILED"
 	StateDigest    State = "DIGEST"
 	StateLine      State = "LINE"
 	StateTombstone State = "TOMBSTONE"
+	StateExemplar  State = "EXEMPLAR"
 	StateElided    State = "ELIDED"
 )
 
-var stateOrder = []State{StateFull, StateDigest, StateLine, StateTombstone, StateElided}
+var stateOrder = []State{StateFull, StateDetailed, StateDigest, StateLine, StateTombstone, StateExemplar, StateElided}
 
 type Outcome string
 

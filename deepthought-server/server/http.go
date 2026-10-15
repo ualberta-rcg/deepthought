@@ -92,6 +92,7 @@ func NewMux(a *API) *http.ServeMux {
 	mux.HandleFunc("GET /api/v1/auth/oidc/callback", a.oidcCallback)
 	mux.HandleFunc("GET /oidc", a.oidcCallback)
 	mux.HandleFunc("POST /api/v1/auth/device/start", a.deviceStartHandler)
+	mux.HandleFunc("POST /api/v1/auth/device/approve", a.deviceApproveHandler)
 	mux.HandleFunc("POST /api/v1/auth/device/poll", a.devicePollHandler)
 	mux.HandleFunc("GET /api/v1/user/sessions", a.auth(a.listSessions))
 	mux.HandleFunc("DELETE /api/v1/user/sessions/{id}", a.auth(a.revokeSession))
@@ -112,7 +113,20 @@ func NewMux(a *API) *http.ServeMux {
 	mux.HandleFunc("PUT /api/v1/jobs/{id}", a.auth(a.putJob))
 	mux.HandleFunc("GET /api/v1/experiments", a.auth(a.listExperiments))
 	mux.HandleFunc("PUT /api/v1/experiments/{id}", a.auth(a.putExperiment))
+	mux.HandleFunc("GET /api/v1/hosts", a.auth(a.listHosts))
+	mux.HandleFunc("PUT /api/v1/hosts/{id}", a.auth(a.putHost))
+	mux.HandleFunc("GET /api/v1/projects", a.auth(a.listProjects))
+	mux.HandleFunc("PUT /api/v1/projects/{id}", a.auth(a.putProject))
+	mux.HandleFunc("GET /api/v1/skills", a.auth(a.listSkills))
+	mux.HandleFunc("PUT /api/v1/skills/{id}", a.auth(a.putSkill))
+	mux.HandleFunc("GET /api/v1/pipelines", a.auth(a.listPipelines))
+	mux.HandleFunc("PUT /api/v1/pipelines/{id}", a.auth(a.putPipeline))
+	mux.HandleFunc("GET /api/v1/exemplars", a.auth(a.listExemplars))
+	mux.HandleFunc("PUT /api/v1/exemplars/{id}", a.auth(a.putExemplar))
+	mux.HandleFunc("GET /api/v1/tools/executions", a.auth(a.listToolExecutions))
+	mux.HandleFunc("GET /api/v1/summaries/{id}", a.auth(a.listSummaries))
 	mux.HandleFunc("POST /api/v1/admin/reload", a.auth(a.reload))
+	a.registerFleetRoutes(mux)
 	a.serveUI(mux)
 	return mux
 }
@@ -397,6 +411,81 @@ func (a *API) listExperiments(w http.ResponseWriter, r *http.Request) {
 
 func (a *API) putExperiment(w http.ResponseWriter, r *http.Request) {
 	a.putRecordByKind(w, r, "workflow")
+}
+
+func (a *API) listHosts(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "host-node", "hosts")
+}
+
+func (a *API) putHost(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "host-node")
+}
+
+func (a *API) listProjects(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "project", "projects")
+}
+
+func (a *API) putProject(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "project")
+}
+
+func (a *API) listSkills(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "skill", "skills")
+}
+
+func (a *API) putSkill(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "skill")
+}
+
+func (a *API) listPipelines(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "pipeline-template", "pipelines")
+}
+
+func (a *API) putPipeline(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "pipeline-template")
+}
+
+func (a *API) listExemplars(w http.ResponseWriter, r *http.Request) {
+	a.listRecordsByKind(w, r, "step-exemplar", "exemplars")
+}
+
+func (a *API) putExemplar(w http.ResponseWriter, r *http.Request) {
+	a.putRecordByKind(w, r, "step-exemplar")
+}
+
+func (a *API) listToolExecutions(w http.ResponseWriter, r *http.Request) {
+	st, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	collID := strings.TrimSpace(r.URL.Query().Get("collective_id"))
+	toolName := strings.TrimSpace(r.URL.Query().Get("tool"))
+	rows, err := st.ListToolExecutions(collID, toolName, 200)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"executions": rows})
+}
+
+func (a *API) listSummaries(w http.ResponseWriter, r *http.Request) {
+	st, err := a.userStore(r)
+	if err != nil {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": err.Error()})
+		return
+	}
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "interaction id required"})
+		return
+	}
+	rows, err := st.GetSummaries(id)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"interaction_id": id, "summaries": rows})
 }
 
 func (a *API) listRecordsByKind(w http.ResponseWriter, r *http.Request, kind, responseKey string) {

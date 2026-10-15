@@ -75,15 +75,45 @@ func (c *Collective) messagesAt(level func(*Incursion, *Transmission, *Probe) Su
 // Full both mean "show everything".
 func stateToLevel(s State) SummaryLevel {
 	switch s {
+	case StateDetailed:
+		return SummaryDetailed
 	case StateDigest:
 		return SummaryCondensed
 	case StateLine:
 		return SummarySemantic
 	case StateTombstone, StateElided:
 		return SummaryTombstone
+	case StateExemplar:
+		return SummaryExemplar
 	default:
 		return SummaryFull
 	}
+}
+
+// MessagesForAction flattens the collective with action-aware summary tiering:
+// recent incursions keep their residency state (defaulting Full), older matching
+// tool probes render as Exemplar/Detailed, and bulky unrelated probes render as
+// Condensed/Semantic.
+func (c *Collective) MessagesForAction(action string) []babel.Message {
+	totalInc := len(c.Incursions)
+	return c.messagesAt(func(inc *Incursion, _ *Transmission, p *Probe) SummaryLevel {
+		if p.State != "" && p.State != StateFull {
+			return stateToLevel(p.State)
+		}
+		if inc != nil && inc.Index >= totalInc-2 {
+			return SummaryFull
+		}
+		if action != "" && (p.Name == action || p.ProbeType == action) {
+			if p.Result.Summaries.Exemplar != "" {
+				return SummaryExemplar
+			}
+			return SummaryDetailed
+		}
+		if len(p.Result.Content) > 4000 {
+			return SummaryCondensed
+		}
+		return SummaryFull
+	})
 }
 
 // AddTransmission creates a new Transmission on the incursion, converting raw

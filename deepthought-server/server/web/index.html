@@ -3,16 +3,29 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DeepThought</title>
+<title>DeepThought · Unicomplex Console</title>
 <link rel="stylesheet" href="/style.css">
 </head>
 <body>
 <main id="app" class="card">
 
   <!-- Login -->
-  <section id="login" hidden>
+  <section id="login" class="login-box" hidden>
+    <pre class="ascii-logo">██████╗  ██████╗ ███╗   ██╗████████╗    ██████╗  █████╗ ███╗   ██╗██╗ ██████╗
+██╔══██╗██╔═══██╗████╗  ██║╚══██╔══╝    ██╔══██╗██╔══██╗████╗  ██║██║██╔════╝
+██║  ██║██║   ██║██╔██╗ ██║   ██║       ██████╔╝███████║██╔██╗ ██║██║██║
+██║  ██║██║   ██║██║╚██╗██║   ██║       ██╔═══╝ ██╔══██║██║╚██╗██║██║██║
+██████╔╝╚██████╔╝██║ ╚████║   ██║       ██║     ██║  ██║██║ ╚████║██║╚██████╗
+╚═════╝  ╚═════╝ ╚═╝  ╚═══╝   ╚═╝       ╚═╝     ╚═╝  ╚═╝╚═╝  ╚═══╝╚═╝ ╚═════╝</pre>
     <h1 class="wordmark">DeepThought</h1>
-    <p class="sub">DON'T PANIC</p>
+    <p class="sub">RESEARCH COMPUTING HARNESS · UNIVERSITY OF ALBERTA / AMII</p>
+
+    <div id="device-login-hint" class="banner" hidden></div>
+
+    <div id="oidc-login-block" class="row" style="margin-bottom:16px;" hidden>
+      <a id="oidc-login-btn" class="btn-primary" href="/api/v1/auth/oidc/login">Sign in with SSO (CILogon / Alliance / UAlberta)</a>
+    </div>
+
     <form id="login-form">
       <label>User<input id="login-user" autocomplete="username" required></label>
       <label>Password<input id="login-pass" type="password" autocomplete="current-password" required></label>
@@ -24,22 +37,167 @@
   <!-- Dashboard -->
   <section id="dash" hidden>
     <header>
-      <h1 class="wordmark">DeepThought</h1>
-      <span id="dash-user" class="chip"></span>
-      <button id="logout" class="ghost">Log out</button>
+      <div>
+        <h1 class="wordmark">DeepThought · Unicomplex</h1>
+        <span class="hint">DON'T PANIC · Multi-Cluster Fleet &amp; Scientific Harness Console</span>
+      </div>
+      <div class="header-right">
+        <span id="dash-user" class="chip"></span>
+        <button id="refresh-all" class="ghost">Refresh</button>
+        <button id="logout" class="ghost">Log out</button>
+      </div>
     </header>
 
-    <h2>Service</h2>
-    <dl id="service-info" class="grid"></dl>
-
-    <h2>Settings defaults <span class="hint">(served to clients as the “server” layer)</span></h2>
-    <textarea id="defaults" rows="14" spellcheck="false"></textarea>
-    <div class="row">
-      <button id="save-defaults">Save defaults</button>
-      <span id="defaults-status" class="hint"></span>
+    <!-- Browser-Link CLI Approval Banner -->
+    <div id="device-approve-banner" class="banner approve-banner" hidden>
+      <div>
+        <strong>★ Approve CLI Browser-Link Login</strong>
+        <p class="hint" id="device-approve-text">A DeepThought CLI session is requesting authorization.</p>
+      </div>
+      <div class="row">
+        <input id="device-code-input" placeholder="Device code" style="max-width:220px;">
+        <button id="device-approve-btn">Approve CLI Session</button>
+        <span id="device-approve-status" class="hint"></span>
+      </div>
     </div>
 
-    <footer class="hint">Phase-1 UI — the execution plane grows in behind this door.</footer>
+    <!-- Navigation Tabs -->
+    <nav class="tabs" id="nav-tabs">
+      <button class="tab active" data-tab="tab-overview">Overview &amp; Settings</button>
+      <button class="tab" data-tab="tab-fleet">Live Fleet &amp; Remote CLI</button>
+      <button class="tab" data-tab="tab-systems">Systems &amp; Clusters</button>
+      <button class="tab" data-tab="tab-projects">Projects &amp; Skills</button>
+      <button class="tab" data-tab="tab-pipelines">Pipelines &amp; Jobs</button>
+      <button class="tab" data-tab="tab-sql">SQL Tool &amp; 6-Tier Summaries</button>
+    </nav>
+
+    <!-- TAB 1: Overview & Settings (retains #service-info, #defaults, #save-defaults, #defaults-status) -->
+    <div id="tab-overview" class="tab-panel">
+      <div class="two-col">
+        <div class="panel">
+          <h2>Service &amp; Identity</h2>
+          <dl id="service-info" class="grid"></dl>
+          <h2>Active Sessions</h2>
+          <div id="sessions-list" class="list-box"></div>
+        </div>
+        <div class="panel">
+          <h2>User Profile &amp; RAGFlow Knowledge Base</h2>
+          <label>RAGFlow Base URL<input id="rag-base-url" placeholder="https://ragflow.example.ca"></label>
+          <label>RAGFlow API Key / $ENV<input id="rag-api-key" placeholder="$RAGFLOW_API_KEY"></label>
+          <label>Default Dataset IDs (comma-separated)<input id="rag-datasets" placeholder="ds_1, ds_2"></label>
+          <div class="row">
+            <button id="save-user-settings">Save User Settings</button>
+            <span id="user-settings-status" class="hint"></span>
+          </div>
+        </div>
+      </div>
+
+      <div class="panel" style="margin-top:18px;">
+        <h2>Settings defaults <span class="hint">(served to clients as the “server” layer)</span></h2>
+        <textarea id="defaults" rows="12" spellcheck="false"></textarea>
+        <div class="row">
+          <button id="save-defaults">Save defaults</button>
+          <span id="defaults-status" class="hint"></span>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 2: Live Fleet & Remote CLI Controller (Client B / Web -> Client A) -->
+    <div id="tab-fleet" class="tab-panel" hidden>
+      <div class="two-col">
+        <div class="panel">
+          <h2>Online Fleet Nodes <span class="hint">(Client B ↔ Server ↔ Client A)</span></h2>
+          <div id="fleet-nodes-list" class="list-box"></div>
+          <h2>Recent Dispatched Tasks</h2>
+          <div id="fleet-tasks-list" class="list-box"></div>
+        </div>
+        <div class="panel">
+          <h2>Remote Terminal &amp; Command Deck</h2>
+          <div class="row" style="margin-bottom:10px;">
+            <input id="fleet-target" placeholder="Target ClientID / SystemID / Host / Cluster (or 'any')">
+            <select id="fleet-kind">
+              <option value="prompt">Send Chat Prompt</option>
+              <option value="bash">Run Guarded Bash</option>
+              <option value="queen_approve">Queen Permission Verdict (y/a/n)</option>
+              <option value="interrupt">Interrupt Active Turn (Esc)</option>
+            </select>
+          </div>
+          <div class="row" style="margin-bottom:10px;">
+            <input id="fleet-payload" placeholder="Prompt text, bash command, or approval key (y/a/n)…">
+            <button id="fleet-dispatch-btn">Dispatch</button>
+          </div>
+          <span id="fleet-dispatch-status" class="hint"></span>
+          <pre id="fleet-terminal-view" class="terminal-screen">Select an online fleet node to view its live terminal screen and Queen approval state…</pre>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 3: Systems & Multi-Cluster Capability Registry -->
+    <div id="tab-systems" class="tab-panel" hidden>
+      <div class="panel">
+        <h2>Registered Systems &amp; Cluster Capabilities <span class="hint">(SystemUUID · Slurm · Lmod · CVMFS · Cloud · Containers)</span></h2>
+        <div id="hosts-list" class="list-box"></div>
+      </div>
+    </div>
+
+    <!-- TAB 4: Projects, Assets & Skills -->
+    <div id="tab-projects" class="tab-panel" hidden>
+      <div class="two-col">
+        <div class="panel">
+          <h2>SQL Projects &amp; Tracked Assets</h2>
+          <div class="row" style="margin-bottom:10px;">
+            <input id="new-project-name" placeholder="Project name">
+            <input id="new-project-root" placeholder="Root directory (/scratch/...)">
+            <button id="create-project-btn">Create Project</button>
+          </div>
+          <div id="projects-list" class="list-box"></div>
+        </div>
+        <div class="panel">
+          <h2>Synced Skills Catalog</h2>
+          <div id="skills-list" class="list-box"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 5: Repeatable Scientific Pipelines, Worked Examples & Slurm Jobs -->
+    <div id="tab-pipelines" class="tab-panel" hidden>
+      <div class="two-col">
+        <div class="panel">
+          <h2>Pipeline Templates &amp; Worked Examples (StepExemplars)</h2>
+          <div id="pipelines-list" class="list-box"></div>
+          <h2>Scientific Plans / Experiments</h2>
+          <div id="experiments-list" class="list-box"></div>
+        </div>
+        <div class="panel">
+          <h2>Cross-Cluster Slurm Jobs</h2>
+          <div id="jobs-list" class="list-box"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- TAB 6: SQL Tool Executions & 6-Tier Summary Explorer -->
+    <div id="tab-sql" class="tab-panel" hidden>
+      <div class="two-col">
+        <div class="panel">
+          <h2>Structured SQL Tool Executions <span class="hint">(command, path, args, exit_code, duration, job_id)</span></h2>
+          <div class="row" style="margin-bottom:10px;">
+            <input id="sql-tool-filter" placeholder="Filter by tool (bash, read, slurm_submit, workflow…)">
+            <button id="sql-tool-refresh">Query SQL</button>
+          </div>
+          <div id="tool-executions-list" class="list-box"></div>
+        </div>
+        <div class="panel">
+          <h2>6-Tier Summary Inspector <span class="hint">(FULL · DETAILED · DIGEST · LINE · TOMBSTONE · EXEMPLAR)</span></h2>
+          <div class="row" style="margin-bottom:10px;">
+            <input id="summary-interaction-id" placeholder="Interaction / Probe ID (click a tool execution row)">
+            <button id="summary-fetch-btn">Load 6 Tiers</button>
+          </div>
+          <div id="summaries-view" class="list-box"></div>
+        </div>
+      </div>
+    </div>
+
+    <footer class="hint">DeepThought Unicomplex · Multi-Cluster Fleet, Repeatable Scientific Pipelines &amp; 6-Tier Borg Graph Store.</footer>
   </section>
 
 </main>

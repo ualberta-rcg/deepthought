@@ -68,13 +68,22 @@ type Route struct {
 func (p Provider) ExpandedKey() string { return credential.Resolve(p.APIKey) }
 
 // ServerConfig is the optional server connection: where the settings-defaults
-// server lives and how this client logs in (phase-1 shared password). The
-// password follows the provider convention — a literal or a "$ENV_VAR"
-// reference expanded at use time.
+// server lives and how this client logs in (phase-1 shared password or
+// Browser-Link / OIDC session token). The password follows the provider
+// convention — a literal or a "$ENV_VAR" reference expanded at use time.
 type ServerConfig struct {
-	URL      string `json:"url,omitempty"`
-	User     string `json:"user,omitempty"`
-	Password string `json:"password,omitempty"`
+	URL          string `json:"url,omitempty"`
+	User         string `json:"user,omitempty"`
+	Password     string `json:"password,omitempty"`
+	SessionToken string `json:"session_token,omitempty"`
+	Token        string `json:"token,omitempty"`
+}
+
+// RAGFlowConfig configures the per-user RAGFlow knowledge base integration.
+type RAGFlowConfig struct {
+	BaseURL    string   `json:"base_url,omitempty"`
+	APIKey     string   `json:"api_key,omitempty"`
+	DatasetIDs []string `json:"dataset_ids,omitempty"`
 }
 
 // ExpandedPassword resolves "$ENV_VAR" password references.
@@ -98,6 +107,9 @@ type File struct {
 
 	// Server configures the optional settings-defaults server login.
 	Server *ServerConfig `json:"server,omitempty"`
+
+	// RAGFlow configures optional per-user RAGFlow knowledge base retrieval.
+	RAGFlow *RAGFlowConfig `json:"ragflow,omitempty"`
 
 	// StatusLine configures the bottom chrome band.
 	StatusLine *StatusLine `json:"status_line,omitempty"`

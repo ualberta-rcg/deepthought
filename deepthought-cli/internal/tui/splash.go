@@ -12,29 +12,33 @@ import (
 )
 
 const (
-	splashTagline = "Research computing harness · University of Alberta / AMII"
-	splashHint    = "↑/↓ choose · enter select"
+	splashTagline = "★ DEEPTHOUGHT · RESEARCH COMPUTING HARNESS · UNIVERSITY OF ALBERTA / AMII ★"
+	splashHint    = "↑/↓ or 1-5 choose · enter start"
 )
 
 // splashSpinner aliases the default braille set (see spinners.go).
 var splashSpinner = DefaultSpinner
 
-// BootInfo is what the home screen's info block shows. Set once at
-// construction from the live settings and host; Server is refreshed by the
-// root after a login.
+// BootInfo is what the home screen's HUD block shows. Set once at
+// construction from the live settings and host; Server and System fields are
+// refreshed by the root as background probes complete.
 type BootInfo struct {
-	Model    string // active chat-role model label
-	Provider string // provider name serving it
-	Ready    bool   // false when no API key / nothing configured
-	Version  string // "DeepThought <build>"
-	Server   string // "Standalone — local settings only" / "Connected as …"
-	Host     string
-	Cwd      string
+	Model        string // active chat-role model label
+	Provider     string // provider name serving it
+	Ready        bool   // false when no API key / nothing configured
+	Version      string // "DeepThought <build>"
+	Server       string // "Standalone — local settings only" / "Connected as …"
+	Host         string
+	SystemID     string // stable system UUID / fingerprint
+	Cluster      string // cluster/site label (e.g. "vulcan (alliance)")
+	Capabilities string // detected capabilities (e.g. "Slurm · Lmod · CVMFS · Apptainer")
+	Project      string // active workspace project name
+	Cwd          string
 }
 
-// SplashModel is the home screen: wordmark, tagline, version, an info block
-// (model, server, host, working directory) and the start actions. It is a
-// plain struct, not a tea.Model — the root wraps it.
+// SplashModel is the arcade start screen: big "DON'T PANIC" wordmark,
+// DeepThought title banner, system/loadout HUD, and 1P/2P start menu.
+// It is a plain struct, not a tea.Model — the root wraps it.
 type SplashModel struct {
 	spin      spinner.Model
 	spinFrame int // our own frame counter; the spinner's frame field is unexported
@@ -60,17 +64,45 @@ func (m SplashModel) WithServer(line string) SplashModel {
 	return m
 }
 
+// WithSystem updates the system identity, cluster, and capability badges on the HUD.
+func (m SplashModel) WithSystem(hostName, systemID, cluster, capabilities string) SplashModel {
+	if hostName != "" {
+		m.boot.Host = hostName
+	}
+	if systemID != "" {
+		m.boot.SystemID = systemID
+	}
+	if cluster != "" {
+		m.boot.Cluster = cluster
+	}
+	if capabilities != "" {
+		m.boot.Capabilities = capabilities
+	}
+	return m
+}
+
+// WithProject updates the active project label on the HUD.
+func (m SplashModel) WithProject(project string) SplashModel {
+	m.boot.Project = project
+	return m
+}
+
+// WithModel updates the active model and provider on the HUD.
+func (m SplashModel) WithModel(model, provider string, ready bool) SplashModel {
+	m.boot.Model = model
+	m.boot.Provider = provider
+	m.boot.Ready = ready
+	return m
+}
+
 // Init kicks the spinner (its Update reschedules later ticks). The splash stays
-// until the first keypress — there's no auto-advance timer (pass --no-splash to
-// skip it entirely).
+// until the user explicitly selects an action (pass --no-splash to skip it).
 func (m SplashModel) Init() tea.Cmd {
 	return func() tea.Msg { return spinner.TickMsg{} } // first spin frame, now
 }
 
-// Update returns the concrete SplashModel type. On any key it asks the root to
-// advance — the root decides whether that means a new chat or (when no model is
-// configured) the Settings add-provider area. HoldDoneMsg is accepted
-// defensively (stale timers from an earlier screen); splash arms none itself.
+// Update returns the concrete SplashModel type. Only Enter triggers an action;
+// arrow keys, Tab, j/k, or 1-5 move the arcade selector cursor.
 func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 	switch msg := msg.(type) {
 	case spinner.TickMsg:
@@ -80,21 +112,40 @@ func (m SplashModel) Update(msg tea.Msg) (SplashModel, tea.Cmd) {
 		return m, cmd
 	case tea.KeyPressMsg:
 		switch msg.String() {
-		case "down", "tab":
+		case "down", "tab", "j":
 			m.selected = (m.selected + 1) % 5
 			m.notice = ""
-		case "up", "shift+tab":
+		case "up", "shift+tab", "k":
 			m.selected = (m.selected + 4) % 5
 			m.notice = ""
+		case "1":
+			m.selected = 0
+			m.notice = ""
+		case "2":
+			m.selected = 1
+			m.notice = ""
+		case "3":
+			m.selected = 2
+			m.notice = ""
+		case "4":
+			m.selected = 3
+			m.notice = ""
+		case "5":
+			m.selected = 4
+			m.notice = ""
 		case "enter":
-			if m.selected == 0 {
+			switch m.selected {
+			case 0:
 				return m, func() tea.Msg { return SplashAdvanceMsg{} }
+			case 1:
+				return m, func() tea.Msg { return SplashServerLoginMsg{} }
+			case 2:
+				return m, func() tea.Msg { return WorkspaceAction{Kind: "discover"} }
+			case 3:
+				return m, func() tea.Msg { return WorkspaceAction{Kind: "menu"} }
+			case 4:
+				return m, Goto(ScreenStatus)
 			}
-			if m.selected >= 2 {
-				kind := []string{"discover", "menu", "install"}[m.selected-2]
-				return m, func() tea.Msg { return WorkspaceAction{Kind: kind} }
-			}
-			return m, func() tea.Msg { return SplashServerLoginMsg{} }
 		}
 	}
 	return m, nil
@@ -113,29 +164,60 @@ func (m SplashModel) WithNotice(text string) SplashModel {
 	return m
 }
 
-// View composes the home screen as one centered block. Below 90 columns or
-// 24 rows it goes compact: plain-text name, no tagline, model line only.
+// View composes the arcade start screen as one centered block. Below 90 columns
+// or 24 rows it goes compact so it never overflows small terminals.
 func (m SplashModel) View() string {
 	if m.width == 0 || m.height == 0 {
 		return ""
 	}
 	compact := m.width < 90 || m.height < 24
-	choices := []string{"  Run standalone", "  Log in to server", "  Set up AI providers", "  Explore / Settings", "  Install on another machine"}
-	choices[m.selected] = "› " + strings.TrimSpace(choices[m.selected])
+	choices := []string{
+		"  [1P] SINGLE PLAYER  · Run standalone (local terminal & cluster)",
+		"  [2P] MULTIPLAYER    · Log in to server (browser link / SQL sync / fleet)",
+		"  [++] AI LOADOUT     · Set up AI providers & models",
+		"  [>>] COMMAND DECK   · Explore / Settings / Resume chat / Projects",
+		"  [##] SYSTEM CABINET · Multi-cluster status, jobs & diagnostics",
+	}
+	if compact {
+		choices = []string{
+			"  [1P] Run standalone",
+			"  [2P] Log in to server",
+			"  [++] Set up AI providers",
+			"  [>>] Explore / Settings",
+			"  [##] System status",
+		}
+	}
+	for i := range choices {
+		choices[i] = clipLine(choices[i], max(12, m.width-4))
+	}
+	choices[m.selected] = clipLine("▶ "+strings.TrimSpace(choices[m.selected]), max(12, m.width-4))
 
 	var rows []string
 	if compact {
-		rows = append(rows, styleName.Render("DeepThought")+"  "+styleVersion.Render(m.version()))
+		headerLine := clipLine("DON'T PANIC · "+m.version(), max(10, m.width-2))
+		rows = append(rows, styleName.Render(headerLine))
 	} else {
-		rows = append(rows, wordmarkHeader(m.width, m.height-18), "",
-			styleVersion.Render(splashTagline), styleVersion.Render(m.version()))
+		rows = append(rows,
+			wordmarkHeader(m.width, max(4, m.height-20)),
+			"",
+			styleName.Render(clipLine(splashTagline, max(10, m.width-4))),
+			styleVersion.Render(clipLine(m.version()+" · SELECT GAME MODE", max(10, m.width-4))),
+		)
 	}
 	rows = append(rows, "", m.infoBlock(compact), "")
-	rows = append(rows, styleName.Render(choices[0]))
-	for _, c := range choices[1:] {
-		rows = append(rows, styleVersion.Render(c))
+	for i, c := range choices {
+		if i == m.selected {
+			rows = append(rows, styleName.Render(c))
+		} else {
+			rows = append(rows, styleVersion.Render(c))
+		}
 	}
-	rows = append(rows, styleVersion.Render(m.notice), styleVersion.Render(splashHint))
+	if m.notice != "" {
+		rows = append(rows, styleVersion.Render(clipLine(m.notice, max(10, m.width-4))))
+	} else {
+		rows = append(rows, "")
+	}
+	rows = append(rows, styleVersion.Render(clipLine(splashHint, max(10, m.width-4))))
 	block := lipgloss.JoinVertical(lipgloss.Center, rows...)
 	return lipgloss.NewStyle().MaxWidth(m.width).MaxHeight(m.height).Render(placeCenter(m.width, m.height, block))
 }
@@ -144,17 +226,36 @@ func (m SplashModel) version() string {
 	return orDefault(m.boot.Version, "DeepThought (development build)")
 }
 
-// infoBlock is the left-aligned label/value block under the tagline.
+// infoBlock is the left-aligned HUD label/value block under the tagline.
 func (m SplashModel) infoBlock(compact bool) string {
+	maxVal := max(10, m.width-14)
 	row := func(label, value string) string {
-		return styleSettingsKey.Render(fmt.Sprintf("%-7s", label)) + " " + styleVersion.Render(clipLine(value, max(10, m.width-12)))
+		return styleSettingsKey.Render(fmt.Sprintf("%-8s", label)) + " " + styleVersion.Render(clipLine(value, maxVal))
 	}
-	rows := []string{row("model", m.statusLine())}
+	rows := []string{row("loadout", m.statusLine())}
 	if !compact {
+		hostLine := orDefault(m.boot.Host, "unknown")
+		if m.boot.Cluster != "" {
+			hostLine = m.boot.Cluster + " · " + hostLine
+		}
+		if m.boot.SystemID != "" {
+			shortID := m.boot.SystemID
+			if len(shortID) > 12 {
+				shortID = shortID[:12]
+			}
+			hostLine += " [" + shortID + "]"
+		}
+		if m.boot.Capabilities != "" {
+			hostLine += " · " + m.boot.Capabilities
+		}
+		cwdLine := orDefault(m.boot.Cwd, "unknown")
+		if m.boot.Project != "" {
+			cwdLine = m.boot.Project + " (" + cwdLine + ")"
+		}
 		rows = append(rows,
-			row("server", orDefault(m.boot.Server, "Standalone — local settings only")),
-			row("host", orDefault(m.boot.Host, "unknown")),
-			row("cwd", orDefault(m.boot.Cwd, "unknown")),
+			row("network", orDefault(m.boot.Server, "Standalone — local settings only")),
+			row("system", hostLine),
+			row("project", cwdLine),
 		)
 	}
 	return lipgloss.JoinVertical(lipgloss.Left, rows...)
@@ -171,19 +272,27 @@ func (m SplashModel) statusLine() string {
 	return m.boot.Model + " · " + m.boot.Provider
 }
 
-// wordmarkHeader picks the biggest "DeepThought" wordmark that fits
-// width×height (standard font, then small), painted along the brand
-// gradient; plain styled text when no art fits.
+// wordmarkHeader picks the biggest "DON'T PANIC" wordmark that fits
+// width×height (standard font, stacked standard, then small), painted along
+// the brand gradient; plain styled text when no art fits.
 func wordmarkHeader(width, height int) string {
 	for _, cand := range [][]string{
-		bigTextIn("standard", "DeepThought"),
-		bigTextIn(smallTextFont, "DeepThought"),
+		bigTextIn("standard", "DON'T PANIC"),
+		stackArt(bigTextIn("standard", "DON'T"), bigTextIn("standard", "PANIC")),
+		bigTextIn(smallTextFont, "DON'T PANIC"),
 	} {
 		if len(cand) > 0 && widestRow(cand) <= width && len(cand) <= height {
 			return paintGradient(cand)
 		}
 	}
-	return styleName.Render("DeepThought")
+	fallback := "DON'T PANIC · DeepThought"
+	if len(fallback) > width && width > 0 {
+		fallback = "DeepThought"
+		if len(fallback) > width {
+			fallback = fallback[:width]
+		}
+	}
+	return styleName.Render(fallback)
 }
 
 // stackArt joins two art blocks with one blank row between them.

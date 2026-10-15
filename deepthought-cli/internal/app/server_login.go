@@ -196,6 +196,152 @@ func (s *ServerSession) PushJob(id string, raw json.RawMessage) error {
 func (s *ServerSession) PushExperiment(id string, raw json.RawMessage) error {
 	return s.do("PUT", "/api/v1/experiments/"+id, raw, nil)
 }
+func (s *ServerSession) PushHost(id string, raw json.RawMessage) error {
+	return s.do("PUT", "/api/v1/hosts/"+id, raw, nil)
+}
+
+const defaultServerURL = "https://deepthought.vulcan.alliancecan.ca"
+
+// DeviceLoginTicket tracks an in-flight browser-link CLI login.
+type DeviceLoginTicket struct {
+	ServerURL       string
+	DeviceCode      string
+	UserCode        string
+	VerificationURI string
+	FullURL         string
+	OIDCEnabled     bool
+	ExpiresAt       time.Time
+}
+
+type DeviceLoginStartedMsg struct {
+	Ticket *DeviceLoginTicket
+	Err    string
+}
+
+type DeviceLoginPollTickMsg struct {
+	DeviceCode string
+}
+
+func resolveServerURL(live *Settings) string {
+	if live != nil {
+		if f := live.Snapshot(); f.Server != nil && strings.TrimSpace(f.Server.URL) != "" {
+			return strings.TrimRight(strings.TrimSpace(f.Server.URL), "/")
+		}
+	}
+	return defaultServerURL
+}
+
+func startDeviceLoginCmd(live *Settings) tea.Cmd {
+	base := resolveServerURL(live)
+	return func() tea.Msg {
+		resp, err := serverHTTPClient().Post(base+"/api/v1/auth/device/start", "application/json", strings.NewReader("{}"))
+		if err != nil {
+			return DeviceLoginStartedMsg{Err: "Server unavailable; check the URL in Settings → Server."}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return DeviceLoginStartedMsg{Err: fmt.Sprintf("Browser login unavailable (HTTP %d)", resp.StatusCode)}
+		}
+		var out struct {
+			DeviceCode      string `json:"device_code"`
+			UserCode        string `json:"user_code"`
+			VerificationURI string `json:"verification_uri"`
+			OIDCEnabled     bool   `json:"oidc_enabled"`
+			ExpiresIn       int    `json:"expires_in"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out) != nil || out.DeviceCode == "" {
+			return DeviceLoginStartedMsg{Err: "Invalid device start response from server"}
+		}
+		fullURL := out.VerificationURI
+		if strings.HasPrefix(fullURL, "/") {
+			fullURL = base + fullURL
+		}
+		exp := 600
+		if out.ExpiresIn > 0 {
+			exp = out.ExpiresIn
+		}
+		return DeviceLoginStartedMsg{
+			Ticket: &DeviceLoginTicket{
+				ServerURL:       base,
+				DeviceCode:      out.DeviceCode,
+				UserCode:        out.UserCode,
+				VerificationURI: out.VerificationURI,
+				FullURL:         fullURL,
+				OIDCEnabled:     out.OIDCEnabled,
+				ExpiresAt:       time.Now().Add(time.Duration(exp) * time.Second),
+			},
+		}
+	}
+}
+
+func pollDeviceLoginCmd(live *Settings, ticket *DeviceLoginTicket) tea.Cmd {
+	if ticket == nil {
+		return nil
+	}
+	t := *ticket
+	return func() tea.Msg {
+		if time.Now().After(t.ExpiresAt) {
+			return ServerLoginResultMsg{Err: "Browser login code expired — try again."}
+		}
+		body, _ := json.Marshal(map[string]string{"device_code": t.DeviceCode})
+		resp, err := serverHTTPClient().Post(t.ServerURL+"/api/v1/auth/device/poll", "application/json", bytes.NewReader(body))
+		if err != nil {
+			time.Sleep(2 * time.Second)
+			return DeviceLoginPollTickMsg{DeviceCode: t.DeviceCode}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode == http.StatusAccepted {
+			time.Sleep(2 * time.Second)
+			return DeviceLoginPollTickMsg{DeviceCode: t.DeviceCode}
+		}
+		if resp.StatusCode != http.StatusOK {
+			return ServerLoginResultMsg{Err: fmt.Sprintf("Browser login rejected or expired (HTTP %d)", resp.StatusCode)}
+		}
+		var out struct {
+			Status string `json:"status"`
+			Token  string `json:"token"`
+			User   string `json:"user"`
+		}
+		if json.NewDecoder(io.LimitReader(resp.Body, 64<<10)).Decode(&out) != nil || out.Status != "approved" || out.Token == "" {
+			time.Sleep(2 * time.Second)
+			return DeviceLoginPollTickMsg{DeviceCode: t.DeviceCode}
+		}
+		credential.Register("server-session:"+t.ServerURL, out.Token)
+		defaults, _ := FetchServerDefaults(t.ServerURL, out.Token)
+		if live != nil {
+			_ = live.Update(func(f *config.File) {
+				if f.Server == nil {
+					f.Server = &config.ServerConfig{}
+				}
+				f.Server.URL = t.ServerURL
+				if out.User != "" {
+					f.Server.User = out.User
+				}
+			})
+		}
+		relogin := func() (string, error) {
+			if live == nil {
+				return "", ErrSessionExpired
+			}
+			cur := live.Snapshot().Server
+			if cur == nil || cur.URL != t.ServerURL || cur.ExpandedPassword() == "" {
+				return "", ErrSessionExpired
+			}
+			_, tok, err := LoginToServer(cur)
+			return tok, err
+		}
+		return ServerLoginResultMsg{
+			Session: &ServerSession{
+				URL:       t.ServerURL,
+				User:      out.User,
+				Token:     out.Token,
+				Defaults:  defaults,
+				LoginTime: time.Now(),
+				auth:      &sessionAuth{token: out.Token, relogin: relogin},
+			},
+		}
+	}
+}
 func pushHPCRecords(source history.ChatStoreSource, sess *ServerSession) {
 	if source == nil || sess == nil {
 		return

@@ -124,6 +124,60 @@ var mysqlSchema = []string{
 	  summaries TEXT NOT NULL,
 	  links TEXT NOT NULL
 	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS summaries (
+	  user_id VARCHAR(64) NOT NULL,
+	  interaction_id VARCHAR(72) NOT NULL,
+	  state VARCHAR(24) NOT NULL,
+	  summarizer VARCHAR(64) NOT NULL,
+	  text LONGTEXT NOT NULL,
+	  tokens INT NOT NULL DEFAULT 0,
+	  created_at VARCHAR(40) NOT NULL,
+	  PRIMARY KEY (user_id, interaction_id, state, summarizer),
+	  KEY idx_summaries_interaction (user_id, interaction_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS links (
+	  user_id VARCHAR(64) NOT NULL,
+	  src VARCHAR(72) NOT NULL,
+	  dst VARCHAR(72) NOT NULL,
+	  type VARCHAR(64) NOT NULL,
+	  ordinal INT NOT NULL DEFAULT 0,
+	  meta TEXT,
+	  PRIMARY KEY (user_id, src, dst, type),
+	  KEY idx_links_dst (user_id, dst, type)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
+	`CREATE TABLE IF NOT EXISTS tool_executions (
+	  user_id VARCHAR(64) NOT NULL,
+	  id VARCHAR(72) NOT NULL,
+	  session_id VARCHAR(72) NOT NULL DEFAULT '',
+	  collective_id VARCHAR(72) NOT NULL DEFAULT '',
+	  incursion_id VARCHAR(72) NOT NULL DEFAULT '',
+	  transmission_id VARCHAR(72) NOT NULL DEFAULT '',
+	  system_id VARCHAR(128) NOT NULL DEFAULT '',
+	  cluster_name VARCHAR(64) NOT NULL DEFAULT '',
+	  tool_name VARCHAR(64) NOT NULL DEFAULT '',
+	  probe_type VARCHAR(64) NOT NULL DEFAULT '',
+	  command TEXT,
+	  target_path VARCHAR(1024) NOT NULL DEFAULT '',
+	  arguments_json LONGTEXT,
+	  response_text LONGTEXT,
+	  response_summary TEXT,
+	  is_error TINYINT(1) NOT NULL DEFAULT 0,
+	  exit_code INT NOT NULL DEFAULT 0,
+	  duration_ms BIGINT NOT NULL DEFAULT 0,
+	  cwd VARCHAR(1024) NOT NULL DEFAULT '',
+	  env_json TEXT,
+	  slurm_job_id VARCHAR(64) NOT NULL DEFAULT '',
+	  artifacts_json TEXT,
+	  status VARCHAR(32) NOT NULL DEFAULT '',
+	  decision VARCHAR(32) NOT NULL DEFAULT '',
+	  started_at VARCHAR(40),
+	  finished_at VARCHAR(40),
+	  created_at VARCHAR(40) NOT NULL,
+	  PRIMARY KEY (user_id, id),
+	  KEY idx_tool_exec_coll (user_id, collective_id, created_at),
+	  KEY idx_tool_exec_tool (user_id, tool_name, created_at),
+	  KEY idx_tool_exec_job (user_id, slurm_job_id)
+	) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`,
 	// The records KV (SQLite's local_records), user-scoped.
 	`CREATE TABLE IF NOT EXISTS records (
 	  user_id VARCHAR(64) NOT NULL,
@@ -333,7 +387,78 @@ INSERT INTO drone_metadata(interaction_id,summaries,links) VALUES(?,?,?)
 AS new
 ON DUPLICATE KEY UPDATE summaries=new.summaries, links=new.links`,
 		drone.ID, string(summaryJSON), string(linksJSON))
-	return err
+	if err != nil {
+		return err
+	}
+	nowStamp := time.Now().UTC().Format(time.RFC3339Nano)
+	for _, tier := range []struct {
+		state string
+		text  string
+	}{
+		{"FULL", drone.Summaries.Full},
+		{"DETAILED", drone.Summaries.Detailed},
+		{"DIGEST", drone.Summaries.Condensed},
+		{"LINE", drone.Summaries.Semantic},
+		{"TOMBSTONE", drone.Summaries.Tombstone},
+		{"EXEMPLAR", drone.Summaries.Exemplar},
+	} {
+		if tier.text == "" {
+			continue
+		}
+		tokEst := (len(tier.text) + 3) / 4
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO summaries(user_id,interaction_id,state,summarizer,text,tokens,created_at)
+VALUES(?,?,?,?,?,?,?)
+AS new
+ON DUPLICATE KEY UPDATE text=new.text, tokens=new.tokens`,
+			s.userID, drone.ID, tier.state, "deterministic", tier.text, tokEst, nowStamp); err != nil {
+			return err
+		}
+	}
+	for ordinal, link := range drone.Links {
+		meta, _ := json.Marshal(link.Metadata)
+		if _, err := tx.ExecContext(ctx, `
+INSERT INTO links(user_id,src,dst,type,ordinal,meta) VALUES(?,?,?,?,?,?)
+AS new
+ON DUPLICATE KEY UPDATE ordinal=new.ordinal, meta=new.meta`,
+			s.userID, drone.ID, link.TargetID, link.Relation, ordinal, string(meta)); err != nil {
+			return err
+		}
+	}
+	if drone.Kind == "probe" {
+		rawProbe := legacy
+		if len(rawProbe) == 0 {
+			rawProbe = drone.Body
+		}
+		var p graph.Probe
+		if json.Unmarshal(rawProbe, &p) == nil && p.ID != "" {
+			rec := extractToolExecutionFromGraphProbe(&p, collectiveID)
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO tool_executions(
+  user_id,id,session_id,collective_id,incursion_id,transmission_id,system_id,cluster_name,
+  tool_name,probe_type,command,target_path,arguments_json,response_text,response_summary,
+  is_error,exit_code,duration_ms,cwd,env_json,slurm_job_id,artifacts_json,
+  status,decision,started_at,finished_at,created_at
+) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+AS new
+ON DUPLICATE KEY UPDATE
+  tool_name=new.tool_name, probe_type=new.probe_type, command=new.command,
+  target_path=new.target_path, arguments_json=new.arguments_json,
+  response_text=new.response_text, response_summary=new.response_summary,
+  is_error=new.is_error, exit_code=new.exit_code, duration_ms=new.duration_ms,
+  cwd=new.cwd, env_json=new.env_json, slurm_job_id=new.slurm_job_id,
+  artifacts_json=new.artifacts_json, status=new.status, decision=new.decision,
+  started_at=new.started_at, finished_at=new.finished_at`,
+				s.userID, rec.ID, rec.SessionID, rec.CollectiveID, rec.IncursionID, rec.TransmissionID,
+				rec.SystemID, rec.ClusterName, rec.ToolName, rec.ProbeType, rec.Command, rec.TargetPath,
+				rec.ArgumentsJSON, rec.ResponseText, rec.ResponseSummary, rec.IsError, rec.ExitCode,
+				rec.DurationMS, rec.CWD, rec.EnvJSON, rec.SlurmJobID, rec.ArtifactsJSON,
+				rec.Status, rec.Decision, rec.StartedAt, rec.FinishedAt, rec.CreatedAt); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
 }
 
 // inlineOrStore keeps small bodies inline and moves >1 MiB bodies to the
@@ -526,6 +651,147 @@ func formatTimePtr(t *time.Time) any {
 		return nil
 	}
 	return formatTime(*t)
+}
+
+func extractToolExecutionFromGraphProbe(p *graph.Probe, collectiveID string) graph.ToolExecutionRecord {
+	argsJSON := p.ArgumentsRaw
+	if argsJSON == "" && len(p.Arguments) > 0 {
+		raw, _ := json.Marshal(p.Arguments)
+		argsJSON = string(raw)
+	}
+	if argsJSON == "" {
+		argsJSON = "{}"
+	}
+	strArg := func(keys ...string) string {
+		for _, k := range keys {
+			if v, ok := p.Arguments[k].(string); ok && v != "" {
+				return v
+			}
+			if p.Metadata != nil {
+				if v, ok := p.Metadata[k].(string); ok && v != "" {
+					return v
+				}
+			}
+		}
+		return ""
+	}
+	exitCode := 0
+	if p.Result.IsError {
+		exitCode = 1
+	}
+	if p.Metadata != nil {
+		if ec, ok := p.Metadata["exit_code"].(float64); ok {
+			exitCode = int(ec)
+		}
+	}
+	var durMS int64
+	if !p.StartedAt.IsZero() && !p.FinishedAt.IsZero() && p.FinishedAt.After(p.StartedAt) {
+		durMS = p.FinishedAt.Sub(p.StartedAt).Milliseconds()
+	}
+	created := time.Now().UTC().Format(time.RFC3339Nano)
+	if !p.CreatedAt.IsZero() {
+		created = p.CreatedAt.UTC().Format(time.RFC3339Nano)
+	}
+	var started, finished string
+	if !p.StartedAt.IsZero() {
+		started = p.StartedAt.UTC().Format(time.RFC3339Nano)
+	}
+	if !p.FinishedAt.IsZero() {
+		finished = p.FinishedAt.UTC().Format(time.RFC3339Nano)
+	}
+	summary := p.Result.Summary
+	if summary == "" {
+		summary = p.Result.Summaries.Semantic
+	}
+	return graph.ToolExecutionRecord{
+		ID:              p.ID,
+		SessionID:       p.SessionID,
+		CollectiveID:    collectiveID,
+		TransmissionID:  p.ParentID,
+		SystemID:        strArg("system_id"),
+		ClusterName:     strArg("cluster", "cluster_name"),
+		ToolName:        p.Name,
+		ProbeType:       p.ProbeType,
+		Command:         strArg("command", "script", "action", "query"),
+		TargetPath:      strArg("file_path", "path", "target_path", "script_path", "dir", "workdir"),
+		ArgumentsJSON:   argsJSON,
+		ResponseText:    p.Result.Content,
+		ResponseSummary: summary,
+		IsError:         p.Result.IsError,
+		ExitCode:        exitCode,
+		DurationMS:      durMS,
+		CWD:             strArg("cwd", "workdir"),
+		EnvJSON:         "{}",
+		SlurmJobID:      strArg("job_id", "slurm_job_id"),
+		ArtifactsJSON:   "[]",
+		Status:          p.Status.String(),
+		Decision:        fmt.Sprintf("%d", p.Decision),
+		StartedAt:       started,
+		FinishedAt:      finished,
+		CreatedAt:       created,
+	}
+}
+
+// ListToolExecutions queries structured tool execution rows for this user.
+func (s *MySQLStore) ListToolExecutions(collectiveID, toolName string, limit int) ([]graph.ToolExecutionRecord, error) {
+	if limit <= 0 || limit > 500 {
+		limit = 100
+	}
+	q := `SELECT id,session_id,collective_id,incursion_id,transmission_id,system_id,cluster_name,
+	  tool_name,probe_type,COALESCE(command,''),target_path,COALESCE(arguments_json,'{}'),
+	  COALESCE(response_text,''),COALESCE(response_summary,''),is_error,exit_code,duration_ms,
+	  cwd,COALESCE(env_json,'{}'),slurm_job_id,COALESCE(artifacts_json,'[]'),
+	  status,decision,COALESCE(started_at,''),COALESCE(finished_at,''),created_at
+	FROM tool_executions WHERE user_id=?`
+	args := []any{s.userID}
+	if collectiveID != "" {
+		q += ` AND collective_id=?`
+		args = append(args, collectiveID)
+	}
+	if toolName != "" {
+		q += ` AND tool_name=?`
+		args = append(args, toolName)
+	}
+	q += ` ORDER BY created_at DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.Query(q, args...)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []graph.ToolExecutionRecord
+	for rows.Next() {
+		var r graph.ToolExecutionRecord
+		var isErr int
+		if err := rows.Scan(&r.ID, &r.SessionID, &r.CollectiveID, &r.IncursionID, &r.TransmissionID,
+			&r.SystemID, &r.ClusterName, &r.ToolName, &r.ProbeType, &r.Command, &r.TargetPath,
+			&r.ArgumentsJSON, &r.ResponseText, &r.ResponseSummary, &isErr, &r.ExitCode, &r.DurationMS,
+			&r.CWD, &r.EnvJSON, &r.SlurmJobID, &r.ArtifactsJSON, &r.Status, &r.Decision,
+			&r.StartedAt, &r.FinishedAt, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		r.IsError = isErr != 0
+		out = append(out, r)
+	}
+	return out, rows.Err()
+}
+
+// GetSummaries returns all persisted summary tiers for an interaction ID.
+func (s *MySQLStore) GetSummaries(interactionID string) ([]graph.SummaryRow, error) {
+	rows, err := s.db.Query(`SELECT interaction_id,state,summarizer,text,tokens,created_at FROM summaries WHERE user_id=? AND interaction_id=? ORDER BY state`, s.userID, interactionID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []graph.SummaryRow
+	for rows.Next() {
+		var r graph.SummaryRow
+		if err := rows.Scan(&r.InteractionID, &r.State, &r.Summarizer, &r.Text, &r.Tokens, &r.CreatedAt); err != nil {
+			return nil, err
+		}
+		out = append(out, r)
+	}
+	return out, rows.Err()
 }
 
 // UserStore manages the identity + roving-settings tables (server-owned, not

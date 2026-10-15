@@ -62,6 +62,10 @@ func ensureProbeSummary(p *Probe, to State) {
 		if p.Result.Summaries.Tombstone == "" {
 			p.Result.Summaries.Tombstone = "[summarized]"
 		}
+	case StateDetailed:
+		if p.Result.Summaries.Detailed == "" && p.Result.Content != "" {
+			p.Result.Summaries.Detailed = Condense(p.Result.Content, 80, 6000)
+		}
 	case StateDigest:
 		if p.Result.Summaries.Condensed == "" && p.Result.Content != "" {
 			r := []rune(p.Result.Content)
@@ -70,6 +74,14 @@ func ensureProbeSummary(p *Probe, to State) {
 			} else {
 				p.Result.Summaries.Condensed = p.Result.Content
 			}
+		}
+	case StateLine:
+		if p.Result.Summaries.Semantic == "" {
+			p.Result.Summaries.Semantic = SynthesizeSemanticLine(p)
+		}
+	case StateExemplar:
+		if p.Result.Summaries.Exemplar == "" {
+			p.Result.Summaries.Exemplar = SynthesizeProbeExemplar(p)
 		}
 	}
 }

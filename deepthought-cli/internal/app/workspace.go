@@ -120,7 +120,11 @@ func (m RootModel) collectHostCmd() tea.Cmd {
 }
 func (m *RootModel) showHosts() {
 	r := m.env.Observation
-	items := []tui.WorkspaceItem{{Label: r.Summary(), Detail: "Observed " + r.CollectedAt.Format(time.RFC3339) + " · " + r.IdentitySource}, {Label: "Refresh host observations", Detail: "Cached for at least 30 seconds", Kind: "refresh-host"}, {Label: "Detailed status", Kind: "action", ID: string(keybindings.Diagnostics)}}
+	items := []tui.WorkspaceItem{
+		{Label: r.Summary() + " · [" + r.ID + "]", Detail: "Observed " + r.CollectedAt.Format(time.RFC3339) + " · " + r.IdentitySource + " · " + r.CapabilitySummary()},
+		{Label: "Refresh host observations", Detail: "Cached for at least 30 seconds", Kind: "refresh-host"},
+		{Label: "Detailed status", Kind: "action", ID: string(keybindings.Diagnostics)},
+	}
 	for _, s := range r.Services {
 		items = append(items, tui.WorkspaceItem{Label: s.Kind + ": " + s.Availability, Detail: "Source: " + s.Source + " · " + s.LastSeen.Format(time.RFC3339)})
 	}
@@ -129,7 +133,7 @@ func (m *RootModel) showHosts() {
 		for _, raw := range records {
 			var h host.Record
 			if json.Unmarshal(raw, &h) == nil && h.ID != r.ID {
-				items = append(items, tui.WorkspaceItem{Label: h.Name + " · remembered host", Detail: "Last seen " + h.LastSeen.Format(time.RFC3339)})
+				items = append(items, tui.WorkspaceItem{Label: h.Name + " · " + h.ClusterLabel() + " [" + h.ID + "] · remembered system", Detail: "Last seen " + h.LastSeen.Format(time.RFC3339)})
 			}
 		}
 	}
@@ -138,7 +142,7 @@ func (m *RootModel) showHosts() {
 
 func (m RootModel) workspaceAction(a tui.WorkspaceAction) (tea.Model, tea.Cmd) {
 	switch a.Kind {
-	case "server-sync", "connect-server", "disconnect-server", "sync-now", "resolve-local", "resolve-remote", "retry-mirror":
+	case "server-sync", "browser-login-server", "copy-browser-login", "cancel-browser-login", "connect-server", "disconnect-server", "sync-now", "resolve-local", "resolve-remote", "retry-mirror":
 		return m.syncAction(a)
 	case "server-credentials", "server-sessions", "delete-credential", "confirm-delete-credential", "revoke-session":
 		return m.serverAccountAction(a)

@@ -21,10 +21,14 @@ import (
 
 	"deepthought-cli/internal/app"
 	"deepthought-cli/internal/config"
+	"deepthought-cli/internal/fleet"
 	"deepthought-cli/internal/history"
 	"deepthought-cli/internal/historytools"
+	"deepthought-cli/internal/host"
 	"deepthought-cli/internal/keybindings"
+	"deepthought-cli/internal/project"
 	"deepthought-cli/internal/queen"
+	"deepthought-cli/internal/ragflow"
 	"deepthought-cli/internal/science"
 	"deepthought-cli/internal/skills"
 	"deepthought-cli/internal/slurm"
@@ -274,6 +278,21 @@ func buildRuntime(cfg *config.Config, cfgPath, attachID string) (app.Deps, *hist
 	nativeTools = append(nativeTools, (slurm.ToolSet{Client: scheduler}).Tools()...)
 	workflows := &workflow.Service{Store: droneStore, Scheduler: scheduler, Version: buildVersion}
 	nativeTools = append(nativeTools, &workflow.Tool{Service: workflows})
+	hostRec := host.Collect(droneStore)
+	cfgSource := func() config.Config { return config.Config{File: live.Snapshot()} }
+	projects := &project.Service{
+		Store:        droneStore,
+		ConfigSource: cfgSource,
+		SystemID:     hostRec.SystemID(),
+		Cluster:      hostRec.Cluster,
+	}
+	nativeTools = append(nativeTools, &project.Tool{Service: projects})
+	nativeTools = append(nativeTools, &ragflow.Tool{ConfigSource: cfgSource})
+	fleetClient := &fleet.Client{
+		ConfigSource: cfgSource,
+		HostSource:   func() host.Record { return host.Collect(droneStore) },
+	}
+	nativeTools = append(nativeTools, &fleet.Tool{Client: fleetClient})
 
 	// Load skills from every install location (user, project codex/claude dirs,
 	// and org-managed system roots) and expose them to the model: a compact index

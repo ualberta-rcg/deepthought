@@ -767,11 +767,19 @@ func (a *API) runPostLoginHook(user, email string, claims map[string]any) {
 	}
 }
 
-// deviceStartHandler handles POST /api/v1/auth/device/start for CLI OIDC login.
+func (a *API) ensureOIDC() *OIDCProvider {
+	if a.OIDC == nil {
+		a.OIDC = NewOIDCProvider(a.Config.Auth.OIDC)
+	}
+	return a.OIDC
+}
+
+// deviceStartHandler handles POST /api/v1/auth/device/start for CLI browser-link login
+// (supports both DRAC OIDC redirect and Web UI one-click approval).
 func (a *API) deviceStartHandler(w http.ResponseWriter, r *http.Request) {
-	if !a.oidcActive() {
+	if !a.anyAuthConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"error": "OIDC authentication is disabled (set auth.oidc.enabled=true in server.json)",
+			"error": "server authentication is not configured",
 		})
 		return
 	}
@@ -783,29 +791,119 @@ func (a *API) deviceStartHandler(w http.ResponseWriter, r *http.Request) {
 	deviceCode := hex.EncodeToString(b)
 	userCode := strings.ToUpper(deviceCode[:4] + "-" + deviceCode[4:8])
 	now := time.Now()
-	a.OIDC.mu.Lock()
-	a.OIDC.purgeLocked(now)
-	a.OIDC.devices[deviceCode] = &oidcDeviceTicket{
+	prov := a.ensureOIDC()
+	prov.mu.Lock()
+	prov.purgeLocked(now)
+	prov.devices[deviceCode] = &oidcDeviceTicket{
 		DeviceCode: deviceCode,
 		UserCode:   userCode,
 		Expires:    now.Add(10 * time.Minute),
 	}
-	a.OIDC.mu.Unlock()
+	prov.mu.Unlock()
+
+	verifyURI := "/?device_code=" + url.QueryEscape(deviceCode) + "&user_code=" + url.QueryEscape(userCode)
+	if a.oidcActive() {
+		verifyURI = "/api/v1/auth/oidc/login?device_code=" + url.QueryEscape(deviceCode)
+	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"device_code":      deviceCode,
 		"user_code":        userCode,
-		"verification_uri": "/api/v1/auth/oidc/login?device_code=" + url.QueryEscape(deviceCode),
+		"verification_uri": verifyURI,
+		"auth_mode":        a.Config.Auth.Mode,
+		"oidc_enabled":     a.oidcActive(),
 		"expires_in":       600,
 		"interval":         2,
 	})
 }
 
+// deviceApproveHandler handles POST /api/v1/auth/device/approve so a user signed into
+// the Web UI (or providing their username + server password) can approve a CLI
+// browser-link login in one click.
+func (a *API) deviceApproveHandler(w http.ResponseWriter, r *http.Request) {
+	if !a.anyAuthConfigured() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"error": "server authentication is not configured"})
+		return
+	}
+	var req struct {
+		DeviceCode string `json:"device_code"`
+		UserCode   string `json:"user_code"`
+		User       string `json:"user"`
+		Password   string `json:"password"`
+	}
+	if err := json.NewDecoder(io.LimitReader(r.Body, 4096)).Decode(&req); err != nil {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "invalid JSON body"})
+		return
+	}
+	authedUser := ""
+	if tok := bearer(r); tok != "" && a.Sessions != nil {
+		if sess, ok := a.Sessions.Valid(tok); ok {
+			authedUser = sess.User
+		}
+	}
+	if authedUser == "" {
+		user := strings.TrimSpace(req.User)
+		if !a.passwordActive() || user == "" || !a.passwordMatches(req.Password) {
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "unauthorized: sign in or provide valid user and password"})
+			return
+		}
+		authedUser = user
+	}
+
+	devCode := strings.TrimSpace(req.DeviceCode)
+	usrCode := strings.ToUpper(strings.TrimSpace(req.UserCode))
+	if devCode == "" && usrCode == "" {
+		writeJSON(w, http.StatusBadRequest, map[string]any{"error": "device_code or user_code required"})
+		return
+	}
+
+	now := time.Now()
+	prov := a.ensureOIDC()
+	prov.mu.Lock()
+	prov.purgeLocked(now)
+	var ticket *oidcDeviceTicket
+	if devCode != "" {
+		ticket = prov.devices[devCode]
+	}
+	if ticket == nil && usrCode != "" {
+		for _, t := range prov.devices {
+			if strings.EqualFold(t.UserCode, usrCode) {
+				ticket = t
+				break
+			}
+		}
+	}
+	if ticket == nil || now.After(ticket.Expires) {
+		prov.mu.Unlock()
+		writeJSON(w, http.StatusNotFound, map[string]any{"error": "expired or unknown device_code"})
+		return
+	}
+	prov.mu.Unlock()
+
+	sessionToken, err := a.completeUserLogin(authedUser, "", "", nil)
+	if err != nil {
+		internalError(w, r, err)
+		return
+	}
+
+	prov.mu.Lock()
+	ticket.Approved = true
+	ticket.Token = sessionToken
+	ticket.User = authedUser
+	prov.mu.Unlock()
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"status":    "approved",
+		"user":      authedUser,
+		"user_code": ticket.UserCode,
+	})
+}
+
 // devicePollHandler handles POST /api/v1/auth/device/poll.
 func (a *API) devicePollHandler(w http.ResponseWriter, r *http.Request) {
-	if !a.oidcActive() {
+	if !a.anyAuthConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
-			"error": "OIDC authentication is disabled",
+			"error": "server authentication is not configured",
 		})
 		return
 	}
@@ -817,13 +915,14 @@ func (a *API) devicePollHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	now := time.Now()
-	a.OIDC.mu.Lock()
-	a.OIDC.purgeLocked(now)
-	ticket, ok := a.OIDC.devices[req.DeviceCode]
+	prov := a.ensureOIDC()
+	prov.mu.Lock()
+	prov.purgeLocked(now)
+	ticket, ok := prov.devices[req.DeviceCode]
 	if ok && ticket.Approved {
-		delete(a.OIDC.devices, req.DeviceCode)
+		delete(prov.devices, req.DeviceCode)
 	}
-	a.OIDC.mu.Unlock()
+	prov.mu.Unlock()
 	if !ok {
 		writeJSON(w, http.StatusNotFound, map[string]any{"error": "expired or unknown device_code"})
 		return
