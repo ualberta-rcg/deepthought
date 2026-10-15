@@ -278,19 +278,23 @@ func buildRuntime(cfg *config.Config, cfgPath, attachID string) (app.Deps, *hist
 	nativeTools = append(nativeTools, (slurm.ToolSet{Client: scheduler}).Tools()...)
 	workflows := &workflow.Service{Store: droneStore, Scheduler: scheduler, Version: buildVersion}
 	nativeTools = append(nativeTools, &workflow.Tool{Service: workflows})
-	hostRec := host.Collect(droneStore)
+	var hostStore host.Store
+	if cfg.Local != nil {
+		hostStore = cfg.Local
+	}
+	hostRec := host.Collect(context.Background(), hostStore)
 	cfgSource := func() config.Config { return config.Config{File: live.Snapshot()} }
 	projects := &project.Service{
 		Store:        droneStore,
 		ConfigSource: cfgSource,
 		SystemID:     hostRec.SystemID(),
-		Cluster:      hostRec.Cluster,
+		Cluster:      hostRec.ClusterLabel(),
 	}
 	nativeTools = append(nativeTools, &project.Tool{Service: projects})
 	nativeTools = append(nativeTools, &ragflow.Tool{ConfigSource: cfgSource})
 	fleetClient := &fleet.Client{
 		ConfigSource: cfgSource,
-		HostSource:   func() host.Record { return host.Collect(droneStore) },
+		HostSource:   func() host.Record { return host.Collect(context.Background(), hostStore) },
 	}
 	nativeTools = append(nativeTools, &fleet.Tool{Client: fleetClient})
 

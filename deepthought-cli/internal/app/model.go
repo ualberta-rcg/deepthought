@@ -1505,11 +1505,8 @@ func (m RootModel) pushFleetHeartbeat(rec hostpkg.Record) {
 	live := m.deps.Live
 	reg := m.deps.Registry
 	busy := m.chat.Busy()
-	var modelID, mode string
-	if live != nil {
-		modelID = live.RoleModel(config.RoleAgentic)
-		mode = live.OperationMode()
-	}
+	modelID := m.status.Model
+	mode := m.status.Mode
 	frame := ansi.Strip(m.chat.View())
 	if len(frame) > 4000 {
 		frame = frame[len(frame)-4000:]
@@ -1522,7 +1519,7 @@ func (m RootModel) pushFleetHeartbeat(rec hostpkg.Record) {
 			return
 		}
 		fc := &fleet.Client{
-			ConfigSource: live.Snapshot,
+			ConfigSource: func() config.Config { return config.Config{File: live.Snapshot()} },
 			HostSource:   func() hostpkg.Record { return rec },
 		}
 		svcs := make(map[string]string, len(rec.Services))
