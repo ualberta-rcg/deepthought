@@ -313,7 +313,7 @@ func (s *Service) captureStepExemplar(p *Plan, o *history.Objective, artifactPat
 		var sub slurm.Submission
 		if s.Store.GetRecord("submission", subID, &sub) == nil {
 			ex.JobID = sub.JobID
-			ex.ScriptPath = sub.ScriptPath
+			ex.ScriptPath = sub.Request.Script
 			ex.ScriptHash = sub.ScriptHash
 			if ex.SystemID == "" {
 				ex.SystemID = sub.SystemID
