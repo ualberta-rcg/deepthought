@@ -262,7 +262,7 @@ func TestSQLiteStoreChatRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListToolExecutions: %v", err)
 	}
-	if len(execs) != 1 || execs[0].TargetPath != "x" || execs[0].ResponseText != "file body" {
+	if len(execs) != 1 || execs[0].TargetPath != "/tmp/x" || execs[0].ResponseText != "file body" {
 		t.Fatalf("unexpected tool_executions rows: %+v", execs)
 	}
 	sums6, err := store.GetSummaries(gp.ID)
