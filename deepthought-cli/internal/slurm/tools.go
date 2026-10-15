@@ -4,175 +4,266 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"path/filepath"
+	"io"
+	"os"
+	"strconv"
+	"strings"
 
-	"deepthought-cli/internal/babel"
-	"deepthought-cli/internal/queen"
 	"deepthought-cli/internal/tools"
 )
 
-func Tools(client *Client, Sync func(string, string, any)) []tools.Tool {
-	if client == nil {
-		client = NewClient(nil)
-	}
+type ToolSet struct{ Client *Client }
+
+func (s ToolSet) Tools() []tools.Tool {
 	return []tools.Tool{
-		&queueTool{client: client},
-		&acctTool{client: client},
-		&submitTool{client: client, sync: Sync},
-		&cancelTool{client: client},
-		&reconcileTool{client: client, sync: Sync},
+		&submitTool{s.Client}, &statusTool{s.Client}, &cancelTool{s.Client},
+		&logTool{}, &allocTool{s.Client}, &gresTool{s.Client},
 	}
 }
 
-type queueTool struct{ client *Client }
+type submitTool struct{ client *Client }
 
-func (t *queueTool) Spec() babel.ToolSpec {
-	return babel.ToolSpec{Name: "slurm_queue", Description: "Inspect Slurm queue state via squeue --json.", Parameters: json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"additionalProperties":false}`)}
+func (*submitTool) Name() string { return "slurm_submit" }
+func (*submitTool) Description() string {
+	return "Submit a self-contained script with sbatch. Jobs run scripts, never DeepThought agents or model loops."
 }
-func (t *queueTool) Preview(raw json.RawMessage) queen.Action {
-	var in struct {
-		JobID string `json:"job_id"`
+func (*submitTool) ReadOnly() bool  { return false }
+func (*submitTool) AlwaysAsk() bool { return true }
+
+// ConditionalAsk allows slurm_submit to run automatically in Queen "auto" mode
+// when preflight validation succeeds and the target account's fairshare is not
+// throttled (>= FSBehind 0.20 when sshare rows are available). In "safe" or
+// "safe-auto" mode, or when fairshare is throttled / preflight fails, it returns
+// true so Queen prompts for user approval.
+func (t *submitTool) ConditionalAsk(ctx context.Context, opMode string, args map[string]any) bool {
+	if opMode != "auto" || t.client == nil {
+		return true
 	}
-	_ = json.Unmarshal(raw, &in)
-	return queen.Action{Tool: "slurm_queue", Summary: "squeue " + in.JobID, TargetPath: in.JobID, Category: queen.CategoryShellRead}
+	req := t.requestFromArgs(ctx, args)
+	if _, _, err := t.client.Preflight(ctx, req); err != nil {
+		return true
+	}
+	user := os.Getenv("USER")
+	rows := gatherFairshareRows(ctx, t.client.Runner, user)
+	for _, r := range rows {
+		if r.Account == req.Account && r.Fairshare > 0 && r.Fairshare < FSBehind {
+			return true
+		}
+	}
+	return false
 }
-func (t *queueTool) Execute(ctx context.Context, raw json.RawMessage) (string, bool) {
-	var in struct {
-		JobID string `json:"job_id"`
+
+func (*submitTool) Parameters() map[string]any {
+	return objectSchema(map[string]any{
+		"submission_id": stringSchema("Stable unique ID for this attempt; reuse it after a timeout to reconcile instead of submitting twice"),
+		"cpus":          map[string]any{"type": "integer", "minimum": 1},
+		"script":        stringSchema("Absolute path to a self-contained batch script"),
+		"account":       stringSchema("Discovered Slurm account (optional; defaults to highest-fairshare account)"),
+		"time":          stringSchema("Walltime; site skills define routing policy"),
+		"memory":        stringSchema("Memory request, for example 32G"),
+		"gres":          stringSchema("Exact discovered GRES string"),
+		"partition":     stringSchema("Optional Slurm partition (non-Alliance clusters)"),
+		"cluster":       stringSchema("Optional cluster label"),
+	}, "script", "submission_id", "cpus", "time", "memory")
+}
+
+func (t *submitTool) requestFromArgs(ctx context.Context, args map[string]any) SubmitRequest {
+	cpus, _ := numArg(args["cpus"])
+	acct := stringArg(args, "account")
+	if acct == "" && t.client != nil {
+		acct = t.client.ResolveAccount(ctx, "")
 	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return "slurm_queue: invalid arguments: " + err.Error(), true
+	return SubmitRequest{
+		SubmissionID: stringArg(args, "submission_id"),
+		CPUs:         cpus,
+		Script:       stringArg(args, "script"),
+		Account:      acct,
+		Time:         stringArg(args, "time"),
+		Memory:       stringArg(args, "memory"),
+		GRES:         stringArg(args, "gres"),
+		Partition:    stringArg(args, "partition"),
+		Cluster:      stringArg(args, "cluster"),
 	}
-	jobs, err := t.client.Queue(ctx, in.JobID)
+}
+
+func (t *submitTool) Run(ctx context.Context, args map[string]any) tools.Result {
+	req := t.requestFromArgs(ctx, args)
+	id, err := t.client.Submit(ctx, req)
 	if err != nil {
-		return err.Error(), true
+		return failure("slurm_submit", err)
 	}
-	buf, _ := json.MarshalIndent(jobs, "", "  ")
-	return string(buf), false
+	out := map[string]any{
+		"job_id":  id,
+		"account": req.Account,
+	}
+	if t.client != nil {
+		for _, row := range gatherFairshareRows(ctx, t.client.Runner, os.Getenv("USER")) {
+			if row.Account == req.Account {
+				tier, _ := FairshareTier(row.Fairshare)
+				out["fairshare"] = row.Fairshare
+				out["fairshare_tier"] = tier
+				if row.LevelFS != "" {
+					out["levelfs"] = row.LevelFS
+				}
+				break
+			}
+		}
+	}
+	raw, _ := json.Marshal(out)
+	return tools.Result{Content: string(raw), Summary: "slurm submit · " + id}
 }
 
-type acctTool struct{ client *Client }
+type statusTool struct{ client *Client }
 
-func (t *acctTool) Spec() babel.ToolSpec {
-	return babel.ToolSpec{Name: "slurm_acct", Description: "Inspect Slurm accounting records via sacct --json.", Parameters: json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"additionalProperties":false}`)}
+func (*statusTool) Name() string { return "slurm_status" }
+func (*statusTool) Description() string {
+	return "Read current or historical Slurm job state from squeue --json and sacct --json."
 }
-func (t *acctTool) Preview(raw json.RawMessage) queen.Action {
-	var in struct {
-		JobID string `json:"job_id"`
-	}
-	_ = json.Unmarshal(raw, &in)
-	return queen.Action{Tool: "slurm_acct", Summary: "sacct " + in.JobID, TargetPath: in.JobID, Category: queen.CategoryShellRead}
+func (*statusTool) ReadOnly() bool { return true }
+func (*statusTool) Parameters() map[string]any {
+	return objectSchema(map[string]any{
+		"job_id":  stringSchema("Optional job id"),
+		"history": map[string]any{"type": "boolean"},
+	})
 }
-func (t *acctTool) Execute(ctx context.Context, raw json.RawMessage) (string, bool) {
-	var in struct {
-		JobID string `json:"job_id"`
+func (t *statusTool) Run(ctx context.Context, args map[string]any) tools.Result {
+	var jobs []Job
+	var err error
+	if history, _ := args["history"].(bool); history {
+		jobs, err = t.client.Accounting(ctx, stringArg(args, "job_id"))
+	} else {
+		jobs, err = t.client.Queue(ctx, stringArg(args, "job_id"))
 	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return "slurm_acct: invalid arguments: " + err.Error(), true
-	}
-	jobs, err := t.client.Accounting(ctx, in.JobID)
 	if err != nil {
-		return err.Error(), true
+		return failure("slurm_status", err)
 	}
-	buf, _ := json.MarshalIndent(jobs, "", "  ")
-	return string(buf), false
-}
-
-type submitTool struct {
-	client *Client
-	sync   func(string, string, any)
-}
-
-func (t *submitTool) Spec() babel.ToolSpec {
-	return babel.ToolSpec{Name: "slurm_submit", Description: "Submit a batch script through sbatch after explicit resource and approval checks.", Parameters: json.RawMessage(`{"type":"object","properties":{"submission_id":{"type":"string"},"cpus":{"type":"integer"},"script":{"type":"string"},"account":{"type":"string"},"time":{"type":"string"},"memory":{"type":"string"},"gres":{"type":"string"},"partition":{"type":"string"}},"required":["submission_id","cpus","script","account","time","memory"],"additionalProperties":false}`)}
-}
-func (t *submitTool) Preview(raw json.RawMessage) queen.Action {
-	var in struct {
-		SubmissionID string `json:"submission_id"`
-		CPUs         int    `json:"cpus"`
-		Script       string `json:"script"`
-		Account      string `json:"account"`
-		Time         string `json:"time"`
-		Memory       string `json:"memory"`
-		GRES         string `json:"gres"`
-		Partition    string `json:"partition"`
-	}
-	_ = json.Unmarshal(raw, &in)
-	if in.SubmissionID == "" || in.CPUs < 1 || in.Script == "" || in.Account == "" || in.Time == "" || in.Memory == "" || filepath.Clean(in.Script) == "." {
-		return queen.Action{Tool: "slurm_submit", Summary: "invalid slurm submission", Category: queen.CategoryDestructive}
-	}
-	return queen.Action{Tool: "slurm_submit", Summary: fmt.Sprintf("sbatch %s cpus=%d account=%s time=%s mem=%s gres=%s", in.Script, in.CPUs, in.Account, in.Time, in.Memory, in.GRES), TargetPath: in.Script, Category: queen.CategoryShellMutate}
-}
-func (t *submitTool) Execute(ctx context.Context, raw json.RawMessage) (string, bool) {
-	var in struct {
-		SubmissionID string `json:"submission_id"`
-		CPUs         int    `json:"cpus"`
-		Script       string `json:"script"`
-		Account      string `json:"account"`
-		Time         string `json:"time"`
-		Memory       string `json:"memory"`
-		GRES         string `json:"gres"`
-		Partition    string `json:"partition"`
-	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return "slurm_submit: invalid arguments: " + err.Error(), true
-	}
-	sub, id, err := t.client.SubmitManaged(ctx, SubmitRequest{SubmissionID: in.SubmissionID, CPUs: in.CPUs, Script: in.Script, Account: in.Account, Time: in.Time, Memory: in.Memory, GRES: in.GRES, Partition: in.Partition})
-	if err != nil {
-		return err.Error(), true
-	}
-	if t.sync != nil && sub != nil {
-		t.sync("submission", sub.ID, sub)
-	}
-	return fmt.Sprintf("submitted job %s (%s) on %s [%s]", id, in.SubmissionID, firstNonEmpty(sub.Cluster, sub.Host, "local"), firstNonEmpty(sub.SystemID, "local")), false
+	raw, _ := json.Marshal(jobs)
+	return tools.Result{Content: string(raw), Summary: fmt.Sprintf("slurm status · %d job(s)", len(jobs))}
 }
 
 type cancelTool struct{ client *Client }
 
-func (t *cancelTool) Spec() babel.ToolSpec {
-	return babel.ToolSpec{Name: "slurm_cancel", Description: "Cancel a Slurm job owned by the current user via scancel.", Parameters: json.RawMessage(`{"type":"object","properties":{"job_id":{"type":"string"}},"required":["job_id"],"additionalProperties":false}`)}
+func (*cancelTool) Name() string        { return "slurm_cancel" }
+func (*cancelTool) Description() string { return "Cancel one Slurm job by id." }
+func (*cancelTool) ReadOnly() bool      { return false }
+func (*cancelTool) AlwaysAsk() bool     { return true }
+func (*cancelTool) Parameters() map[string]any {
+	return objectSchema(map[string]any{"job_id": stringSchema("Job id")}, "job_id")
 }
-func (t *cancelTool) Preview(raw json.RawMessage) queen.Action {
-	var in struct {
-		JobID string `json:"job_id"`
+func (t *cancelTool) Run(ctx context.Context, args map[string]any) tools.Result {
+	id := stringArg(args, "job_id")
+	if err := t.client.Cancel(ctx, id); err != nil {
+		return failure("slurm_cancel", err)
 	}
-	_ = json.Unmarshal(raw, &in)
-	return queen.Action{Tool: "slurm_cancel", Summary: "scancel " + in.JobID, TargetPath: in.JobID, Category: queen.CategoryShellMutate}
-}
-func (t *cancelTool) Execute(ctx context.Context, raw json.RawMessage) (string, bool) {
-	var in struct {
-		JobID string `json:"job_id"`
-	}
-	if err := json.Unmarshal(raw, &in); err != nil {
-		return "slurm_cancel: invalid arguments: " + err.Error(), true
-	}
-	if err := t.client.Cancel(ctx, in.JobID); err != nil {
-		return err.Error(), true
-	}
-	return "cancelled job " + in.JobID, false
+	return tools.Result{Content: `{"cancelled":` + strconv.Quote(id) + `}`, Summary: "slurm cancel · " + id}
 }
 
-type reconcileTool struct {
-	client *Client
-	sync   func(string, string, any)
-}
+type logTool struct{}
 
-func (t *reconcileTool) Spec() babel.ToolSpec {
-	return babel.ToolSpec{Name: "slurm_reconcile", Description: "Reconcile recorded Slurm submissions against queue and accounting state.", Parameters: json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)}
+func (*logTool) Name() string        { return "slurm_log_tail" }
+func (*logTool) Description() string { return "Read a bounded tail of a known Slurm output file." }
+func (*logTool) ReadOnly() bool      { return true }
+func (*logTool) Parameters() map[string]any {
+	return objectSchema(map[string]any{
+		"path":  stringSchema("Absolute Slurm output path"),
+		"bytes": map[string]any{"type": "integer", "maximum": 262144},
+	}, "path")
 }
-func (t *reconcileTool) Preview(json.RawMessage) queen.Action {
-	return queen.Action{Tool: "slurm_reconcile", Summary: "reconcile Slurm submissions", Category: queen.CategoryShellRead}
-}
-func (t *reconcileTool) Execute(ctx context.Context, _ json.RawMessage) (string, bool) {
-	subs, err := t.client.Reconcile(ctx)
+func (*logTool) Run(_ context.Context, args map[string]any) tools.Result {
+	path := stringArg(args, "path")
+	path, pathErr := tools.OwnedPath(path)
+	if pathErr != nil {
+		return failure("slurm_log_tail", pathErr)
+	}
+	if !strings.HasPrefix(path, "/") {
+		return failure("slurm_log_tail", fmt.Errorf("path must be absolute"))
+	}
+	n := int64(64 << 10)
+	if value, ok := numArg(args["bytes"]); ok && value > 0 && value <= 256<<10 {
+		n = int64(value)
+	}
+	file, err := os.Open(path)
 	if err != nil {
-		return err.Error(), true
+		return failure("slurm_log_tail", err)
 	}
-	for _, s := range subs {
-		if t.sync != nil {
-			t.sync("submission", s.ID, s)
-		}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil {
+		return failure("slurm_log_tail", err)
 	}
-	buf, _ := json.MarshalIndent(subs, "", "  ")
-	return string(buf), false
+	if info.Size() > n {
+		_, _ = file.Seek(-n, io.SeekEnd)
+	}
+	raw, err := io.ReadAll(io.LimitReader(file, n))
+	if err != nil {
+		return failure("slurm_log_tail", err)
+	}
+	return tools.Result{Content: string(raw), Summary: fmt.Sprintf("slurm log · %d bytes", len(raw))}
+}
+
+type allocTool struct{ client *Client }
+
+func (*allocTool) Name() string               { return "slurm_allocations" }
+func (*allocTool) Description() string        { return "List current allocations from squeue --json." }
+func (*allocTool) ReadOnly() bool             { return true }
+func (*allocTool) Parameters() map[string]any { return objectSchema(nil) }
+func (t *allocTool) Run(ctx context.Context, _ map[string]any) tools.Result {
+	jobs, err := t.client.Queue(ctx, "")
+	if err != nil {
+		return failure("slurm_allocations", err)
+	}
+	raw, _ := json.Marshal(jobs)
+	return tools.Result{Content: string(raw), Summary: fmt.Sprintf("slurm allocations · %d", len(jobs))}
+}
+
+type gresTool struct{ client *Client }
+
+func (*gresTool) Name() string { return "slurm_gres" }
+func (*gresTool) Description() string {
+	return "Discover exact node GRES inventory before constructing a GPU request."
+}
+func (*gresTool) ReadOnly() bool             { return true }
+func (*gresTool) Parameters() map[string]any { return objectSchema(nil) }
+func (t *gresTool) Run(ctx context.Context, _ map[string]any) tools.Result {
+	gres, err := t.client.GRES(ctx)
+	if err != nil {
+		return failure("slurm_gres", err)
+	}
+	raw, _ := json.Marshal(gres)
+	return tools.Result{Content: string(raw), Summary: fmt.Sprintf("slurm GRES · %d type(s)", len(gres))}
+}
+
+func objectSchema(properties map[string]any, required ...string) map[string]any {
+	if properties == nil {
+		properties = map[string]any{}
+	}
+	schema := map[string]any{
+		"type":                 "object",
+		"properties":           properties,
+		"additionalProperties": false,
+	}
+	if len(required) > 0 {
+		schema["required"] = required
+	}
+	return schema
+}
+func stringSchema(description string) map[string]any {
+	return map[string]any{"type": "string", "description": description}
+}
+func stringArg(args map[string]any, key string) string {
+	value, _ := args[key].(string)
+	return strings.TrimSpace(value)
+}
+func numArg(value any) (int, bool) {
+	switch n := value.(type) {
+	case float64:
+		return int(n), true
+	case int:
+		return n, true
+	default:
+		return 0, false
+	}
+}
+func failure(name string, err error) tools.Result {
+	return tools.Result{IsError: true, Content: err.Error(), Summary: name + " · failed"}
 }

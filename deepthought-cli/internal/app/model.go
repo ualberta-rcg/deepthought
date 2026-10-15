@@ -1580,23 +1580,18 @@ func (m RootModel) pushFleetHeartbeat(rec hostpkg.Record) {
 					completed = append(completed, fleet.CompletedTask{ID: t.ID, Status: "failed", Error: "tool registry unavailable"})
 					continue
 				}
-				tl, ok := reg.Get(t.ToolName)
+				tl, ok := reg.Lookup(t.ToolName)
 				if !ok {
 					completed = append(completed, fleet.CompletedTask{ID: t.ID, Status: "failed", Error: "unknown tool: " + t.ToolName})
 					continue
 				}
-				rawArgs, _ := json.Marshal(t.Arguments)
 				cctx, ccancel := context.WithTimeout(context.Background(), 30*time.Second)
-				res, runErr := tl.Execute(cctx, rawArgs)
+				res := tl.Run(cctx, t.Arguments)
 				ccancel()
-				ct := fleet.CompletedTask{ID: t.ID, Status: "completed", Output: res.Output}
-				if runErr != nil || res.IsError {
+				ct := fleet.CompletedTask{ID: t.ID, Status: "completed", Output: res.Content}
+				if res.IsError {
 					ct.Status = "failed"
-					if runErr != nil {
-						ct.Error = runErr.Error()
-					} else {
-						ct.Error = res.Output
-					}
+					ct.Error = res.Content
 				}
 				completed = append(completed, ct)
 			default:

@@ -3,9 +3,13 @@ package slurm
 import (
 	"context"
 	"crypto/sha256"
-	"deepthought-cli/internal/history"
+	"database/sql"
+	"deepthought-cli/internal/tools"
 	"encoding/hex"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -15,292 +19,337 @@ import (
 )
 
 type Submission struct {
-	ID          string               `json:"id"`
-	JobID       string               `json:"job_id"`
-	SystemID    string               `json:"system_id,omitempty"`
-	Host        string               `json:"host,omitempty"`
-	Cluster     string               `json:"cluster,omitempty"`
-	Site        string               `json:"site,omitempty"`
-	Partition   string               `json:"partition,omitempty"`
-	Account     string               `json:"account"`
-	Time        string               `json:"time"`
-	Memory      string               `json:"memory"`
-	CPUs        int                  `json:"cpus"`
-	GRES        string               `json:"gres,omitempty"`
-	Script      string               `json:"script"`
-	Staged      string               `json:"staged"`
-	ScriptHash  string               `json:"script_hash"`
-	SpecHash    string               `json:"spec_hash"`
-	State       string               `json:"state"`
-	SubmittedAt time.Time            `json:"submitted_at"`
-	UpdatedAt   time.Time            `json:"updated_at"`
-	Failure     history.FailureClass `json:"failure,omitempty"`
-	Scientific  string               `json:"scientific,omitempty"`
+	ID          string        `json:"id"`
+	SystemID    string        `json:"system_id,omitempty"`
+	Host        string        `json:"host,omitempty"`
+	Cluster     string        `json:"cluster,omitempty"`
+	Site        string        `json:"site,omitempty"`
+	Partition   string        `json:"partition,omitempty"`
+	Request     SubmitRequest `json:"request"`
+	Fingerprint string        `json:"fingerprint"`
+	ScriptHash  string        `json:"script_hash"`
+	JobID       string        `json:"job_id,omitempty"`
+	State       string        `json:"state"`
+	LastError   string        `json:"last_error,omitempty"`
+	Job         Job           `json:"job"`
+	Created     time.Time     `json:"created"`
+	Updated     time.Time     `json:"updated"`
 }
 
-const (
-	FailureNaNLoss          = "nan_loss"
-	FailureDivergence       = "divergence"
-	FailureEmptyOutput      = "empty_output"
-	FailureInvalidMetric    = "invalid_metric"
-	FailureUnverifiedOutput = "unverified_output"
-)
+var submissionIDPattern = regexp.MustCompile(`^[a-zA-Z0-9_-]{1,48}$`)
+var resourcePattern = regexp.MustCompile(`^[1-9][0-9]*(?:[KMGTP]?)$`)
+var walltimePattern = regexp.MustCompile(`^(?:[0-9]+-)?[0-9]+(?::[0-9]{1,2}){0,2}$`)
 
-var (
-	submissionPattern = regexp.MustCompile(`^[A-Za-z0-9._-]{1,64}$`)
-	accountPattern    = regexp.MustCompile(`^[A-Za-z0-9_-]{1,64}$`)
-	walltimePattern   = regexp.MustCompile(`^(?:\d+-)?\d{1,2}:\d{2}:\d{2}$`)
-	memoryPattern     = regexp.MustCompile(`^[1-9][0-9]*[MGT]$`)
-	gresPattern       = regexp.MustCompile(`^gpu(?::[A-Za-z0-9._-]+)?(?::[1-9][0-9]*)?$`)
-)
-
-func (c *Client) Submit(ctx context.Context, request SubmitRequest) (string, error) {
-	_, id, err := c.SubmitManaged(ctx, request)
-	return id, err
-}
-
-func (c *Client) resolveSystemContext(req SubmitRequest) (sysID, host, cluster, site string) {
-	sysID = firstNonEmpty(req.SystemID, c.SystemID)
-	host = firstNonEmpty(req.Host, c.Host)
-	if host == "" {
-		host, _ = os.Hostname()
+// ResolveAccount returns explicit if non-empty, else the highest-fairshare
+// non-throttled account from sshare, else the user's DefaultAccount from sacctmgr.
+func (c *Client) ResolveAccount(ctx context.Context, explicit string) string {
+	explicit = strings.TrimSpace(explicit)
+	if explicit != "" {
+		return explicit
 	}
-	cluster = firstNonEmpty(req.Cluster, c.Cluster, os.Getenv("SLURM_CLUSTER_NAME"), os.Getenv("CC_CLUSTER"), os.Getenv("DRAC_CLUSTER"))
-	site = firstNonEmpty(req.Site, c.Site)
-	if site == "" {
-		if _, err := os.Stat("/cvmfs/soft.computecanada.ca"); err == nil || os.Getenv("CC_CLUSTER") != "" {
-			site = "alliance"
-		}
+	user := os.Getenv("USER")
+	rows := gatherFairshareRows(ctx, c.Runner, user)
+	if best, ok := BestAccount(rows); ok {
+		return best.Account
 	}
-	return sysID, host, cluster, site
-}
-
-func firstNonEmpty(vals ...string) string {
-	for _, v := range vals {
-		if strings.TrimSpace(v) != "" {
-			return strings.TrimSpace(v)
-		}
+	if def := defaultAccount(ctx, c.Runner, user); def != "" {
+		return def
 	}
 	return ""
 }
 
-func (c *Client) SubmitManaged(ctx context.Context, request SubmitRequest) (*Submission, string, error) {
-	if !submissionPattern.MatchString(request.SubmissionID) || request.CPUs < 1 {
-		return nil, "", fmt.Errorf("submission id and positive cpus are required")
+func (c *Client) Preflight(ctx context.Context, r SubmitRequest) ([]byte, string, error) {
+	if r.Account == "" {
+		r.Account = c.ResolveAccount(ctx, "")
 	}
-	if !accountPattern.MatchString(request.Account) || !walltimePattern.MatchString(request.Time) || !memoryPattern.MatchString(request.Memory) {
-		return nil, "", fmt.Errorf("account, walltime, and memory are required")
+	if !submissionIDPattern.MatchString(r.SubmissionID) {
+		return nil, "", fmt.Errorf("submission_id must be 1–48 letters, numbers, underscores or hyphens")
 	}
-	if request.GRES != "" && !gresPattern.MatchString(request.GRES) {
-		return nil, "", fmt.Errorf("invalid gres specification")
+	if r.Account == "" || r.CPUs < 1 || !walltimePattern.MatchString(r.Time) || !resourcePattern.MatchString(strings.ToUpper(r.Memory)) {
+		return nil, "", fmt.Errorf("explicit account, positive CPUs, walltime and memory are required")
 	}
-	sysID, hostName, clusterName, siteName := c.resolveSystemContext(request)
-	isAlliance := siteName == "" || strings.EqualFold(siteName, "alliance")
-	content, err := os.ReadFile(request.Script)
+	if !filepath.IsAbs(r.Script) || tools.SensitivePath(r.Script) {
+		return nil, "", fmt.Errorf("script must be an absolute non-sensitive path")
+	}
+	real, err := tools.OwnedPath(r.Script)
 	if err != nil {
 		return nil, "", err
 	}
-	if isAlliance && request.Partition == "" {
-		for _, line := range strings.Split(string(content), "\n") {
-			trimmed := strings.TrimSpace(line)
-			if strings.HasPrefix(trimmed, "#SBATCH") && (strings.Contains(trimmed, "--partition") || strings.Contains(trimmed, " -p ") || strings.HasSuffix(trimmed, " -p")) {
+	f, err := os.Open(real)
+	if err != nil {
+		return nil, "", err
+	}
+	defer f.Close()
+	info, err := f.Stat()
+	if err != nil {
+		return nil, "", err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 1<<20 {
+		return nil, "", fmt.Errorf("batch script must be a regular file no larger than 1 MiB")
+	}
+	raw, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	if err != nil {
+		return nil, "", err
+	}
+	if len(raw) > 1<<20 || !strings.HasPrefix(string(raw), "#!/bin/bash") {
+		return nil, "", fmt.Errorf("batch scripts must start with #!/bin/bash")
+	}
+	if (c.Site == "" || strings.EqualFold(c.Site, "alliance")) && r.Partition == "" {
+		for _, line := range strings.Split(string(raw), "\n") {
+			if strings.HasPrefix(strings.TrimSpace(line), "#SBATCH") && (strings.Contains(line, "--partition") || strings.Contains(line, " -p ")) {
 				return nil, "", fmt.Errorf("omit partition directives; the site routes jobs automatically")
 			}
 		}
 	}
-	sum := sha256.Sum256(content)
-	scriptHash := hex.EncodeToString(sum[:])
-	specSum := sha256.Sum256([]byte(strings.Join([]string{request.SubmissionID, request.Account, request.Time, request.Memory, strconv.Itoa(request.CPUs), request.GRES, request.Partition, scriptHash}, "\x00")))
-	specHash := hex.EncodeToString(specSum[:])
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	if existing, err := c.loadSubmission(request.SubmissionID); err == nil {
-		if existing.SpecHash != specHash {
-			return nil, "", fmt.Errorf("submission id is already bound to different script or resources")
-		}
-		if existing.JobID != "" {
-			return existing, existing.JobID, nil
-		}
-		if id := c.reconcileSubmission(ctx, existing); id != "" {
-			return existing, id, nil
-		}
-		return nil, "", fmt.Errorf("submission outcome is unresolved; reconcile queue/accounting before retrying")
-	}
-	if err := c.verifyAccount(ctx, request.Account); err != nil {
-		return nil, "", err
-	}
-	baseDir := strings.TrimSpace(os.Getenv("SCRATCH"))
-	if baseDir == "" && !isAlliance {
-		baseDir = firstNonEmpty(os.Getenv("DEEPTHOUGHT_JOBS_DIR"), os.Getenv("WORK"))
-	}
-	if baseDir == "" {
-		return nil, "", fmt.Errorf("SCRATCH is required for job staging")
-	}
-	root := filepath.Join(baseDir, "deepthought-cli", "jobs", request.SubmissionID)
-	if err := os.MkdirAll(root, 0700); err != nil {
-		return nil, "", err
-	}
-	staged := filepath.Join(root, "script.sh")
-	if err := os.WriteFile(staged, content, 0700); err != nil {
-		return nil, "", err
-	}
-	now := time.Now().UTC()
-	sub := &Submission{
-		ID:          request.SubmissionID,
-		SystemID:    sysID,
-		Host:        hostName,
-		Cluster:     clusterName,
-		Site:        siteName,
-		Partition:   request.Partition,
-		Account:     request.Account,
-		Time:        request.Time,
-		Memory:      request.Memory,
-		CPUs:        request.CPUs,
-		GRES:        request.GRES,
-		Script:      request.Script,
-		Staged:      staged,
-		ScriptHash:  scriptHash,
-		SpecHash:    specHash,
-		State:       "INTENT",
-		SubmittedAt: now,
-		UpdatedAt:   now,
-	}
-	if err := c.saveSubmission(sub); err != nil {
-		return nil, "", err
-	}
-	request.Script = staged
-	id, err := c.submitCommand(ctx, request)
+	accounts, err := c.Runner.Run(ctx, "sacctmgr", "-n", "-P", "show", "assoc", "user="+os.Getenv("USER"), "format=Account")
 	if err != nil {
-		if id := c.reconcileSubmission(ctx, sub); id != "" {
-			return sub, id, nil
-		}
-		sub.State = "UNRESOLVED"
-		sub.UpdatedAt = time.Now().UTC()
-		_ = c.saveSubmission(sub)
-		return nil, "", err
+		return nil, "", fmt.Errorf("account discovery: %w", err)
 	}
-	sub.JobID = id
-	sub.State = "SUBMITTED"
-	sub.UpdatedAt = time.Now().UTC()
-	return sub, id, c.saveSubmission(sub)
-}
-
-func (c *Client) verifyAccount(ctx context.Context, account string) error {
-	user := os.Getenv("USER")
-	if user == "" {
-		return fmt.Errorf("USER is required to verify Slurm account")
-	}
-	out, err := c.Runner.Run(ctx, "sacctmgr", "-n", "-P", "show", "assoc", "user="+user, "format=account")
-	if err != nil {
-		return err
-	}
-	for _, line := range strings.Split(string(out), "\n") {
-		if strings.TrimSpace(strings.Split(line, "|")[0]) == account {
-			return nil
+	accountOK := false
+	for _, line := range strings.Split(string(accounts), "\n") {
+		if strings.TrimSpace(strings.Split(line, "|")[0]) == r.Account {
+			accountOK = true
 		}
 	}
-	return fmt.Errorf("account is not associated with current user")
-}
-
-func (c *Client) reconcileSubmission(ctx context.Context, sub *Submission) string {
-	for _, lookup := range []func(context.Context, string) ([]Job, error){c.Queue, c.Accounting} {
-		jobs, err := lookup(ctx, "")
+	if !accountOK {
+		return nil, "", fmt.Errorf("account %q was not returned for the current user", r.Account)
+	}
+	if r.GRES != "" {
+		parts := strings.Split(r.GRES, ":")
+		if len(parts) != 3 || parts[0] != "gpu" || parts[1] == "" {
+			return nil, "", fmt.Errorf("use a discovered typed GPU request, gpu:type:count")
+		}
+		count, err := strconv.Atoi(parts[2])
+		if err != nil || count < 1 {
+			return nil, "", fmt.Errorf("invalid GPU count")
+		}
+		inventory, err := c.GRES(ctx)
 		if err != nil {
-			continue
+			return nil, "", err
 		}
-		for _, job := range jobs {
-			if job.Comment == "deepthought:"+sub.ID || job.Name == "deepthought-"+sub.ID {
-				sub.JobID = job.ID
-				sub.State = job.State
-				sub.UpdatedAt = time.Now().UTC()
-				_ = c.saveSubmission(sub)
-				return job.ID
+		matched := false
+		for _, line := range inventory {
+			for _, entry := range strings.Split(line, ",") {
+				entry = strings.Split(entry, "(")[0]
+				p := strings.Split(entry, ":")
+				if len(p) == 3 && p[0] == "gpu" && p[1] == parts[1] {
+					available, _ := strconv.Atoi(p[2])
+					if count <= available {
+						matched = true
+					}
+				}
 			}
 		}
+		if !matched {
+			return nil, "", fmt.Errorf("GPU request %q does not match discovered inventory", r.GRES)
+		}
 	}
-	return ""
+	hash := sha256.Sum256(raw)
+	return raw, hex.EncodeToString(hash[:]), nil
 }
 
-func (c *Client) Reconcile(ctx context.Context) ([]Submission, error) {
+func (c *Client) Submit(ctx context.Context, r SubmitRequest) (string, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.Store == nil {
+		return "", fmt.Errorf("submission requires a persistent journal")
+	}
+	if r.Account == "" {
+		r.Account = c.ResolveAccount(ctx, "")
+	}
+	raw, scriptHash, err := c.Preflight(ctx, r)
+	if err != nil {
+		return "", err
+	}
+	encoded, _ := json.Marshal(struct {
+		Request SubmitRequest
+		Hash    string
+	}{r, scriptHash})
+	sum := sha256.Sum256(encoded)
+	fingerprint := hex.EncodeToString(sum[:])
+	var existing Submission
+	err = c.Store.GetRecord("submission", r.SubmissionID, &existing)
+	if err == nil {
+		if existing.Fingerprint != fingerprint {
+			return "", fmt.Errorf("submission_id already refers to different inputs; approve a new attempt with a new ID")
+		}
+		return c.resolveSubmission(ctx, &existing)
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return "", err
+	}
+	scratch := os.Getenv("SCRATCH")
+	if !filepath.IsAbs(scratch) || scratch == "/" {
+		return "", fmt.Errorf("SCRATCH must name the user's scratch directory")
+	}
+	dir := filepath.Join(scratch, "deepthought-cli", "jobs", r.SubmissionID)
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	staged := filepath.Join(dir, "script.sh")
+	f, err := os.OpenFile(staged, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600)
+	if os.IsExist(err) {
+		old, e := os.ReadFile(staged)
+		if e != nil {
+			return "", e
+		}
+		oldHash := sha256.Sum256(old)
+		if hex.EncodeToString(oldHash[:]) != scriptHash {
+			return "", fmt.Errorf("staged script differs; use a new submission_id")
+		}
+	} else if err != nil {
+		return "", err
+	} else {
+		if _, err := f.Write(raw); err != nil {
+			f.Close()
+			return "", err
+		}
+		if err := f.Sync(); err != nil {
+			f.Close()
+			return "", err
+		}
+		if err := f.Close(); err != nil {
+			return "", err
+		}
+	}
+	record := Submission{
+		ID:          r.SubmissionID,
+		SystemID:    c.SystemID,
+		Host:        c.Host,
+		Cluster:     c.Cluster,
+		Site:        c.Site,
+		Partition:   r.Partition,
+		Request:     r,
+		Fingerprint: fingerprint,
+		ScriptHash:  scriptHash,
+		State:       "submitting",
+		Created:     time.Now().UTC(),
+		Updated:     time.Now().UTC(),
+	}
+	claimed, err := c.Store.ClaimRecord("submission", r.SubmissionID, record)
+	if err != nil {
+		return "", err
+	}
+	if !claimed {
+		if err := c.Store.GetRecord("submission", r.SubmissionID, &existing); err != nil {
+			return "", err
+		}
+		if existing.Fingerprint != fingerprint {
+			return "", fmt.Errorf("submission conflict")
+		}
+		return c.resolveSubmission(ctx, &existing)
+	}
+	r.Script = staged
+	id, submitErr := c.submitCommand(ctx, r)
+	record.Updated = time.Now().UTC()
+	if submitErr != nil {
+		record.State = "unknown"
+		record.LastError = submitErr.Error()
+	} else {
+		record.State = "submitted"
+		record.JobID = id
+	}
+	if err := c.Store.PutRecord("submission", record.ID, record); err != nil {
+		return "", fmt.Errorf("submission outcome could not be saved; reconcile before retrying: %w", err)
+	}
+	if submitErr != nil {
+		return "", fmt.Errorf("submission outcome unknown; reuse submission_id %s to reconcile, never automatically resubmit: %w", record.ID, submitErr)
+	}
+	return id, nil
+}
+func (c *Client) resolveSubmission(ctx context.Context, s *Submission) (string, error) {
+	if s.JobID != "" {
+		return s.JobID, nil
+	}
+	queue, queueErr := c.Queue(ctx, "")
+	accounting, accountErr := c.Accounting(ctx, "")
+	for _, job := range append(queue, accounting...) {
+		if job.Comment == "deepthought:"+s.ID || job.Name == "deepthought-"+s.ID {
+			s.JobID, s.Job, s.State = job.ID, job, job.State
+			s.Updated = time.Now().UTC()
+			if err := c.Store.PutRecord("submission", s.ID, s); err != nil {
+				return "", err
+			}
+			return job.ID, nil
+		}
+	}
+	return "", fmt.Errorf("submission %s remains unresolved (queue: %v; accounting: %v); no new job was submitted", s.ID, queueErr, accountErr)
+}
+func (c *Client) Submissions() ([]Submission, error) {
 	if c.Store == nil {
 		return nil, nil
 	}
-	var subs []Submission
-	if err := c.Store.ListRecords("submission", &subs); err != nil {
+	rows, err := c.Store.Records("submission")
+	if err != nil {
 		return nil, err
 	}
-	_, _, curCluster, _ := c.resolveSystemContext(SubmitRequest{})
-	for i := range subs {
-		// Preserve state of jobs submitted on a different system or cluster.
-		if c.SystemID != "" && subs[i].SystemID != "" && subs[i].SystemID != c.SystemID {
-			if curCluster == "" || subs[i].Cluster == "" || !strings.EqualFold(subs[i].Cluster, curCluster) {
+	var out []Submission
+	for _, row := range rows {
+		var s Submission
+		if err := json.Unmarshal(row.Data, &s); err != nil {
+			return nil, err
+		}
+		out = append(out, s)
+	}
+	return out, nil
+}
+func (c *Client) Reconcile(ctx context.Context) ([]Submission, error) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	items, err := c.Submissions()
+	if err != nil {
+		return nil, err
+	}
+	if len(items) == 0 {
+		return items, nil
+	}
+	queue, qerr := c.Queue(ctx, "")
+	accounting, aerr := c.Accounting(ctx, "")
+	if qerr != nil && aerr != nil {
+		return items, fmt.Errorf("scheduler unavailable: %v; %v", qerr, aerr)
+	}
+	jobs := map[string]Job{}
+	for _, j := range accounting {
+		jobs[j.ID] = j
+	}
+	for _, j := range queue {
+		jobs[j.ID] = j
+	}
+	for i := range items {
+		s := &items[i]
+		if c.SystemID != "" && s.SystemID != "" && s.SystemID != c.SystemID {
+			if c.Cluster == "" || s.Cluster == "" || !strings.EqualFold(s.Cluster, c.Cluster) {
 				continue
 			}
-		} else if curCluster != "" && subs[i].Cluster != "" && !strings.EqualFold(subs[i].Cluster, curCluster) {
+		} else if c.Cluster != "" && s.Cluster != "" && !strings.EqualFold(s.Cluster, c.Cluster) {
 			continue
 		}
-		if subs[i].JobID == "" {
-			c.reconcileSubmission(ctx, &subs[i])
+		for _, job := range jobs {
+			if job.ID == s.JobID || job.Comment == "deepthought:"+s.ID || job.Name == "deepthought-"+s.ID {
+				s.JobID, s.Job, s.State = job.ID, job, job.State
+				s.LastError = ""
+				s.Updated = time.Now().UTC()
+				break
+			}
 		}
-		if subs[i].JobID == "" {
-			continue
+		if err := c.Store.PutRecord("submission", s.ID, s); err != nil {
+			return items, err
 		}
-		jobs, err := c.Queue(ctx, subs[i].JobID)
-		if err != nil || len(jobs) == 0 {
-			jobs, err = c.Accounting(ctx, subs[i].JobID)
-		}
-		if err != nil || len(jobs) == 0 {
-			continue
-		}
-		subs[i].State = jobs[0].State
-		subs[i].Failure, subs[i].Scientific = ClassifyFailure(jobs[0], "")
-		subs[i].UpdatedAt = time.Now().UTC()
-		_ = c.saveSubmission(&subs[i])
 	}
-	return subs, nil
+	return items, nil
 }
 
-func (c *Client) loadSubmission(id string) (*Submission, error) {
-	if c.Store == nil {
-		return nil, fmt.Errorf("missing submission store")
-	}
-	var sub Submission
-	if err := c.Store.GetRecord("submission", id, &sub); err != nil {
-		return nil, err
-	}
-	return &sub, nil
-}
-
-func (c *Client) saveSubmission(sub *Submission) error {
-	if c.Store == nil {
-		return nil
-	}
-	return c.Store.PutRecord("submission", sub.ID, sub)
-}
-
-func ClassifyFailure(job Job, observation string) (history.FailureClass, string) {
-	state := strings.ToUpper(job.State)
-	obs := strings.ToLower(observation)
+func RetryAdvice(s Submission) string {
+	state := strings.ToUpper(s.State)
 	switch {
-	case strings.Contains(obs, "nan") || strings.Contains(obs, "inf"):
-		return history.FailureScientific, FailureNaNLoss
-	case strings.Contains(obs, "diverg"):
-		return history.FailureScientific, FailureDivergence
-	case strings.Contains(obs, "empty output"):
-		return history.FailureScientific, FailureEmptyOutput
-	case strings.Contains(obs, "invalid metric"):
-		return history.FailureScientific, FailureInvalidMetric
-	case strings.Contains(obs, "unverified"):
-		return history.FailureScientific, FailureUnverifiedOutput
-	case strings.Contains(state, "OUT_OF_MEMORY") || strings.Contains(state, "TIMEOUT"):
-		return history.FailureResource, ""
-	case strings.Contains(state, "NODE_FAIL") || strings.Contains(state, "BOOT_FAIL") || strings.Contains(state, "PREEMPT"):
-		return history.FailureInfrastructure, ""
-	case strings.Contains(state, "CANCEL"):
-		return history.FailurePolicy, ""
-	case strings.Contains(state, "FAIL"):
-		return history.FailureExecution, ""
+	case strings.Contains(state, "OUT_OF_MEMORY"):
+		return "Proposed retry: increase memory after inspecting MaxRSS; preserve checkpoint and use a new submission_id. Approval required."
+	case strings.Contains(state, "TIMEOUT"):
+		return "Proposed retry: resume a verified checkpoint with a longer walltime and a new submission_id. Approval required."
+	case strings.Contains(state, "PREEMPT") || strings.Contains(state, "NODE_FAIL"):
+		return "Proposed retry: verify checkpoint integrity, then submit a new approved attempt."
+	case state == "UNKNOWN" || state == "SUBMITTING":
+		return "Outcome unknown: reconcile the existing submission_id; do not resubmit."
 	default:
-		return "", ""
+		return "Inspect exit code and bounded logs before proposing changes. Retries require approval."
 	}
 }
