@@ -74,8 +74,8 @@ func ForUser(db *sql.DB, userID string) *MySQLStore {
 var mysqlSchema = []string{
 	`CREATE TABLE IF NOT EXISTS users (
 	  id VARCHAR(64) NOT NULL PRIMARY KEY,
-	  name VARCHAR(128) NOT NULL,
-	  email VARCHAR(255) NOT NULL DEFAULT '',
+	  username VARCHAR(128) NOT NULL DEFAULT '',
+	  uid_number VARCHAR(64) NOT NULL DEFAULT '',
 	  oidc_sub VARCHAR(255) NOT NULL DEFAULT '',
 	  created_at VARCHAR(40) NOT NULL,
 	  last_login_at VARCHAR(40) NOT NULL
@@ -800,46 +800,55 @@ type UserStore struct{ db *sql.DB }
 
 func NewUserStore(db *sql.DB) *UserStore { return &UserStore{db: db} }
 
-// UserRecord holds the stored identity for one user.
+// UserRecord holds the stored non-PII technical identifiers for one user
+// (username, uid_number, oidc_sub). Personal profile claims (first_name,
+// last_name, email) are read from OIDC claims at login and never stored in MySQL.
 type UserRecord struct {
 	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Email       string `json:"email,omitempty"`
+	Username    string `json:"username"`
+	UID         string `json:"uid,omitempty"`
 	OIDCSub     string `json:"oidc_sub,omitempty"`
 	CreatedAt   string `json:"created_at"`
 	LastLoginAt string `json:"last_login_at"`
 }
 
 func ensureUserColumns(db *sql.DB) {
-	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN email VARCHAR(255) NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN username VARCHAR(128) NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN uid_number VARCHAR(64) NOT NULL DEFAULT ''`)
 	_, _ = db.Exec(`ALTER TABLE users ADD COLUMN oidc_sub VARCHAR(255) NOT NULL DEFAULT ''`)
+	_, _ = db.Exec(`UPDATE users SET username = name WHERE username = ''`)
+	_, _ = db.Exec(`ALTER TABLE users DROP COLUMN name`)
+	_, _ = db.Exec(`ALTER TABLE users DROP COLUMN email`)
+	_, _ = db.Exec(`ALTER TABLE users DROP COLUMN first_name`)
+	_, _ = db.Exec(`ALTER TABLE users DROP COLUMN last_name`)
 }
 
 // UpsertLogin records a user (first login creates) and stamps last_login_at.
-func (u *UserStore) UpsertLogin(userID, name string) error {
-	return u.UpsertLoginWithIdentity(userID, name, "", "")
+func (u *UserStore) UpsertLogin(userID, username string) error {
+	return u.UpsertLoginIdentity(userID, username, "", "")
 }
 
-// UpsertLoginWithIdentity records a user and optionally updates their OIDC email/subject.
-func (u *UserStore) UpsertLoginWithIdentity(userID, name, email, oidcSub string) error {
+// UpsertLoginIdentity records a user's technical identifiers (username, uid, oidc_sub)
+// and stamps last_login_at without storing PII (first/last/email).
+func (u *UserStore) UpsertLoginIdentity(userID, username, uid, oidcSub string) error {
 	now := time.Now().UTC().Format(time.RFC3339Nano)
 	_, err := u.db.Exec(`
-INSERT INTO users(id,name,email,oidc_sub,created_at,last_login_at) VALUES(?,?,?,?,?,?)
+INSERT INTO users(id,username,uid_number,oidc_sub,created_at,last_login_at) VALUES(?,?,?,?,?,?)
 AS new
 ON DUPLICATE KEY UPDATE
- name=new.name,
- email=IF(new.email != '', new.email, users.email),
+ username=new.username,
+ uid_number=IF(new.uid_number != '', new.uid_number, users.uid_number),
  oidc_sub=IF(new.oidc_sub != '', new.oidc_sub, users.oidc_sub),
  last_login_at=new.last_login_at`,
-		userID, name, email, oidcSub, now, now)
+		userID, username, uid, oidcSub, now, now)
 	return err
 }
 
-// GetUser fetches a user's stored identity record.
+// GetUser fetches a user's stored record.
 func (u *UserStore) GetUser(userID string) (UserRecord, error) {
 	var r UserRecord
-	err := u.db.QueryRow(`SELECT id, name, email, oidc_sub, created_at, last_login_at FROM users WHERE id=?`, userID).
-		Scan(&r.ID, &r.Name, &r.Email, &r.OIDCSub, &r.CreatedAt, &r.LastLoginAt)
+	err := u.db.QueryRow(`SELECT id, username, uid_number, oidc_sub, created_at, last_login_at FROM users WHERE id=?`, userID).
+		Scan(&r.ID, &r.Username, &r.UID, &r.OIDCSub, &r.CreatedAt, &r.LastLoginAt)
 	return r, err
 }
 

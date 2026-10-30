@@ -34,8 +34,8 @@ func TestDefaultServerConfigKeepsPasswordActiveAndOIDCDisabled(t *testing.T) {
 	if cfg.Auth.Mode != "password" || cfg.Auth.OIDC.Enabled {
 		t.Fatalf("expected default mode=password and oidc.enabled=false, got %+v", cfg.Auth)
 	}
-	if cfg.Auth.OIDC.Issuer != "https://idp.alliancecan.ca" || cfg.Auth.OIDC.RemoteUserClaim != "preferred_username" || cfg.Auth.OIDC.EmailClaim != "email" {
-		t.Fatalf("unexpected DRAC OIDC defaults: %+v", cfg.Auth.OIDC)
+	if cfg.Auth.OIDC.Issuer != "https://idp.example.org" || cfg.Auth.OIDC.RemoteUserClaim != "preferred_username" || cfg.Auth.OIDC.EmailClaim != "email" {
+		t.Fatalf("unexpected OIDC defaults: %+v", cfg.Auth.OIDC)
 	}
 
 	api := &API{
@@ -71,12 +71,12 @@ func TestDefaultServerConfigKeepsPasswordActiveAndOIDCDisabled(t *testing.T) {
 	}
 }
 
-func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
+func TestOIDCFlowAndPostLoginHook(t *testing.T) {
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		t.Fatalf("rsa key: %v", err)
 	}
-	kid := "drac-key-1"
+	kid := "test-key-1"
 
 	var lastNonce string
 	var idpSrv *httptest.Server
@@ -112,12 +112,15 @@ func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
 		headerJSON, _ := json.Marshal(map[string]any{"alg": "RS256", "kid": kid, "typ": "JWT"})
 		claimsJSON, _ := json.Marshal(map[string]any{
 			"iss":                idpSrv.URL,
-			"sub":                "drac-sub-rahimk",
-			"aud":                "deepthought.vulcan.alliancecan.ca",
+			"sub":                "sub-researcher",
+			"aud":                "deepthought.example.org",
 			"exp":                time.Now().Add(5 * time.Minute).Unix(),
 			"nonce":              lastNonce,
-			"preferred_username": "rahimk",
-			"email":              "khoja1@ualberta.ca",
+			"preferred_username": "researcher",
+			"given_name":         "Ada",
+			"family_name":        "Lovelace",
+			"email":              "researcher@example.org",
+			"uidNumber":          10001,
 		})
 		signingInput := base64.RawURLEncoding.EncodeToString(headerJSON) + "." + base64.RawURLEncoding.EncodeToString(claimsJSON)
 		sum := sha256.Sum256([]byte(signingInput))
@@ -150,8 +153,8 @@ func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
 	cfg.Auth.OIDC.Enabled = true
 	cfg.Auth.OIDC.Issuer = idpSrv.URL
 	cfg.Auth.OIDC.MetadataURL = idpSrv.URL + "/.well-known/openid-configuration"
-	cfg.Auth.OIDC.ClientID = "deepthought.vulcan.alliancecan.ca"
-	cfg.Auth.OIDC.RedirectURI = "https://deepthought.vulcan.alliancecan.ca/oidc"
+	cfg.Auth.OIDC.ClientID = "deepthought.example.org"
+	cfg.Auth.OIDC.RedirectURI = "https://deepthought.example.org/oidc"
 	cfg.Auth.OIDC.PostLoginHook = hookScript
 
 	api := &API{
@@ -159,7 +162,7 @@ func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
 		DataDir:  tmpDir,
 		Password: "secret",
 		Sessions: NewSessionStore(time.Hour),
-		Admins:   map[string]bool{"rahimk": true},
+		Admins:   map[string]bool{"researcher": true},
 		Config:   cfg,
 		OIDC:     NewOIDCProvider(cfg.Auth.OIDC),
 	}
@@ -203,7 +206,7 @@ func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
 		t.Fatalf("missing PKCE/state/nonce on redirect: %s", loc.String())
 	}
 
-	// 3. Complete callback on /oidc (matching OOD's redirect URI path).
+	// 3. Complete callback on /oidc.
 	cbReq, _ := http.NewRequest(http.MethodGet, srv.URL+"/oidc?code=authcode123&state="+url.QueryEscape(state), nil)
 	cbReq.Header.Set("Accept", "application/json")
 	cbResp, err := noRedirect.Do(cbReq)
@@ -211,23 +214,27 @@ func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
 		t.Fatalf("oidc callback: %v", err)
 	}
 	var cbPayload struct {
-		Token string `json:"token"`
-		User  string `json:"user"`
-		Email string `json:"email"`
+		Token     string `json:"token"`
+		User      string `json:"user"`
+		Username  string `json:"username"`
+		FirstName string `json:"first_name"`
+		LastName  string `json:"last_name"`
+		Email     string `json:"email"`
+		UID       string `json:"uid"`
 	}
 	_ = json.NewDecoder(cbResp.Body).Decode(&cbPayload)
 	cbResp.Body.Close()
-	if cbResp.StatusCode != http.StatusOK || cbPayload.User != "rahimk" || cbPayload.Email != "khoja1@ualberta.ca" || cbPayload.Token == "" {
+	if cbResp.StatusCode != http.StatusOK || cbPayload.User != "researcher" || cbPayload.FirstName != "Ada" || cbPayload.LastName != "Lovelace" || cbPayload.UID != "10001" || cbPayload.Email != "researcher@example.org" || cbPayload.Token == "" {
 		t.Fatalf("unexpected callback response (%d): %+v", cbResp.StatusCode, cbPayload)
 	}
 
-	// 4. Verify post_login_hook wrote the OOD email file.
+	// 4. Verify post_login_hook wrote the email file.
 	hookBytes, err := os.ReadFile(hookOutput)
-	if err != nil || string(hookBytes) != "rahimk:khoja1@ualberta.ca" {
+	if err != nil || string(hookBytes) != "researcher:researcher@example.org" {
 		t.Fatalf("post_login_hook output = %q (err=%v)", string(hookBytes), err)
 	}
 
-	// 5. Poll device code and confirm CLI receives approved token + user + email.
+	// 5. Poll device code and confirm CLI receives approved token + user + live OIDC claims.
 	pollBody, _ := json.Marshal(map[string]string{"device_code": devStart.DeviceCode})
 	pollResp, err := http.Post(srv.URL+"/api/v1/auth/device/poll", "application/json", bytes.NewReader(pollBody))
 	if err != nil {
@@ -236,7 +243,7 @@ func TestDRACOIDCFlowAndPostLoginHook(t *testing.T) {
 	var pollPayload map[string]any
 	_ = json.NewDecoder(pollResp.Body).Decode(&pollPayload)
 	pollResp.Body.Close()
-	if pollPayload["status"] != "approved" || pollPayload["user"] != "rahimk" || pollPayload["email"] != "khoja1@ualberta.ca" {
+	if pollPayload["status"] != "approved" || pollPayload["user"] != "researcher" || pollPayload["first_name"] != "Ada" || pollPayload["last_name"] != "Lovelace" || pollPayload["uid"] != "10001" || pollPayload["email"] != "researcher@example.org" {
 		t.Fatalf("unexpected device poll payload: %+v", pollPayload)
 	}
 }

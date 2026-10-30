@@ -69,7 +69,7 @@ planned fix and stay deferred until the password is shared more widely.
 | `GET /api/v1/summaries/{id}` | 6-tier persisted `summaries` rows (`FULL`, `DETAILED`, `DIGEST`, `LINE`, `TOMBSTONE`, `EXEMPLAR`) |
 | `POST /api/v1/fleet/heartbeat`, `GET /api/v1/fleet/nodes`, `POST /api/v1/fleet/dispatch`, `GET /api/v1/fleet/tasks/{id}`, `GET /api/v1/fleet/memory` | Unicomplex fleet compute fabric (Client B ↔ Server ↔ Client A remote terminal view, prompt/tool/approval dispatch, and cross-cluster operational memory) |
 | `GET /api/v1/auth/config`, `GET /api/v1/auth/me` | active auth modes (`password` / `oidc` / `both`) + caller identity (`user`, `email`, `admin`) |
-| `GET /api/v1/auth/oidc/login`, `GET /api/v1/auth/oidc/callback` | DRAC OIDC Authorization Code + PKCE flow (disabled by default until enabled in `server.json`) |
+| `GET /api/v1/auth/oidc/login`, `GET /api/v1/auth/oidc/callback` | OIDC Authorization Code + PKCE flow (disabled by default until enabled in `server.json`) |
 | `POST /api/v1/auth/device/start`, `POST /api/v1/auth/device/approve`, `POST /api/v1/auth/device/poll` | Cursor/Antigravity-style CLI Browser-Link login flow (OIDC redirect or one-click Web UI approval) |
 
 A credential id is `CredentialID(name, base_url, wire)`: the first 32 hex

@@ -33,9 +33,7 @@ type AuthConfig struct {
 	OIDC         OIDCConfig `json:"oidc"`
 }
 
-// OIDCConfig configures the OpenID Connect Relying Party, pre-populated with
-// Digital Research Alliance of Canada (DRAC) defaults matching Vulcan's
-// Open OnDemand portal (/etc/ood/config/ood_portal.yml).
+// OIDCConfig configures the OpenID Connect Relying Party.
 type OIDCConfig struct {
 	Enabled              bool     `json:"enabled"`
 	Issuer               string   `json:"issuer"`
@@ -46,9 +44,10 @@ type OIDCConfig struct {
 	RedirectURI          string   `json:"redirect_uri"`
 	Scopes               []string `json:"scopes"`
 	RemoteUserClaim      string   `json:"remote_user_claim"`
+	FirstNameClaim       string   `json:"first_name_claim,omitempty"`
+	LastNameClaim        string   `json:"last_name_claim,omitempty"`
 	EmailClaim           string   `json:"email_claim"`
-	GroupsClaim          string   `json:"groups_claim,omitempty"`
-	AllowedGroups        []string `json:"allowed_groups,omitempty"`
+	UIDClaim             string   `json:"uid_claim,omitempty"`
 	TrustProxyHeaders    bool     `json:"trust_proxy_headers"`
 	ProxyUserHeader      string   `json:"proxy_user_header"`
 	ProxyEmailHeader     string   `json:"proxy_email_header"`
@@ -57,7 +56,7 @@ type OIDCConfig struct {
 }
 
 // DefaultServerConfig returns the default server configuration with password
-// auth active and DRAC OIDC pre-populated but disabled (enabled: false).
+// auth active and OIDC disabled (enabled: false).
 func DefaultServerConfig() ServerConfig {
 	return ServerConfig{
 		ListenAddr:      "127.0.0.1:8080",
@@ -66,19 +65,21 @@ func DefaultServerConfig() ServerConfig {
 			Mode: "password",
 			OIDC: OIDCConfig{
 				Enabled:              false,
-				Issuer:               "https://idp.alliancecan.ca",
-				MetadataURL:          "https://idp.alliancecan.ca/.well-known/openid-configuration",
-				ClientID:             "deepthought.vulcan.alliancecan.ca",
+				Issuer:               "https://idp.example.org",
+				MetadataURL:          "https://idp.example.org/.well-known/openid-configuration",
+				ClientID:             "deepthought.example.org",
 				ClientSecretEnv:      "DEEPTHOUGHT_OIDC_CLIENT_SECRET",
-				RedirectURI:          "https://deepthought.vulcan.alliancecan.ca/oidc",
+				RedirectURI:          "https://deepthought.example.org/oidc",
 				Scopes:               []string{"openid", "profile", "email"},
 				RemoteUserClaim:      "preferred_username",
+				FirstNameClaim:       "given_name",
+				LastNameClaim:        "family_name",
 				EmailClaim:           "email",
-				GroupsClaim:          "groups",
+				UIDClaim:             "uidNumber",
 				TrustProxyHeaders:    false,
 				ProxyUserHeader:      "OIDC_CLAIM_preferred_username",
 				ProxyEmailHeader:     "OIDC_CLAIM_email",
-				PostLoginHook:        "/opt/ood/scripts/ood_pun_oidc_email.sh",
+				PostLoginHook:        "",
 				PostLoginHookExports: []string{"OIDC_CLAIM_email"},
 			},
 		},
@@ -127,7 +128,7 @@ func WriteExampleServerConfig(dataDir string) error {
 		return nil
 	}
 	example := DefaultServerConfig()
-	example.AdminUsers = []string{"rahimk"}
+	example.AdminUsers = []string{"admin"}
 	raw, err := json.MarshalIndent(example, "", "  ")
 	if err != nil {
 		return err
@@ -180,6 +181,24 @@ func (c *ServerConfig) applyEnvOverrides() {
 	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_REDIRECT_URI")); v != "" {
 		c.Auth.OIDC.RedirectURI = v
 	}
+	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_SCOPES")); v != "" {
+		c.Auth.OIDC.Scopes = strings.Fields(strings.ReplaceAll(v, ",", " "))
+	}
+	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_REMOTE_USER_CLAIM")); v != "" {
+		c.Auth.OIDC.RemoteUserClaim = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_FIRST_NAME_CLAIM")); v != "" {
+		c.Auth.OIDC.FirstNameClaim = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_LAST_NAME_CLAIM")); v != "" {
+		c.Auth.OIDC.LastNameClaim = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_EMAIL_CLAIM")); v != "" {
+		c.Auth.OIDC.EmailClaim = v
+	}
+	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_UID_CLAIM")); v != "" {
+		c.Auth.OIDC.UIDClaim = v
+	}
 	if v := strings.TrimSpace(os.Getenv("DEEPTHOUGHT_OIDC_POST_LOGIN_HOOK")); v != "" {
 		c.Auth.OIDC.PostLoginHook = v
 	}
@@ -197,7 +216,7 @@ func (c *ServerConfig) normalize() {
 		c.Auth.Mode = "password"
 	}
 	if c.Auth.OIDC.Issuer == "" {
-		c.Auth.OIDC.Issuer = "https://idp.alliancecan.ca"
+		c.Auth.OIDC.Issuer = "https://idp.example.org"
 	}
 	if c.Auth.OIDC.MetadataURL == "" {
 		c.Auth.OIDC.MetadataURL = strings.TrimRight(c.Auth.OIDC.Issuer, "/") + "/.well-known/openid-configuration"
@@ -208,8 +227,17 @@ func (c *ServerConfig) normalize() {
 	if c.Auth.OIDC.RemoteUserClaim == "" {
 		c.Auth.OIDC.RemoteUserClaim = "preferred_username"
 	}
+	if c.Auth.OIDC.FirstNameClaim == "" {
+		c.Auth.OIDC.FirstNameClaim = "given_name"
+	}
+	if c.Auth.OIDC.LastNameClaim == "" {
+		c.Auth.OIDC.LastNameClaim = "family_name"
+	}
 	if c.Auth.OIDC.EmailClaim == "" {
 		c.Auth.OIDC.EmailClaim = "email"
+	}
+	if c.Auth.OIDC.UIDClaim == "" {
+		c.Auth.OIDC.UIDClaim = "uidNumber"
 	}
 	if c.Auth.OIDC.ProxyUserHeader == "" {
 		c.Auth.OIDC.ProxyUserHeader = "OIDC_CLAIM_preferred_username"

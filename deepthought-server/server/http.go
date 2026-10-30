@@ -567,7 +567,7 @@ func (a *API) auth(next http.HandlerFunc) http.HandlerFunc {
 				}
 				proxyEmail := strings.TrimSpace(r.Header.Get(emailHdr))
 				if a.Users != nil {
-					_ = a.Users.UpsertLoginWithIdentity(sanitizeUserID(proxyUser), proxyUser, proxyEmail, "")
+					_ = a.Users.UpsertLoginIdentity(sanitizeUserID(proxyUser), proxyUser, "", "")
 				}
 				if proxyEmail != "" {
 					a.runPostLoginHook(proxyUser, proxyEmail, map[string]any{"email": proxyEmail, "preferred_username": proxyUser})

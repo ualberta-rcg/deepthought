@@ -13,7 +13,7 @@ import (
 func (m *RootModel) showServerSync() {
 	notice := "Disconnected — local settings remain saved."
 	items := []tui.WorkspaceItem{
-		{Label: "★ Sign in via Browser Link (Recommended)", Detail: "Opens browser login URL (DRAC OIDC or 1-click Web UI approval) and copies link to clipboard", Kind: "browser-login-server"},
+		{Label: "★ Sign in via Browser Link (Recommended)", Detail: "Opens browser login URL (OIDC SSO or 1-click Web UI approval) and copies link to clipboard", Kind: "browser-login-server"},
 		{Label: "Connect / reconnect with password", Kind: "connect-server"},
 		{Label: "Configure URL, user and password", Kind: "settings-tab", ID: "server"},
 	}

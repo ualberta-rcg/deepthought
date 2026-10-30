@@ -66,7 +66,10 @@ type oidcDeviceTicket struct {
 	Approved   bool
 	Token      string
 	User       string
+	FirstName  string
+	LastName   string
 	Email      string
+	UID        string
 	Expires    time.Time
 }
 
@@ -423,7 +426,7 @@ func (a *API) anyAuthConfigured() bool {
 }
 
 // authConfigHandler serves GET /api/v1/auth/config (unauthenticated) so the
-// web UI and CLI can discover whether password auth, DRAC OIDC, or both are enabled.
+// web UI and CLI can discover whether password auth, OIDC, or both are enabled.
 func (a *API) authConfigHandler(w http.ResponseWriter, r *http.Request) {
 	mode := a.Config.Auth.Mode
 	if mode == "" {
@@ -441,16 +444,17 @@ func (a *API) authConfigHandler(w http.ResponseWriter, r *http.Request) {
 // authMeHandler serves GET /api/v1/auth/me (authenticated).
 func (a *API) authMeHandler(w http.ResponseWriter, r *http.Request) {
 	user := SessionUser(r)
-	var email, oidcSub string
+	var uid, oidcSub string
 	if a.Users != nil {
 		if rec, err := a.Users.GetUser(sanitizeUserID(user)); err == nil {
-			email = rec.Email
+			uid = rec.UID
 			oidcSub = rec.OIDCSub
 		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"user":      user,
-		"email":     email,
+		"username":  user,
+		"uid":       uid,
 		"oidc_sub":  oidcSub,
 		"is_admin":  a.Admins[user],
 		"auth_mode": a.Config.Auth.Mode,
@@ -605,16 +609,34 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 	}
 
 	user := claimString(claims, a.OIDC.cfg.RemoteUserClaim)
+	firstName := claimString(claims, a.OIDC.cfg.FirstNameClaim)
+	lastName := claimString(claims, a.OIDC.cfg.LastNameClaim)
 	email := claimString(claims, a.OIDC.cfg.EmailClaim)
+	uid := claimString(claims, a.OIDC.cfg.UIDClaim)
+	if uid == "" {
+		uid = claimString(claims, "uid")
+	}
 	sub := claimString(claims, "sub")
 
-	if (user == "" || email == "") && disc.UserinfoEndpoint != "" && tokenPayload.AccessToken != "" {
+	if (user == "" || email == "" || firstName == "" || lastName == "" || uid == "") && disc.UserinfoEndpoint != "" && tokenPayload.AccessToken != "" {
 		if ui, err := a.OIDC.fetchUserinfo(r.Context(), disc.UserinfoEndpoint, tokenPayload.AccessToken); err == nil {
 			if user == "" {
 				user = claimString(ui, a.OIDC.cfg.RemoteUserClaim)
 			}
+			if firstName == "" {
+				firstName = claimString(ui, a.OIDC.cfg.FirstNameClaim)
+			}
+			if lastName == "" {
+				lastName = claimString(ui, a.OIDC.cfg.LastNameClaim)
+			}
 			if email == "" {
 				email = claimString(ui, a.OIDC.cfg.EmailClaim)
+			}
+			if uid == "" {
+				uid = claimString(ui, a.OIDC.cfg.UIDClaim)
+				if uid == "" {
+					uid = claimString(ui, "uid")
+				}
 			}
 			for k, v := range ui {
 				if _, exists := claims[k]; !exists {
@@ -630,12 +652,7 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if len(a.OIDC.cfg.AllowedGroups) > 0 && !groupAllowed(claims[a.OIDC.cfg.GroupsClaim], a.OIDC.cfg.AllowedGroups) {
-		writeJSON(w, http.StatusForbidden, map[string]any{"error": "user is not in an allowed OIDC group"})
-		return
-	}
-
-	sessionToken, err := a.completeUserLogin(user, email, sub, claims)
+	sessionToken, err := a.completeUserLogin(user, uid, sub, email, claims)
 	if err != nil {
 		internalError(w, r, err)
 		return
@@ -647,23 +664,31 @@ func (a *API) oidcCallback(w http.ResponseWriter, r *http.Request) {
 			dev.Approved = true
 			dev.Token = sessionToken
 			dev.User = user
+			dev.FirstName = firstName
+			dev.LastName = lastName
 			dev.Email = email
+			dev.UID = uid
 		}
 		a.OIDC.mu.Unlock()
 	}
 
 	if strings.Contains(r.Header.Get("Accept"), "application/json") || r.URL.Query().Get("format") == "json" {
 		writeJSON(w, http.StatusOK, map[string]any{
-			"token": sessionToken,
-			"user":  user,
-			"email": email,
+			"token":      sessionToken,
+			"user":       user,
+			"username":   user,
+			"first_name": firstName,
+			"last_name":  lastName,
+			"email":      email,
+			"uid":        uid,
+			"oidc_sub":   sub,
 		})
 		return
 	}
 	if pending.DeviceCode != "" {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		w.WriteHeader(http.StatusOK)
-		_, _ = fmt.Fprintf(w, "<!doctype html><html><body style=\"font-family:sans-serif;padding:2rem\"><h2>DeepThought CLI Login Approved</h2><p>Signed in as <strong>%s</strong> (%s). You can return to your terminal now.</p></body></html>", user, email)
+		_, _ = fmt.Fprintf(w, "<!doctype html><html><body style=\"font-family:sans-serif;padding:2rem\"><h2>DeepThought CLI Login Approved</h2><p>Signed in as <strong>%s</strong>. You can return to your terminal now.</p></body></html>", user)
 		return
 	}
 	http.Redirect(w, r, "/#token="+url.QueryEscape(sessionToken)+"&user="+url.QueryEscape(user), http.StatusFound)
@@ -694,41 +719,25 @@ func claimString(claims map[string]any, key string) string {
 	if claims == nil || key == "" {
 		return ""
 	}
-	v, _ := claims[key].(string)
-	return strings.TrimSpace(v)
-}
-
-func groupAllowed(rawGroups any, allowed []string) bool {
-	want := map[string]bool{}
-	for _, g := range allowed {
-		want[strings.TrimSpace(g)] = true
-	}
-	switch v := rawGroups.(type) {
+	switch v := claims[key].(type) {
 	case string:
-		return want[v]
-	case []any:
-		for _, item := range v {
-			if s, ok := item.(string); ok && want[s] {
-				return true
-			}
-		}
-	case []string:
-		for _, s := range v {
-			if want[s] {
-				return true
-			}
-		}
+		return strings.TrimSpace(v)
+	case float64:
+		return fmt.Sprintf("%.0f", v)
+	case json.Number:
+		return v.String()
+	default:
+		return ""
 	}
-	return false
 }
 
-func (a *API) completeUserLogin(user, email, sub string, claims map[string]any) (string, error) {
+func (a *API) completeUserLogin(user, uid, sub, email string, claims map[string]any) (string, error) {
 	token := a.Sessions.Login(user)
 	if token == "" {
 		return "", errors.New("session token generation failed")
 	}
 	if a.Users != nil {
-		if err := a.Users.UpsertLoginWithIdentity(sanitizeUserID(user), user, email, sub); err != nil {
+		if err := a.Users.UpsertLoginIdentity(sanitizeUserID(user), user, uid, sub); err != nil {
 			return "", fmt.Errorf("user record: %w", err)
 		}
 	}
@@ -775,7 +784,7 @@ func (a *API) ensureOIDC() *OIDCProvider {
 }
 
 // deviceStartHandler handles POST /api/v1/auth/device/start for CLI browser-link login
-// (supports both DRAC OIDC redirect and Web UI one-click approval).
+// (supports both OIDC redirect and Web UI one-click approval).
 func (a *API) deviceStartHandler(w http.ResponseWriter, r *http.Request) {
 	if !a.anyAuthConfigured() {
 		writeJSON(w, http.StatusServiceUnavailable, map[string]any{
@@ -932,9 +941,13 @@ func (a *API) devicePollHandler(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"status": "approved",
-		"token":  ticket.Token,
-		"user":   ticket.User,
-		"email":  ticket.Email,
+		"status":     "approved",
+		"token":      ticket.Token,
+		"user":       ticket.User,
+		"username":   ticket.User,
+		"first_name": ticket.FirstName,
+		"last_name":  ticket.LastName,
+		"email":      ticket.Email,
+		"uid":        ticket.UID,
 	})
 }

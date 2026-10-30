@@ -1,10 +1,12 @@
 # DeepThought — Change Log
 
-## 2026-10-30 · docs — DRAC OIDC / 2FA registration guide and auth architecture doc (`docs/AUTH.md`)
-- Added `docs/AUTH.md` and linked it in `docs/README.md`, documenting:
-  - All DRAC IdP settings discovered from Vulcan's Open OnDemand (`/etc/ood/config/ood_portal.yml`): issuer `https://idp.alliancecan.ca`, metadata URL `https://idp.alliancecan.ca/.well-known/openid-configuration`, scopes `openid profile email`, claims `preferred_username`, `email`, `sub`, `groups`, and callback URI `https://deepthought.vulcan.alliancecan.ca/oidc`.
-  - A ready-to-send registration request for the Alliance / UAlberta IAM team and the exact credentials needed back (`client_id`, `client_secret`).
-  - Architecture blurb explaining Web SSO + 2FA (`Authorization Code + PKCE S256`) and Cursor/Antigravity-style CLI Browser-Link login (`/api/v1/auth/device/start` → browser OIDC/one-click approval → `/api/v1/auth/device/poll`).
+## 2026-10-30 · deepthought-server — Environment-variable OIDC configuration and non-PII `users` schema
+- **Environment-driven OIDC configuration (`deepthought-server/server/config.go`, `configs/server.example.json`)**:
+  - Removed site-specific IdP URLs and personal identifiers from default/example configs; all OIDC Relying Party parameters (`DEEPTHOUGHT_OIDC_ISSUER`, `DEEPTHOUGHT_OIDC_METADATA_URL`, `DEEPTHOUGHT_OIDC_CLIENT_ID`, `DEEPTHOUGHT_OIDC_CLIENT_SECRET`, `DEEPTHOUGHT_OIDC_REDIRECT_URI`, `DEEPTHOUGHT_OIDC_SCOPES`, `DEEPTHOUGHT_OIDC_REMOTE_USER_CLAIM`, `DEEPTHOUGHT_OIDC_FIRST_NAME_CLAIM`, `DEEPTHOUGHT_OIDC_LAST_NAME_CLAIM`, `DEEPTHOUGHT_OIDC_EMAIL_CLAIM`, `DEEPTHOUGHT_OIDC_UID_CLAIM`) are configured via environment variables.
+  - Removed `groups` claim fields since OIDC is the sole identity source and does not use LDAP or group claims.
+- **Zero-PII `users` database table (`deepthought-server/store/mysql.go`, `deepthought-server/server/oidc.go`)**:
+  - Replaced `name`/`email` in the MySQL `users` table with non-PII technical identifiers only: `id`, `username`, `uid_number`, `oidc_sub`, `created_at`, `last_login_at`.
+  - OIDC callback reads `username` (`preferred_username`), `first_name` (`given_name`), `last_name` (`family_name`), `email`, `uid` (`uidNumber`/`uid`), and `sub` live from the OIDC `id_token`/`userinfo` claims at login without persisting `first_name`, `last_name`, or `email` in MySQL.
 
 ## 2026-10-14 · deepthought-cli, deepthought-server — Arcade DON'T PANIC splash, Browser-Link CLI login, SystemUUID multi-cluster registry, SQL tool_executions & 6-tier summaries, repeatable pipelines with Worked Examples, Fleet compute fabric, SQL Projects/RAGFlow, and Unicomplex Web UI
 - **Arcade `DON'T PANIC` Start Screen & No Auto-Jump (`deepthought-cli/internal/tui/splash.go`, `internal/app/model.go`)**:
@@ -28,16 +30,16 @@
 - **Multi-Panel Server Web UI Console (`deepthought-server/server/web/{index.html,app.js,style.css}`)**:
   - Upgraded the embedded Web UI into a 6-tab Unicomplex console (Overview & Settings + RAGFlow, Live Fleet & Remote CLI Controller, Systems & Clusters, Projects & Skills, Repeatable Pipelines & Jobs, and SQL Tool Executions & 6-Tier Summary Inspector) plus a one-click CLI Browser-Link approval banner.
 
-## 2026-10-14 · deepthought-cli, deepthought-server — Gemini provider fixes, DRAC OIDC config, fairshare/vulcan-status parity, Queen auto mode, harness features & HPC records sync
+## 2026-10-14 · deepthought-cli, deepthought-server — Gemini provider fixes, OIDC config, fairshare/vulcan-status parity, Queen auto mode, harness features & HPC records sync
 - **Gemini OpenAI-compatible wire fixes (`deepthought-cli`)**:
   - `slurm.objectSchema` and `babel.sanitizeTools` omit nil/empty `required` arrays in tool parameter schemas so Google's `generativelanguage.googleapis.com/v1beta/openai` endpoint does not reject tool-enabled requests with `400 Bad Request`.
   - Added `"gemini"` reasoning style (`EffectiveReasoningStyle` inspects both model ID and `RequestID` and infers even when `ReasoningStyle` defaulted to `"none"`), sending `reasoning_effort` (`low`/`medium`/`high`) without vLLM-specific `chat_template_kwargs` or `thinking_token_budget`.
   - Preserved `ToolCall.ExtraContent` (`extra_content.google.thought_signature`) across streaming chunks and `history.Probe` persistence (`Vinculum.Extra`) so multi-turn Gemini 3/4 tool calls succeed.
   - Fixed `babel.ChatStream` parallel tool-call chunk assembly when a gateway emits multiple distinct tool-call `id`s at `index: 0`.
-- **DRAC OIDC & file-based server config (`deepthought-server`, `deepthought-cli`)**:
-  - Added `server/config.go` (`--config` / `DEEPTHOUGHT_SERVER_CONFIG` / `<dataDir>/server.json`) and `configs/server.example.json` pre-populated with Alliance/DRAC IdP (`https://idp.alliancecan.ca`) settings and OOD-style email post-login hook (`scripts/oidc_post_login.sh`, writing `~/ondemand/oidc_email.txt`). Defaults keep `auth.mode = "password"` and `auth.oidc.enabled = false` so current password login remains active until explicitly enabled.
+- **OIDC & file-based server config (`deepthought-server`, `deepthought-cli`)**:
+  - Added `server/config.go` (`--config` / `DEEPTHOUGHT_SERVER_CONFIG` / `<dataDir>/server.json`) and `configs/server.example.json` with OIDC settings and OOD-style email post-login hook (`scripts/oidc_post_login.sh`, writing `~/ondemand/oidc_email.txt`). Defaults keep `auth.mode = "password"` and `auth.oidc.enabled = false` so current password login remains active until explicitly enabled.
   - Added stdlib OIDC discovery, JWKS RSA/ECDSA verification, Authorization Code + PKCE (`/api/v1/auth/oidc/login`, `/api/v1/auth/oidc/callback`, `/oidc`), CLI device login (`/api/v1/auth/device/start`, `/api/v1/auth/device/poll`), trusted reverse-proxy claim headers (`OIDC_CLAIM_preferred_username`, `OIDC_CLAIM_email`), `/api/v1/auth/config`, and `/api/v1/auth/me`.
-  - Added `email` and `oidc_sub` columns to MySQL `users` table (idempotent `ensureUserColumns` migration).
+  - Added `uid_number` and `oidc_sub` columns to MySQL `users` table (idempotent `ensureUserColumns` migration).
   - CLI `host.OODEmail()` discovers `$OIDC_CLAIM_email` or `~/ondemand/oidc_email.txt` and surfaces it on the Status (`F12`) page and `/doctor`.
 - **Slurm fairshare & `vulcan-status` parity (`deepthought-cli`)**:
   - Fixed `parseFairshareRows` to support standard 4-column `sshare -P` output (`Account|User|EffectvUsage|LevelFS`) as well as 5-column leading-pipe fixtures, added `BestAccount`, and added `/run/vulcan-motd/cluster` fast-path reading when fresh (<15m).
