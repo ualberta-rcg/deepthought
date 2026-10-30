@@ -72,17 +72,10 @@ func SmallFile(path string) string {
 	return strings.TrimSpace(string(b))
 }
 
-// OODEmail reads the DRAC Open OnDemand OIDC email persisted by
-// /opt/ood/scripts/ood_pun_oidc_email.sh at ~/ondemand/oidc_email.txt (or
-// $OIDC_CLAIM_email when running under an OIDC-enabled environment).
-func OODEmail() string {
+// OIDCEmail reads $OIDC_CLAIM_email when running under an OIDC-enabled environment.
+func OIDCEmail() string {
 	if v := clean(strings.TrimSpace(os.Getenv("OIDC_CLAIM_email"))); v != "" {
 		return v
-	}
-	if home, err := os.UserHomeDir(); err == nil && home != "" {
-		if v := clean(SmallFile(filepath.Join(home, "ondemand", "oidc_email.txt"))); v != "" {
-			return v
-		}
 	}
 	return ""
 }
@@ -114,7 +107,7 @@ func Collect(ctx context.Context, store Store) Record {
 	}
 	id, source := ID()
 	name, _ := os.Hostname()
-	r := Record{ID: id, Name: clean(name), User: clean(os.Getenv("USER")), Email: OODEmail(), Arch: runtime.GOARCH, Kind: "unknown", IdentitySource: source, CPUs: runtime.NumCPU(), CollectedAt: time.Now(), LastSeen: time.Now()}
+	r := Record{ID: id, Name: clean(name), User: clean(os.Getenv("USER")), Email: OIDCEmail(), Arch: runtime.GOARCH, Kind: "unknown", IdentitySource: source, CPUs: runtime.NumCPU(), CollectedAt: time.Now(), LastSeen: time.Now()}
 	if store != nil {
 		var old Record
 		if store.ReadRecord("host", id, &old) == nil {

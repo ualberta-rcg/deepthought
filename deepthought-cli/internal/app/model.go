@@ -248,7 +248,7 @@ func gatherEnv() tui.EnvInfo {
 		Shell:  os.Getenv("SHELL"),
 		Host:   host,
 		User:   user,
-		Email:  hostpkg.OODEmail(),
+		Email:  hostpkg.OIDCEmail(),
 		TZ:     tz,
 
 		ShortName: short,

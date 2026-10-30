@@ -767,7 +767,7 @@ func (m ChatModel) submit() (ChatModel, tea.Cmd) {
 		}
 		var checks []string
 		if m.env.Email != "" {
-			checks = append(checks, "ood_email="+m.env.Email)
+			checks = append(checks, "oidc_email="+m.env.Email)
 		}
 		if home, err := os.UserHomeDir(); err == nil {
 			if _, err := os.Stat(filepath.Join(home, ".aleph_tyk.env")); err == nil {

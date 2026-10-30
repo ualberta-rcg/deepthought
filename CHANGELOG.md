@@ -37,10 +37,10 @@
   - Preserved `ToolCall.ExtraContent` (`extra_content.google.thought_signature`) across streaming chunks and `history.Probe` persistence (`Vinculum.Extra`) so multi-turn Gemini 3/4 tool calls succeed.
   - Fixed `babel.ChatStream` parallel tool-call chunk assembly when a gateway emits multiple distinct tool-call `id`s at `index: 0`.
 - **OIDC & file-based server config (`deepthought-server`, `deepthought-cli`)**:
-  - Added `server/config.go` (`--config` / `DEEPTHOUGHT_SERVER_CONFIG` / `<dataDir>/server.json`) and `configs/server.example.json` with OIDC settings and OOD-style email post-login hook (`scripts/oidc_post_login.sh`, writing `~/ondemand/oidc_email.txt`). Defaults keep `auth.mode = "password"` and `auth.oidc.enabled = false` so current password login remains active until explicitly enabled.
+  - Added `server/config.go` (`--config` / `DEEPTHOUGHT_SERVER_CONFIG` / `<dataDir>/server.json`) and `configs/server.example.json` with OIDC settings and optional post-login hook (`scripts/oidc_post_login.sh`). Defaults keep `auth.mode = "password"` and `auth.oidc.enabled = false` so current password login remains active until explicitly enabled.
   - Added stdlib OIDC discovery, JWKS RSA/ECDSA verification, Authorization Code + PKCE (`/api/v1/auth/oidc/login`, `/api/v1/auth/oidc/callback`, `/oidc`), CLI device login (`/api/v1/auth/device/start`, `/api/v1/auth/device/poll`), trusted reverse-proxy claim headers (`OIDC_CLAIM_preferred_username`, `OIDC_CLAIM_email`), `/api/v1/auth/config`, and `/api/v1/auth/me`.
   - Added `uid_number` and `oidc_sub` columns to MySQL `users` table (idempotent `ensureUserColumns` migration).
-  - CLI `host.OODEmail()` discovers `$OIDC_CLAIM_email` or `~/ondemand/oidc_email.txt` and surfaces it on the Status (`F12`) page and `/doctor`.
+  - CLI discovers `$OIDC_CLAIM_email` when present and surfaces it on the Status (`F12`) page and `/doctor`.
 - **Slurm fairshare & `vulcan-status` parity (`deepthought-cli`)**:
   - Fixed `parseFairshareRows` to support standard 4-column `sshare -P` output (`Account|User|EffectvUsage|LevelFS`) as well as 5-column leading-pipe fixtures, added `BestAccount`, and added `/run/vulcan-motd/cluster` fast-path reading when fresh (<15m).
   - Fixed inverted fairshare bar coloring in `sidebar.go` (`>=0.40` green, `0.20..0.40` yellow, `<0.20` red) and displayed `FairshareTier`, `LevelFSTier`, and usable GPUs (`GPUUsable`) on the Status (`F12`) page.

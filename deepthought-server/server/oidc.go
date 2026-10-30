@@ -745,7 +745,7 @@ func (a *API) completeUserLogin(user, uid, sub, email string, claims map[string]
 	return token, nil
 }
 
-// runPostLoginHook executes the OOD-compatible post-login hook
+// runPostLoginHook executes the optional post-login hook
 // (`post_login_hook --user <username>`) with OIDC_CLAIM_email and configured
 // claim exports in the environment.
 func (a *API) runPostLoginHook(user, email string, claims map[string]any) {
@@ -761,7 +761,7 @@ func (a *API) runPostLoginHook(user, email string, claims map[string]any) {
 	cmd := exec.CommandContext(ctx, hook, "--user", user)
 	env := os.Environ()
 	if email != "" {
-		env = append(env, "OIDC_CLAIM_email="+email, "OOD_OIDC_CLAIM_email="+email)
+		env = append(env, "OIDC_CLAIM_email="+email)
 	}
 	env = append(env, "OIDC_CLAIM_preferred_username="+user)
 	for _, exp := range a.Config.Auth.OIDC.PostLoginHookExports {
