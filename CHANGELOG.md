@@ -1,5 +1,11 @@
 # DeepThought — Change Log
 
+## 2026-10-30 · docs — DRAC OIDC / 2FA registration guide and auth architecture doc (`docs/AUTH.md`)
+- Added `docs/AUTH.md` and linked it in `docs/README.md`, documenting:
+  - All DRAC IdP settings discovered from Vulcan's Open OnDemand (`/etc/ood/config/ood_portal.yml`): issuer `https://idp.alliancecan.ca`, metadata URL `https://idp.alliancecan.ca/.well-known/openid-configuration`, scopes `openid profile email`, claims `preferred_username`, `email`, `sub`, `groups`, and callback URI `https://deepthought.vulcan.alliancecan.ca/oidc`.
+  - A ready-to-send registration request for the Alliance / UAlberta IAM team and the exact credentials needed back (`client_id`, `client_secret`).
+  - Architecture blurb explaining Web SSO + 2FA (`Authorization Code + PKCE S256`) and Cursor/Antigravity-style CLI Browser-Link login (`/api/v1/auth/device/start` → browser OIDC/one-click approval → `/api/v1/auth/device/poll`).
+
 ## 2026-10-14 · deepthought-cli, deepthought-server — Arcade DON'T PANIC splash, Browser-Link CLI login, SystemUUID multi-cluster registry, SQL tool_executions & 6-tier summaries, repeatable pipelines with Worked Examples, Fleet compute fabric, SQL Projects/RAGFlow, and Unicomplex Web UI
 - **Arcade `DON'T PANIC` Start Screen & No Auto-Jump (`deepthought-cli/internal/tui/splash.go`, `internal/app/model.go`)**:
   - Restored the gradient `DON'T PANIC` ASCII wordmark banner (`★ DEEPTHOUGHT · RESEARCH COMPUTING HARNESS · UNIVERSITY OF ALBERTA / AMII ★`) with a retro-arcade cabinet frame, live `loadout` / `network` / `system` (`Cluster · Host [SystemID] · Capabilities`) / `project` HUD, and 5 game-mode choices (`[1P] SINGLE PLAYER`, `[2P] MULTIPLAYER`, `[++] AI LOADOUT`, `[>>] COMMAND DECK`, `[##] SYSTEM CABINET`).
