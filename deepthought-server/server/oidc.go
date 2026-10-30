@@ -889,7 +889,7 @@ func (a *API) deviceApproveHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	prov.mu.Unlock()
 
-	sessionToken, err := a.completeUserLogin(authedUser, "", "", nil)
+	sessionToken, err := a.completeUserLogin(authedUser, "", "", "", nil)
 	if err != nil {
 		internalError(w, r, err)
 		return
